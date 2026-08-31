@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent UI</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        height: 100%;
+      }
+      body {
+        margin: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: #0b0b0d;
+        color: #e6e6e9;
+        font: 13px/1.5 ui-sans-serif, -apple-system, "Segoe UI", Roboto,
+          system-ui, sans-serif;
+        -webkit-user-select: none;
+        user-select: none;
+        cursor: default;
+        overflow: hidden;
+      }
+      /* The whole splash is draggable so a frameless window is never stuck. */
+      #root {
+        -webkit-app-region: drag;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 14px;
+        padding: 32px;
+        text-align: center;
+      }
+      .spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid #2a2a30;
+        border-top-color: #7c7c88;
+        border-radius: 50%;
+        animation: spin 0.7s linear infinite;
+      }
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+      .muted {
+        color: #85858f;
+      }
+      #error {
+        display: none;
+        max-width: 520px;
+        gap: 10px;
+        flex-direction: column;
+        align-items: center;
+      }
+      #error h1 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+      }
+      #error pre {
+        margin: 0;
+        max-height: 220px;
+        overflow: auto;
+        padding: 10px 12px;
+        border: 1px solid #232329;
+        border-radius: 8px;
+        background: #121216;
+        color: #b9b9c2;
+        font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+        white-space: pre-wrap;
+        text-align: left;
+        -webkit-app-region: no-drag;
+        -webkit-user-select: text;
+        user-select: text;
+      }
+      body.failed #loading {
+        display: none;
+      }
+      body.failed #error {
+        display: flex;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-tauri-drag-region>
+      <div id="loading" data-tauri-drag-region>
+        <div class="spinner"></div>
+      </div>
+      <div id="error">
+        <h1>Agent UI could not start</h1>
+        <p class="muted">The local server did not come up. Details:</p>
+        <pre id="error-detail"></pre>
+      </div>
+    </div>
+    <script>
+      // Called from Rust (`webview.eval`) when the sidecar fails to become ready.
+      window.__agentUiError = function (message) {
+        document.getElementById("error-detail").textContent = String(message);
+        document.body.classList.add("failed");
+      };
+    </script>
+  </body>
+</html>

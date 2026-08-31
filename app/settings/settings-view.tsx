@@ -4,6 +4,13 @@ import * as React from "react"
 import Link from "next/link"
 import { ArrowLeft } from "lucide-react"
 
+import {
+  AppHeader,
+  AppHeaderActions,
+  AppHeaderBrand,
+  AppHeaderTitle,
+} from "@/components/app-header"
+import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { cn } from "@/lib/utils"
 
 import { AppearanceSection } from "./appearance-section"
@@ -45,7 +52,7 @@ function SectionNav() {
 
   return (
     <nav aria-label="Settings sections" className="hidden xl:block">
-      <ul className="sticky top-12 space-y-0.5">
+      <ul className="sticky top-6 space-y-0.5">
         {SECTIONS.map((section) => (
           <li key={section.id}>
             <a
@@ -72,39 +79,53 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
   const settings = useAppSettings()
 
   return (
-    <main className="min-h-svh bg-background">
-      <div className="mx-auto grid w-full max-w-2xl grid-cols-1 gap-x-10 px-5 py-12 xl:max-w-5xl xl:grid-cols-[9rem_minmax(0,42rem)] xl:justify-center">
-        <SectionNav />
-        <div className="flex min-w-0 flex-col gap-8">
-          <header className="flex flex-col gap-3">
-            <Link
-              href="/"
-              className="inline-flex w-fit items-center gap-1.5 text-[12px] text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            >
-              <ArrowLeft className="size-3.5" />
-              Back to chat
-            </Link>
-            <div>
+    // Same shell as the chat page: the header is the desktop window chrome, so
+    // it stays put and only the settings body scrolls.
+    <div className="flex h-svh min-h-0 flex-col bg-background">
+      <AppHeader>
+        <AppHeaderBrand />
+        <AppHeaderTitle title="Settings">
+          <Link
+            href="/"
+            className="ml-1 inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          >
+            <ArrowLeft className="size-3.5" />
+            <span className="hidden sm:inline">Back to chat</span>
+          </Link>
+        </AppHeaderTitle>
+        <AppHeaderActions>
+          <ThemeToggle
+            floating={false}
+            className="size-8 rounded-md border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted hover:text-foreground"
+          />
+        </AppHeaderActions>
+      </AppHeader>
+
+      <main className="min-h-0 flex-1 overflow-y-auto">
+        <div className="mx-auto grid w-full max-w-2xl grid-cols-1 gap-x-10 px-5 py-10 xl:max-w-5xl xl:grid-cols-[9rem_minmax(0,42rem)] xl:justify-center">
+          <SectionNav />
+          <div className="flex min-w-0 flex-col gap-8">
+            <header>
               <h1 className="text-[19px] font-semibold tracking-tight text-foreground">
                 Settings
               </h1>
-              <p className="mt-1 text-[12.5px] text-muted-foreground">
+              <p className="mt-1 text-[12.5px] break-words text-muted-foreground">
                 Stored in {dataDir}/settings.json. Changes save as you make
                 them.
               </p>
-            </div>
-          </header>
+            </header>
 
-          <AppearanceSection />
-          <ProvidersSection {...settings} />
-          <ChatSection {...settings} />
-          <DataSection dataDir={dataDir} />
+            <AppearanceSection />
+            <ProvidersSection {...settings} />
+            <ChatSection {...settings} />
+            <DataSection dataDir={dataDir} />
 
-          <p className="pb-6 text-[11px] text-muted-foreground">
-            Agent UI runs entirely on this machine.
-          </p>
+            <p className="pb-6 text-[11px] text-muted-foreground">
+              Agent UI runs entirely on this machine.
+            </p>
+          </div>
         </div>
-      </div>
-    </main>
+      </main>
+    </div>
   )
 }

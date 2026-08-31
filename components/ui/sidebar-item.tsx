@@ -230,6 +230,11 @@ export type ChatSidebarItemProps = {
    */
   renderContent?: SidebarItemRenderContent
   className?: string
+  /**
+   * Opens the inline rename input from the outside. Bump the number (0 = idle)
+   * to request it — used by the command palette's "Rename current chat".
+   */
+  renameToken?: number
   onSelect?: () => void
   onRename?: (title: string) => void
   onTogglePin?: () => void
@@ -503,9 +508,22 @@ function SortableSidebarItem(props: FlavourProps) {
 export const ChatSidebarItem = memo(function ChatSidebarItem({
   draggable = false,
   sortable = false,
+  renameToken = 0,
   ...props
 }: ChatSidebarItemProps) {
   const [editing, setEditing] = useState(false)
+  const seenToken = useRef(renameToken)
+
+  useEffect(() => {
+    if (!renameToken || renameToken === seenToken.current) {
+      seenToken.current = renameToken
+      return
+    }
+    seenToken.current = renameToken
+    // Deferred so the effect body itself stays setState-free.
+    queueMicrotask(() => setEditing(true))
+  }, [renameToken])
+
   const shared = { ...props, editing, onEditingChange: setEditing }
 
   if (!draggable && !sortable) return <StaticSidebarItem {...shared} />
@@ -535,6 +553,7 @@ type ListRowProps = {
   sortable: boolean
   showDivider: boolean
   showStatusDot: boolean
+  renameToken: number
   itemClassName?: string
   renderContent?: SidebarItemRenderContent
   onSelect?: (id: string) => void
@@ -553,6 +572,7 @@ const SidebarListRow = memo(function SidebarListRow({
   sortable,
   showDivider,
   showStatusDot,
+  renameToken,
   itemClassName,
   renderContent,
   onSelect,
@@ -587,6 +607,7 @@ const SidebarListRow = memo(function SidebarListRow({
       sortable={sortable}
       showDivider={showDivider}
       showStatusDot={showStatusDot}
+      renameToken={renameToken}
       renderContent={renderContent}
       className={itemClassName}
       menuActions={menuActions}
@@ -613,6 +634,11 @@ export type ChatSidebarItemListProps = {
   showStatusDot?: boolean
   /** Draw a separator between the pinned group and the rest. */
   groupPinned?: boolean
+  /**
+   * Opens the inline rename input for one row from the outside — bump `token`
+   * (a command palette action, a keyboard shortcut) to request it.
+   */
+  renameRequest?: { id: string; token: number }
   className?: string
   itemClassName?: string
   emptyState?: ReactNode
@@ -637,6 +663,7 @@ export function ChatSidebarItemList({
   sortable = false,
   showStatusDot = true,
   groupPinned = true,
+  renameRequest,
   className,
   itemClassName,
   emptyState,
@@ -668,6 +695,7 @@ export function ChatSidebarItemList({
       draggable={draggable || sortable}
       sortable={sortable}
       showStatusDot={showStatusDot}
+      renameToken={renameRequest?.id === item.id ? renameRequest.token : 0}
       itemClassName={itemClassName}
       renderContent={renderContent ? stableRenderContent : undefined}
       showDivider={

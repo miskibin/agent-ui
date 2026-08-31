@@ -39,3 +39,8 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# tauri desktop shell (build output + artifacts staged by scripts/prepare-desktop.mjs)
+/src-tauri/target
+/src-tauri/binaries
+/src-tauri/resources/app

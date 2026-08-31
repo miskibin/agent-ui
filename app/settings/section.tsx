@@ -77,7 +77,7 @@ export function SettingsRow({
             {title}
           </Title>
           {description ? (
-            <p className="mt-0.5 text-[12px] leading-snug text-muted-foreground">
+            <p className="mt-0.5 text-[12px] leading-snug break-words text-muted-foreground">
               {description}
             </p>
           ) : null}

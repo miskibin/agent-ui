@@ -9,15 +9,26 @@ import {
   Paperclip,
   Pencil,
   RefreshCw,
+  Search,
   Settings as SettingsIcon,
   Sparkles,
   Trash2,
   Waves,
 } from "lucide-react"
-import Link from "next/link"
 import * as React from "react"
 import { toast } from "sonner"
 
+import {
+  AppHeader,
+  AppHeaderActions,
+  AppHeaderBrand,
+  AppHeaderButton,
+  AppHeaderTitle,
+} from "@/components/app-header"
+import {
+  CommandPalette,
+  type CommandPaletteSession,
+} from "@/components/command-palette"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
   formatAskQuestionOutput,
@@ -25,7 +36,6 @@ import {
   type AskQuestionResult,
 } from "@/components/ui/ask-question"
 import { ChatInput, type ChatInputPayload } from "@/components/ui/chat-input"
-import { ChatNavbar } from "@/components/ui/chat-navbar"
 import {
   ChatSidebar,
   ChatSidebarDnd,
@@ -180,6 +190,12 @@ export default function ChatPage() {
   const [collapsed, setCollapsed] = React.useState(false)
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
   const [chatsOpen, setChatsOpen] = React.useState(true)
+  const [paletteOpen, setPaletteOpen] = React.useState(false)
+  /** Bumped to open the sidebar's inline rename for one chat. */
+  const [renameRequest, setRenameRequest] = React.useState({
+    id: "",
+    token: 0,
+  })
 
   const [settings, setSettings] = React.useState<AppSettings | null>(null)
   const [providers, setProviders] = React.useState<ProviderInfo[]>([])
@@ -200,6 +216,7 @@ export default function ChatPage() {
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
   const [clock, setClock] = React.useState(nowMs)
 
+  const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
   const threadsRef = React.useRef(threads)
   const activeIdRef = React.useRef(activeId)
@@ -357,15 +374,27 @@ export default function ChatPage() {
     if (activeId) writeCache(CACHE_ACTIVE_KEY, activeId)
   }, [activeId])
 
+  /** Closing the drawer hands focus back to the button that opened it. */
+  const closeDrawer = React.useCallback(() => {
+    setMobileNavOpen(false)
+    drawerTriggerRef.current?.focus()
+  }, [])
+
   // Escape closes the mobile drawer.
   React.useEffect(() => {
     if (!drawerOpen) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileNavOpen(false)
+      if (event.key === "Escape") closeDrawer()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
-  }, [drawerOpen])
+  }, [closeDrawer, drawerOpen])
+
+  // The tab title follows the open chat.
+  const activeTitle = activeSession?.title?.trim() ?? ""
+  React.useEffect(() => {
+    document.title = activeTitle ? `${activeTitle} — Agent UI` : "Agent UI"
+  }, [activeTitle])
 
   React.useEffect(() => {
     const aborts = abortsRef.current
@@ -890,6 +919,29 @@ export default function ChatPage() {
     ]
   )
 
+  const paletteSessions = React.useMemo<CommandPaletteSession[]>(
+    () =>
+      sessions.map((session) => ({
+        id: session.id,
+        title: session.title || "Untitled",
+        meta: [providerName(session.providerId), session.model]
+          .filter(Boolean)
+          .join(" · "),
+      })),
+    [providerName, sessions]
+  )
+
+  /** Palette → the sidebar's inline rename input for that chat. */
+  const startRename = React.useCallback(
+    (id: string) => {
+      if (isDesktop) setCollapsed(false)
+      else setMobileNavOpen(true)
+      setChatsOpen(true)
+      setRenameRequest((prev) => ({ id, token: prev.token + 1 }))
+    },
+    [isDesktop]
+  )
+
   const showEfforts =
     !!capabilities?.effort && (settings?.chat.defaultEffort ?? "") !== ""
 
@@ -938,15 +990,17 @@ export default function ChatPage() {
       {/* Below md the sidebar slides over the conversation instead of squeezing it. */}
       <div
         aria-hidden={!drawerOpen}
-        onClick={() => setMobileNavOpen(false)}
+        onClick={closeDrawer}
         className={cn(
-          "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 md:hidden",
+          "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
           drawerOpen ? "opacity-100" : "pointer-events-none opacity-0"
         )}
       />
       <div
+        // Off-canvas below md: keep the hidden drawer out of the tab order.
+        inert={!isDesktop && !drawerOpen}
         className={cn(
-          "z-50 h-full shrink-0 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:shadow-xl max-md:transition-transform max-md:duration-200 md:relative",
+          "z-50 h-full shrink-0 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:shadow-xl max-md:transition-transform max-md:duration-200 max-md:motion-reduce:transition-none md:relative",
           !drawerOpen && "max-md:-translate-x-full"
         )}
       >
@@ -978,26 +1032,46 @@ export default function ChatPage() {
           <ChatSidebar
             collapsed={isDesktop ? collapsed : false}
             onCollapsedChange={(next) =>
-              isDesktop ? setCollapsed(next) : setMobileNavOpen(false)
+              isDesktop ? setCollapsed(next) : closeDrawer()
             }
             edgeZones
             brand={
               <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
-                Agent UI
+                Chats
               </span>
             }
             nav={
-              <SideRow
-                icon={<Pencil className="size-4" />}
-                onClick={() => void handleNewChat()}
-              >
-                New chat
-              </SideRow>
+              <>
+                <SideRow
+                  icon={<Pencil className="size-4" />}
+                  onClick={() => void handleNewChat()}
+                >
+                  New chat
+                </SideRow>
+                <SideRow
+                  icon={<Search className="size-4" />}
+                  hint="⌘K"
+                  onClick={() => setPaletteOpen(true)}
+                >
+                  Search chats
+                </SideRow>
+              </>
             }
             rail={
-              <SideIconBtn label="New chat" onClick={() => void handleNewChat()}>
-                <Pencil className="size-4" />
-              </SideIconBtn>
+              <>
+                <SideIconBtn
+                  label="New chat"
+                  onClick={() => void handleNewChat()}
+                >
+                  <Pencil className="size-4" />
+                </SideIconBtn>
+                <SideIconBtn
+                  label="Search chats"
+                  onClick={() => setPaletteOpen(true)}
+                >
+                  <Search className="size-4" />
+                </SideIconBtn>
+              </>
             }
           >
             <SidebarSessionSection
@@ -1005,6 +1079,7 @@ export default function ChatPage() {
               onToggle={() => setChatsOpen((value) => !value)}
               sessions={sessionItems}
               activeId={activeId}
+              renameRequest={renameRequest}
               onSelect={selectSession}
               onRename={renameSession}
               onTogglePin={togglePin}
@@ -1015,32 +1090,41 @@ export default function ChatPage() {
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <ChatNavbar
-          title={activeSession?.title ?? "New chat"}
-          left={
-            <button
-              type="button"
-              aria-label="Open chats"
-              onClick={() => setMobileNavOpen(true)}
-              className="-ml-1 inline-grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 md:hidden [&_svg]:size-4"
+        <AppHeader>
+          <button
+            ref={drawerTriggerRef}
+            type="button"
+            aria-label="Open chats"
+            aria-expanded={drawerOpen}
+            title="Open chats"
+            onClick={() => setMobileNavOpen(true)}
+            className="-ml-1 inline-grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 md:hidden [&_svg]:size-4"
+          >
+            <PanelLeft />
+          </button>
+          <AppHeaderBrand />
+          <AppHeaderTitle
+            title={activeSession?.title ?? "New chat"}
+            generating={isGenerating}
+            stage={activeRun?.stage ?? "thinking"}
+          />
+          <AppHeaderActions>
+            <AppHeaderButton
+              label="Search chats and commands"
+              hint="⌘K"
+              onClick={() => setPaletteOpen(true)}
             >
-              <PanelLeft />
-            </button>
-          }
-          right={
-            <>
-              <Link
-                href="/settings"
-                aria-label="Settings"
-                title="Settings"
-                className="inline-grid size-8 place-items-center rounded-full text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-4"
-              >
-                <SettingsIcon />
-              </Link>
-              <ThemeToggle floating={false} />
-            </>
-          }
-        />
+              <Search />
+            </AppHeaderButton>
+            <AppHeaderButton label="Settings" href="/settings">
+              <SettingsIcon />
+            </AppHeaderButton>
+            <ThemeToggle
+              floating={false}
+              className="size-8 rounded-md border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted hover:text-foreground"
+            />
+          </AppHeaderActions>
+        </AppHeader>
 
         <div
           className={cn(
@@ -1089,6 +1173,16 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        sessions={paletteSessions}
+        activeId={activeId}
+        onSelectSession={selectSession}
+        onNewChat={() => void handleNewChat()}
+        onRenameSession={startRename}
+      />
     </div>
   )
 }
@@ -1102,6 +1196,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   onToggle,
   sessions,
   activeId,
+  renameRequest,
   onSelect,
   onRename,
   onTogglePin,
@@ -1111,6 +1206,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   onToggle: () => void
   sessions: ChatSidebarItemData[]
   activeId: string
+  renameRequest: { id: string; token: number }
   onSelect: (id: string) => void
   onRename: (id: string, title: string) => void
   onTogglePin: (id: string, pinned: boolean) => void
@@ -1127,6 +1223,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
         items={sessions}
         activeId={activeId}
         listId="recent"
+        renameRequest={renameRequest}
         sortable
         emptyState={<SidebarEmptyState>New chats appear here.</SidebarEmptyState>}
         onSelect={onSelect}

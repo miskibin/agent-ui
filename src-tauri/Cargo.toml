@@ -1,0 +1,36 @@
+[package]
+name = "agent-ui"
+version = "0.1.0"
+description = "Agent UI desktop shell"
+edition = "2021"
+rust-version = "1.82"
+publish = false
+
+[lib]
+# `_lib` suffix: a lib and a bin cannot share a name on Windows.
+# Desktop-only, so plain `lib`; mobile targets would need cdylib + staticlib.
+name = "agent_ui_lib"
+crate-type = ["lib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6", features = [] }
+
+[dependencies]
+serde_json = "1"
+tauri = { version = "2.11", features = [] }
+tauri-plugin-os = "2.3"
+tauri-plugin-shell = "2.3"
+
+[features]
+# Enabled automatically by `tauri build`. It is also what `tauri::is_dev()`
+# keys off, i.e. what tells the shell to spawn the bundled server instead of
+# pointing the window at `build.devUrl`.
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+incremental = false
