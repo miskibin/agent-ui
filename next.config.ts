@@ -2,6 +2,9 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   agentRules: false,
+  // Self-contained production server (`node .next/standalone/server.js`):
+  // fast cold start, no node_modules install on the target machine.
+  output: "standalone",
   experimental: {
     // The project runs TypeScript 7 (`tsc`, via the `@typescript/native` alias)
     // side by side with the TypeScript 6 JS API (the `typescript` package),

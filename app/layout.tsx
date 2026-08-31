@@ -3,6 +3,12 @@ import { Geist_Mono, Inter } from "next/font/google"
 import "./globals.css"
 import { Toaster } from "sonner"
 import { ThemeProvider } from "@/components/theme-provider"
+import {
+  APPEARANCE_BOOTSTRAP_SCRIPT,
+  THEME_STYLE_ID,
+  themePresetCss,
+} from "@/lib/theme/apply"
+import { AppearanceProvider } from "@/lib/theme/theme-client"
 import { cn } from "@/lib/utils"
 
 /** ChatGPT ships Klim’s Söhne (paid). Inter is the closest webfont we can distribute. */
@@ -43,6 +49,15 @@ export default function RootLayout({
         fontSansUi.className
       )}
     >
+      <head>
+        {/* Every theme preset, keyed by [data-theme] — see lib/theme/apply.ts. */}
+        <style
+          id={THEME_STYLE_ID}
+          dangerouslySetInnerHTML={{ __html: themePresetCss() }}
+        />
+        {/* Stamps the stored preset + radius on <html> before first paint. */}
+        <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP_SCRIPT }} />
+      </head>
       <body className="min-h-svh" suppressHydrationWarning>
         <ThemeProvider
           attribute="class"
@@ -50,7 +65,7 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          {children}
+          <AppearanceProvider>{children}</AppearanceProvider>
         </ThemeProvider>
         <Toaster position="top-right" richColors />
       </body>

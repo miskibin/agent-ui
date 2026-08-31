@@ -26,12 +26,25 @@ export type ProviderInfo = {
   unavailableReason?: string
 }
 
+export type ChatTurn = {
+  role: "user" | "assistant"
+  content: string
+}
+
 export type AgentRunOptions = {
   prompt: string
   model: string
   /** Provider-side session to resume, if capabilities.resume. */
   sessionId?: string
   effort?: string
+  /**
+   * Prior turns of this thread, oldest first, excluding `prompt`.
+   *
+   * Stateless backends (Ollama) have no `sessionId` to resume, so the chat
+   * route replays the stored transcript instead. Providers with
+   * `capabilities.resume` ignore it — the backend already has the context.
+   */
+  history?: ChatTurn[]
   signal: AbortSignal
 }
 
