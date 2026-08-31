@@ -1,0 +1,1264 @@
+"use client"
+
+import { diffLines, diffWords, type Change } from "diff"
+import {
+  Brain,
+  Check,
+  ChevronDown,
+  Copy,
+  FileText,
+  Loader2,
+  Table2,
+  TriangleAlert,
+} from "lucide-react"
+import { useTheme } from "next-themes"
+import * as React from "react"
+
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
+import {
+  AskQuestion,
+  AskQuestionSummary,
+  formatAskQuestionOutput,
+  isAskToolName,
+  isPendingAskTool,
+  parseAskQuestionInput,
+  parseAskQuestionResult,
+  type AskQuestionResult,
+} from "@/components/ui/ask-question"
+import { cn } from "@/lib/utils"
+import { MessageMarkdown } from "@/components/ui/message-markdown"
+
+export type MessageToolCallData = {
+  id: string
+  name: string
+  status?: "pending" | "running" | "done" | "error"
+  input?: string
+  output?: string
+}
+
+export type MessageCodeBlockData = {
+  language?: string
+  code: string
+  title?: string
+}
+
+export type MessageArtifactData = {
+  id: string
+  title: string
+  kind?: "file" | "table" | "chart" | "text" | string
+  summary?: string
+  content?: string
+  onOpen?: () => void
+}
+
+/** Shared look for the quiet, text-only disclosure rows. */
+const disclosureTrigger =
+  "inline-flex max-w-full items-center gap-1.5 rounded-sm py-0.5 text-left text-[13px] leading-snug text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:pointer-events-none [&_svg]:shrink-0"
+
+export const MessageReasoning = React.memo(function MessageReasoning({
+  children,
+  defaultOpen = false,
+  duration,
+  streaming = false,
+  className,
+}: {
+  children: string
+  defaultOpen?: boolean
+  duration?: number
+  /** Keep the body open while this thought is still streaming in. */
+  streaming?: boolean
+  className?: string
+}) {
+  const [open, setOpen] = React.useState(defaultOpen || streaming)
+  const [wasStreaming, setWasStreaming] = React.useState(streaming)
+
+  // Adjust while rendering rather than in an effect: the disclosure never
+  // paints a stale open state, and no extra commit lands mid-stream.
+  if (wasStreaming !== streaming) {
+    setWasStreaming(streaming)
+    if (streaming) setOpen(true)
+    else if (!defaultOpen) setOpen(false)
+  }
+
+  const label =
+    duration == null
+      ? "Thought for a few seconds"
+      : `Thought for ${duration} seconds`
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-slot="message-reasoning"
+      className={cn("mb-2 animate-in fade-in duration-150", className)}
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          data-slot="message-reasoning-trigger"
+          className={disclosureTrigger}
+        >
+          <Brain className="size-3.5 opacity-70" />
+          <span className="min-w-0 truncate">{label}</span>
+          <ChevronDown
+            className={cn(
+              "size-3.5 opacity-50 transition-transform duration-150",
+              open && "rotate-180"
+            )}
+          />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>
+        <div
+          data-slot="message-reasoning-content"
+          className="mt-2 border-l pl-3 text-[13px] leading-relaxed opacity-60"
+        >
+          <MessageMarkdown className="text-inherit! text-[13px]! leading-relaxed!">
+            {children}
+          </MessageMarkdown>
+        </div>
+      </CollapsibleContent>
+    </Collapsible>
+  )
+})
+
+function parseToolArgs(input?: string): Record<string, unknown> {
+  if (!input?.trim()) return {}
+  try {
+    const value = JSON.parse(input) as unknown
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>
+    }
+  } catch {
+    /* raw string */
+  }
+  return {}
+}
+
+function asString(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function fileName(path: string) {
+  const trimmed = path.replace(/[\\/]+$/, "")
+  return trimmed.split(/[\\/]/).pop() || path
+}
+
+function clip(text: string, max = 48) {
+  const oneLine = text.replace(/\s+/g, " ").trim()
+  return oneLine.length <= max ? oneLine : `${oneLine.slice(0, max - 1)}…`
+}
+
+function toolHeadline(tool: MessageToolCallData) {
+  const args = parseToolArgs(tool.input)
+  const kind = tool.name.replace(/\s+/g, "").toLowerCase()
+  const running = tool.status === "running" || tool.status === "pending"
+  const failed = tool.status === "error"
+  const path =
+    asString(args.path) ??
+    asString(args.filePath) ??
+    asString(args.target_file) ??
+    asString(args.file)
+  const command =
+    asString(args.command) ?? asString(args.cmd) ?? asString(args.script)
+  const query =
+    asString(args.query) ??
+    asString(args.pattern) ??
+    asString(args.glob) ??
+    asString(args.search)
+
+  if (kind.includes("shell") || kind === "bash" || kind === "command") {
+    return {
+      label: failed
+        ? "Command failed"
+        : running
+          ? "Running command"
+          : "Ran command",
+      detail: command ? clip(command) : undefined,
+    }
+  }
+  if (kind.includes("read")) {
+    return {
+      label: failed ? "Couldn’t read" : running ? "Reading file" : "Read file",
+      detail: path ? fileName(path) : undefined,
+    }
+  }
+  if (kind.includes("write") || kind.includes("createfile")) {
+    return {
+      label: failed ? "Couldn’t write" : running ? "Writing file" : "Wrote file",
+      detail: path ? fileName(path) : undefined,
+    }
+  }
+  if (
+    kind.includes("edit") ||
+    kind.includes("applypatch") ||
+    kind.includes("searchreplace") ||
+    kind.includes("strreplace")
+  ) {
+    return {
+      label: failed ? "Couldn’t edit" : running ? "Editing file" : "Edited file",
+      detail: path ? fileName(path) : undefined,
+    }
+  }
+  if (
+    kind.includes("grep") ||
+    kind.includes("search") ||
+    kind.includes("glob")
+  ) {
+    return {
+      label: failed
+        ? "Search failed"
+        : running
+          ? "Searching files"
+          : "Searched files",
+      detail: query ? clip(query, 40) : path ? fileName(path) : undefined,
+    }
+  }
+  if (kind.includes("delete") || kind.includes("remove")) {
+    return {
+      label: failed ? "Couldn’t delete" : running ? "Deleting" : "Deleted",
+      detail: path ? fileName(path) : undefined,
+    }
+  }
+  if (kind.includes("list") || kind === "ls" || kind.includes("dir")) {
+    return {
+      label: failed
+        ? "Couldn’t list files"
+        : running
+          ? "Listing files"
+          : "Listed files",
+      detail: path ? fileName(path) : undefined,
+    }
+  }
+  if (isAskToolName(tool.name)) {
+    return {
+      label: failed ? "Failed" : running ? "Asking" : "Done",
+      detail: "Ask Question",
+    }
+  }
+  return {
+    label: failed ? "Failed" : running ? "Working" : "Done",
+    detail: tool.name,
+  }
+}
+
+type DiffSegment = { text: string; highlight: boolean }
+
+type ToolDiffLine = {
+  type: "add" | "remove" | "context"
+  text: string
+  oldLine?: number
+  newLine?: number
+  segments?: DiffSegment[]
+}
+
+function asRawString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function isFileMutationTool(name: string) {
+  const kind = name.replace(/\s+/g, "").toLowerCase()
+  return (
+    kind.includes("write") ||
+    kind.includes("createfile") ||
+    kind.includes("edit") ||
+    kind.includes("applypatch") ||
+    kind.includes("searchreplace") ||
+    kind.includes("strreplace")
+  )
+}
+
+function isReadTool(name: string) {
+  const kind = name.replace(/\s+/g, "").toLowerCase()
+  return kind.includes("read") && !kind.includes("thread")
+}
+
+function asPositiveInt(value: unknown): number | undefined {
+  if (typeof value === "number" && Number.isFinite(value) && value > 0) {
+    return Math.floor(value)
+  }
+  if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+    const n = Number(value.trim())
+    return n > 0 ? n : undefined
+  }
+  return undefined
+}
+
+/** Pull file body out of a Read tool's output (`N lines\\n…` or raw text). */
+function extractReadFile(
+  tool: MessageToolCallData
+): { content: string; lineCount?: number; startLine: number } | null {
+  if (!isReadTool(tool.name) || tool.status === "error") return null
+  const output = tool.output?.replace(/\r\n/g, "\n")
+  if (!output?.trim()) return null
+
+  const args = parseToolArgs(tool.input)
+  const startLine = asPositiveInt(args.offset) ?? 1
+
+  const headed = output.match(/^(\d+)\s+lines?\n([\s\S]*)$/i)
+  if (headed) {
+    const body = headed[2]
+    if (!body.trim()) return null
+    return {
+      content: body.replace(/\n$/, ""),
+      lineCount: Number(headed[1]),
+      startLine,
+    }
+  }
+
+  // Don't treat leftover JSON dumps as file content.
+  if (output.trimStart().startsWith("{")) return null
+  return { content: output.replace(/\n$/, ""), startLine }
+}
+
+function splitChangeLines(value: string): string[] {
+  const parts = value.split("\n")
+  if (parts.length > 0 && parts[parts.length - 1] === "") {
+    parts.pop()
+  }
+  return parts
+}
+
+function wordSegments(
+  before: string,
+  after: string
+): { removed: DiffSegment[]; added: DiffSegment[] } {
+  const parts = diffWords(before, after)
+  return {
+    removed: parts
+      .filter((part) => !part.added)
+      .map((part) => ({ text: part.value, highlight: !!part.removed })),
+    added: parts
+      .filter((part) => !part.removed)
+      .map((part) => ({ text: part.value, highlight: !!part.added })),
+  }
+}
+
+function buildDiffLines(oldText: string, newText: string): ToolDiffLine[] {
+  const changes = diffLines(oldText, newText) as Change[]
+  const lines: ToolDiffLine[] = []
+  let oldLine = 1
+  let newLine = 1
+
+  for (let i = 0; i < changes.length; i++) {
+    const change = changes[i]
+    const next = changes[i + 1]
+
+    if (change.removed && next?.added) {
+      const removedLines = splitChangeLines(change.value)
+      const addedLines = splitChangeLines(next.value)
+      const count = Math.max(removedLines.length, addedLines.length)
+      for (let j = 0; j < count; j++) {
+        const rem = removedLines[j]
+        const add = addedLines[j]
+        if (rem !== undefined && add !== undefined) {
+          const segments = wordSegments(rem, add)
+          lines.push({
+            type: "remove",
+            text: rem,
+            oldLine: oldLine++,
+            segments: segments.removed,
+          })
+          lines.push({
+            type: "add",
+            text: add,
+            newLine: newLine++,
+            segments: segments.added,
+          })
+        } else if (rem !== undefined) {
+          lines.push({ type: "remove", text: rem, oldLine: oldLine++ })
+        } else if (add !== undefined) {
+          lines.push({ type: "add", text: add, newLine: newLine++ })
+        }
+      }
+      i++
+      continue
+    }
+
+    const chunkLines = splitChangeLines(change.value)
+    for (const text of chunkLines) {
+      if (change.added) {
+        lines.push({ type: "add", text, newLine: newLine++ })
+      } else if (change.removed) {
+        lines.push({ type: "remove", text, oldLine: oldLine++ })
+      } else {
+        lines.push({
+          type: "context",
+          text,
+          oldLine: oldLine++,
+          newLine: newLine++,
+        })
+      }
+    }
+  }
+
+  return lines
+}
+
+function looksLikeUnifiedPatch(text: string) {
+  return /^(diff --git |--- |\+\+\+ |@@ )/m.test(text)
+}
+
+function parseUnifiedPatch(patch: string): ToolDiffLine[] | null {
+  if (!looksLikeUnifiedPatch(patch)) return null
+  const lines: ToolDiffLine[] = []
+  let oldLine = 0
+  let newLine = 0
+
+  for (const raw of patch.split("\n")) {
+    if (raw.startsWith("@@")) {
+      const match = raw.match(/@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/)
+      if (match) {
+        oldLine = Number(match[1])
+        newLine = Number(match[2])
+      }
+      continue
+    }
+    if (
+      raw.startsWith("diff ") ||
+      raw.startsWith("index ") ||
+      raw.startsWith("--- ") ||
+      raw.startsWith("+++ ")
+    ) {
+      continue
+    }
+    if (raw.startsWith("+")) {
+      lines.push({ type: "add", text: raw.slice(1), newLine: newLine++ })
+    } else if (raw.startsWith("-")) {
+      lines.push({ type: "remove", text: raw.slice(1), oldLine: oldLine++ })
+    } else if (raw.startsWith("\\")) {
+      continue
+    } else {
+      const text = raw.startsWith(" ") ? raw.slice(1) : raw
+      lines.push({
+        type: "context",
+        text,
+        oldLine: oldLine || undefined,
+        newLine: newLine || undefined,
+      })
+      if (oldLine) oldLine++
+      if (newLine) newLine++
+    }
+  }
+
+  return lines.length > 0 ? applyWordHighlights(lines) : null
+}
+
+/** Pair adjacent remove/add rows so changed tokens get Cursor-style chips. */
+function applyWordHighlights(lines: ToolDiffLine[]): ToolDiffLine[] {
+  const out: ToolDiffLine[] = []
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]
+    const next = lines[i + 1]
+    if (
+      line.type === "remove" &&
+      next?.type === "add" &&
+      !line.segments &&
+      !next.segments
+    ) {
+      const segments = wordSegments(line.text, next.text)
+      out.push({ ...line, segments: segments.removed })
+      out.push({ ...next, segments: segments.added })
+      i++
+      continue
+    }
+    out.push(line)
+  }
+  return out
+}
+
+/** Build a Cursor-style unified diff from Edit / Write / ApplyPatch tool args. */
+function extractToolDiff(tool: MessageToolCallData): ToolDiffLine[] | null {
+  if (!isFileMutationTool(tool.name)) return null
+  const args = parseToolArgs(tool.input)
+
+  // Cursor editToolCall result folds `diffString` into args.diff (see cursor-agent).
+  const patch =
+    asString(args.patch) ??
+    asString(args.diff) ??
+    (tool.output && looksLikeUnifiedPatch(tool.output) ? tool.output : undefined)
+  if (patch) {
+    const parsed = parseUnifiedPatch(patch)
+    if (parsed) return parsed
+  }
+
+  const oldText =
+    asRawString(args.old_string) ??
+    asRawString(args.oldString) ??
+    asRawString(args.old_str) ??
+    asRawString(args.oldText)
+  const newText =
+    asRawString(args.new_string) ??
+    asRawString(args.newString) ??
+    asRawString(args.new_str) ??
+    asRawString(args.newText)
+
+  if (oldText !== undefined && newText !== undefined) {
+    return buildDiffLines(oldText, newText)
+  }
+
+  // Cursor streams the after-file as streamContent; writeToolCall uses fileText.
+  const contents =
+    asRawString(args.contents) ??
+    asRawString(args.content) ??
+    asRawString(args.file_text) ??
+    asRawString(args.fileText) ??
+    asRawString(args.streamContent)
+
+  if (contents !== undefined && oldText === undefined) {
+    return buildDiffLines("", contents)
+  }
+
+  return null
+}
+
+function formatDiffStats(lines: ToolDiffLine[]) {
+  let added = 0
+  let removed = 0
+  for (const line of lines) {
+    if (line.type === "add") added++
+    else if (line.type === "remove") removed++
+  }
+  return { added, removed }
+}
+
+/**
+ * Added / removed is the one place a raw palette earns its keep — no theme
+ * token carries "this line grew". Every pair below ships a dark variant or
+ * an alpha blend, so a re-themed app still reads correctly.
+ */
+function DiffStats({
+  added,
+  removed,
+  className,
+}: {
+  added: number
+  removed: number
+  className?: string
+}) {
+  if (added === 0 && removed === 0) return null
+  return (
+    <span
+      data-slot="message-tool-stats"
+      className={cn(
+        "inline-flex shrink-0 items-center gap-1.5 font-mono text-[12px] tabular-nums",
+        className
+      )}
+    >
+      {added > 0 ? (
+        <span className="text-emerald-600 dark:text-emerald-400">+{added}</span>
+      ) : null}
+      {removed > 0 ? (
+        <span className="text-red-500 dark:text-red-400">-{removed}</span>
+      ) : null}
+    </span>
+  )
+}
+
+function langFromPath(path?: string) {
+  if (!path) return undefined
+  const base = path.split(/[\\/]/).pop() ?? path
+  const ext = base.includes(".") ? base.split(".").pop()?.toLowerCase() : undefined
+  if (!ext) return undefined
+  if (ext === "ts") return "ts"
+  if (ext === "tsx") return "tsx"
+  if (ext === "js" || ext === "mjs" || ext === "cjs") return "js"
+  if (ext === "jsx") return "jsx"
+  if (ext === "json") return "json"
+  if (ext === "css") return "css"
+  if (ext === "html") return "html"
+  if (ext === "md" || ext === "mdx") return "markdown"
+  if (ext === "py") return "py"
+  if (ext === "rs") return "rust"
+  if (ext === "go") return "go"
+  if (ext === "yml" || ext === "yaml") return "yaml"
+  if (ext === "toml") return "toml"
+  if (ext === "sql") return "sql"
+  if (ext === "sh" || ext === "bash") return "bash"
+  return undefined
+}
+
+const SHIKI_LANGS = new Set([
+  "ts",
+  "tsx",
+  "js",
+  "jsx",
+  "typescript",
+  "javascript",
+  "json",
+  "python",
+  "py",
+  "bash",
+  "shell",
+  "sh",
+  "css",
+  "html",
+  "md",
+  "markdown",
+  "sql",
+  "yaml",
+  "yml",
+  "toml",
+  "rust",
+  "go",
+  "java",
+  "c",
+  "cpp",
+  "text",
+  "plaintext",
+])
+
+function normalizeLang(lang?: string) {
+  if (!lang) return "text"
+  const l = lang.toLowerCase().trim()
+  if (l === "typescript") return "ts"
+  if (l === "javascript") return "js"
+  if (l === "python") return "py"
+  if (l === "shell" || l === "zsh") return "bash"
+  return SHIKI_LANGS.has(l) ? l : "text"
+}
+
+/**
+ * Shiki is loaded once per page (module-level singleton) and every rendered
+ * snippet is cached, so re-renders and remounts never re-run the highlighter.
+ */
+let shikiModule: Promise<typeof import("shiki")> | null = null
+const highlightCache = new Map<string, string>()
+const HIGHLIGHT_CACHE_MAX = 200
+
+function loadShiki() {
+  shikiModule ??= import("shiki")
+  return shikiModule
+}
+
+async function highlight(
+  code: string,
+  lang: string,
+  theme: string,
+  structure: "classic" | "inline" = "classic"
+) {
+  const key = `${theme}\0${lang}\0${structure}\0${code}`
+  const cached = highlightCache.get(key)
+  if (cached !== undefined) return cached
+  const { codeToHtml } = await loadShiki()
+  const html = await codeToHtml(code, {
+    lang,
+    theme,
+    ...(structure === "inline" ? { structure: "inline" as const } : {}),
+  })
+  if (highlightCache.size >= HIGHLIGHT_CACHE_MAX) {
+    const oldest = highlightCache.keys().next().value
+    if (oldest !== undefined) highlightCache.delete(oldest)
+  }
+  highlightCache.set(key, html)
+  return html
+}
+
+/** Memoized: a long diff mounts one of these per line. */
+const InlineDiffCode = React.memo(function InlineDiffCode({
+  code,
+  language,
+}: {
+  code: string
+  language?: string
+}) {
+  const { resolvedTheme } = useTheme()
+  const lang = normalizeLang(language)
+  const theme = resolvedTheme === "dark" ? "github-dark" : "github-light"
+  const cacheKey = `${theme}\0${lang}\0inline\0${code}`
+  // Keyed by the snippet it belongs to, so a re-keyed line never paints the
+  // previous line's HTML while its own highlight is still in flight.
+  const [rendered, setRendered] = React.useState<{
+    key: string
+    html: string
+  } | null>(null)
+
+  React.useEffect(() => {
+    if (!code) return
+    let cancelled = false
+    highlight(code, lang, theme, "inline")
+      .then((out) => {
+        if (!cancelled) setRendered({ key: cacheKey, html: out })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [cacheKey, code, lang, theme])
+
+  const html =
+    highlightCache.get(cacheKey) ??
+    (rendered?.key === cacheKey ? rendered.html : null)
+
+  if (!html) {
+    return <>{code || "\u00a0"}</>
+  }
+
+  return (
+    <span
+      className="lc-diff-shiki [&_span]:!bg-transparent"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+})
+
+const ToolDiff = React.memo(function ToolDiff({
+  lines,
+  language,
+}: {
+  lines: ToolDiffLine[]
+  language?: string
+}) {
+  return (
+    <div
+      data-slot="message-tool-diff"
+      className="max-h-[min(22rem,55vh)] overflow-auto rounded-md border border-border/60 bg-muted/30 font-mono text-[12.5px] leading-[1.7]"
+    >
+      {lines.map((line, index) => {
+        const lineNo =
+          line.type === "remove"
+            ? line.oldLine
+            : (line.newLine ?? line.oldLine)
+        return (
+          <div
+            key={index}
+            data-slot="message-tool-diff-line"
+            data-type={line.type}
+            className={cn(
+              "flex",
+              line.type === "add" && "bg-emerald-500/10",
+              line.type === "remove" && "bg-red-500/10"
+            )}
+          >
+            <span className="w-9 shrink-0 select-none border-r border-border/50 pr-2 text-right text-[11px] tabular-nums text-muted-foreground/45">
+              {lineNo ?? ""}
+            </span>
+            <span
+              className={cn(
+                "w-5 shrink-0 select-none text-center",
+                line.type === "add" &&
+                  "text-emerald-600/80 dark:text-emerald-400/80",
+                line.type === "remove" && "text-red-500/80 dark:text-red-400/80",
+                line.type === "context" && "text-muted-foreground/40"
+              )}
+            >
+              {line.type === "add" ? "+" : line.type === "remove" ? "-" : " "}
+            </span>
+            <span className="min-w-0 flex-1 break-words whitespace-pre-wrap px-1 text-foreground/90">
+              {line.segments ? (
+                line.segments.map((segment, segmentIndex) => (
+                  <span
+                    key={segmentIndex}
+                    className={cn(
+                      segment.highlight &&
+                        (line.type === "add"
+                          ? "rounded-[2px] bg-emerald-500/25"
+                          : "rounded-[2px] bg-red-500/25")
+                    )}
+                  >
+                    {segment.text}
+                  </span>
+                ))
+              ) : (
+                <InlineDiffCode code={line.text} language={language} />
+              )}
+            </span>
+          </div>
+        )
+      })}
+    </div>
+  )
+})
+
+/** Same chrome as ToolDiff, for Read — line gutter + Shiki, no +/- column. */
+const ToolFileView = React.memo(function ToolFileView({
+  content,
+  language,
+  startLine = 1,
+}: {
+  content: string
+  language?: string
+  startLine?: number
+}) {
+  const lines = content.length === 0 ? [""] : content.split("\n")
+  return (
+    <div
+      data-slot="message-tool-file"
+      className="max-h-[min(22rem,55vh)] overflow-auto rounded-md border border-border/60 bg-muted/30 font-mono text-[12.5px] leading-[1.7]"
+    >
+      {lines.map((text, index) => (
+        <div key={index} data-slot="message-tool-file-line" className="flex">
+          <span className="w-9 shrink-0 select-none border-r border-border/50 pr-2 text-right text-[11px] tabular-nums text-muted-foreground/45">
+            {startLine + index}
+          </span>
+          <span className="min-w-0 flex-1 break-words whitespace-pre-wrap px-2 text-foreground/90">
+            <InlineDiffCode code={text} language={language} />
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+})
+
+/** Single Cursor-style tool row — no card chrome. */
+export const MessageToolCall = React.memo(function MessageToolCall({
+  tool,
+  defaultOpen = false,
+  onAskAnswer,
+  className,
+}: {
+  tool: MessageToolCallData
+  defaultOpen?: boolean
+  /**
+   * Called when an Ask Question tool is submitted or skipped. Takes the tool
+   * id first so the same handler can be shared by every row in a turn.
+   */
+  onAskAnswer?: (toolId: string, result: AskQuestionResult) => void
+  className?: string
+}) {
+  const [open, setOpen] = React.useState(defaultOpen)
+  const [askResult, setAskResult] = React.useState<AskQuestionResult | null>(
+    null
+  )
+  const ask = React.useMemo(
+    () => (isAskToolName(tool.name) ? parseAskQuestionInput(tool.input) : null),
+    [tool.name, tool.input]
+  )
+  const parsedAsk = React.useMemo(
+    () => parseAskQuestionResult(tool.output),
+    [tool.output]
+  )
+  const resolvedAsk = askResult ?? parsedAsk
+  const displayTool = React.useMemo((): MessageToolCallData => {
+    if (!askResult) return tool
+    return {
+      ...tool,
+      status: "done",
+      output: formatAskQuestionOutput(askResult),
+    }
+  }, [askResult, tool])
+  const status = displayTool.status ?? "done"
+  const running = status === "running" || status === "pending"
+  const errored = status === "error"
+  const diff = React.useMemo(() => extractToolDiff(displayTool), [displayTool])
+  const showDiff = !!diff && diff.length > 0
+  const readFile = React.useMemo(
+    () => extractReadFile(displayTool),
+    [displayTool]
+  )
+  const showFile = !!readFile
+  const showAskSummary = !!ask && !!resolvedAsk && !running
+  const hasBody =
+    showDiff ||
+    showFile ||
+    showAskSummary ||
+    !!(displayTool.input || displayTool.output)
+  const headline = toolHeadline(displayTool)
+  const args = React.useMemo(
+    () => parseToolArgs(displayTool.input),
+    [displayTool.input]
+  )
+
+  const answerAsk = React.useCallback(
+    (result: AskQuestionResult) => {
+      setAskResult(result)
+      onAskAnswer?.(tool.id, result)
+    },
+    [onAskAnswer, tool.id]
+  )
+
+  const skipAsk = React.useCallback(() => {
+    answerAsk({ skipped: true, answers: {} })
+  }, [answerAsk])
+
+  if (ask && running && !askResult) {
+    return (
+      <AskQuestion
+        title={ask.title}
+        questions={ask.questions}
+        onSubmit={answerAsk}
+        onSkip={skipAsk}
+        className={className}
+      />
+    )
+  }
+
+  const path =
+    asString(args.path) ??
+    asString(args.filePath) ??
+    asString(args.target_file) ??
+    asString(args.file)
+  const language = langFromPath(path)
+  const stats = showDiff ? formatDiffStats(diff) : null
+  const readMeta =
+    showFile && readFile.lineCount != null
+      ? `${readFile.lineCount} lines`
+      : showFile
+        ? `${readFile.content.split("\n").length} lines`
+        : null
+  const shortOutput =
+    !ask &&
+    !stats &&
+    !readMeta &&
+    displayTool.output &&
+    displayTool.output.length < 28 &&
+    !displayTool.output.includes("\n") &&
+    !/^[+\d\s−-]+$/.test(displayTool.output)
+      ? displayTool.output
+      : null
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-slot="message-tool-call"
+      data-status={status}
+      className={cn("group animate-in fade-in duration-150", className)}
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          data-slot="message-tool-call-trigger"
+          disabled={!hasBody}
+          className={cn(
+            disclosureTrigger,
+            "py-[3px]",
+            hasBody
+              ? "cursor-pointer"
+              : "cursor-default hover:text-muted-foreground"
+          )}
+        >
+          {running ? (
+            <Loader2 className="size-3 animate-spin opacity-70" />
+          ) : errored ? (
+            <TriangleAlert className="size-3 text-destructive" />
+          ) : null}
+          <span className="shrink-0">{headline.label}</span>
+          {headline.detail ? (
+            <span
+              className={cn(
+                "min-w-0 truncate font-mono text-[12px] font-medium",
+                errored ? "text-destructive" : "text-foreground/90"
+              )}
+              title={headline.detail}
+            >
+              {headline.detail}
+            </span>
+          ) : null}
+          {stats ? (
+            <DiffStats added={stats.added} removed={stats.removed} />
+          ) : readMeta ? (
+            <span className="shrink-0 text-[12px] text-muted-foreground">
+              {readMeta}
+            </span>
+          ) : shortOutput ? (
+            <span className="shrink-0 text-[12px] text-muted-foreground">
+              {shortOutput}
+            </span>
+          ) : null}
+          {hasBody ? (
+            <ChevronDown
+              className={cn(
+                "size-3 opacity-0 transition-[opacity,transform] duration-150 group-hover:opacity-40",
+                open && "rotate-180 opacity-40"
+              )}
+            />
+          ) : null}
+        </button>
+      </CollapsibleTrigger>
+      {hasBody ? (
+        <CollapsibleContent>
+          <div
+            data-slot="message-tool-call-body"
+            className="mb-1.5 ml-0.5 space-y-1.5 border-l border-border/70 pl-3"
+          >
+            {showAskSummary && ask && resolvedAsk ? (
+              <AskQuestionSummary
+                questions={ask.questions}
+                result={resolvedAsk}
+              />
+            ) : null}
+            {showDiff ? <ToolDiff lines={diff} language={language} /> : null}
+            {showFile && readFile ? (
+              <ToolFileView
+                content={readFile.content}
+                language={language}
+                startLine={readFile.startLine}
+              />
+            ) : null}
+            {!showDiff &&
+            !showFile &&
+            !showAskSummary &&
+            displayTool.input ? (
+              <pre className="m-0 overflow-x-auto py-1 font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
+                {displayTool.input}
+              </pre>
+            ) : null}
+            {displayTool.output &&
+            (errored ||
+              (!showDiff && !showFile && !showAskSummary)) ? (
+              <pre className="m-0 overflow-x-auto py-1 font-mono text-[12px] leading-relaxed break-words whitespace-pre-wrap text-muted-foreground">
+                {displayTool.output}
+              </pre>
+            ) : null}
+          </div>
+        </CollapsibleContent>
+      ) : null}
+    </Collapsible>
+  )
+})
+
+/** Stack of minimal tool rows; collapses behind “Used N tools” when many. */
+export function MessageToolCalls({
+  tools,
+  className,
+  collapseAt = 3,
+  defaultOpen,
+  onAskAnswer,
+}: {
+  tools: MessageToolCallData[]
+  className?: string
+  /** Collapse the list behind a summary when tool count ≥ this. */
+  collapseAt?: number
+  defaultOpen?: boolean
+  onAskAnswer?: (toolId: string, result: AskQuestionResult) => void
+}) {
+  const pendingAsk = tools.some(isPendingAskTool)
+  const many = !pendingAsk && tools.length >= collapseAt
+  const [open, setOpen] = React.useState(defaultOpen ?? !many)
+
+  if (tools.length === 0) return null
+
+  // One shared handler, so the memoized rows keep their render while a
+  // sibling part of the same turn streams.
+  const list = (
+    <div data-slot="message-tool-list" className="flex flex-col">
+      {tools.map((tool) => (
+        <MessageToolCall key={tool.id} tool={tool} onAskAnswer={onAskAnswer} />
+      ))}
+    </div>
+  )
+
+  if (!many) {
+    return (
+      <div data-slot="message-tool-calls" className={cn("mb-3", className)}>
+        {list}
+      </div>
+    )
+  }
+
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={setOpen}
+      data-slot="message-tool-calls"
+      className={cn("mb-3 animate-in fade-in duration-150", className)}
+    >
+      <CollapsibleTrigger asChild>
+        <button
+          type="button"
+          data-slot="message-tool-calls-trigger"
+          className={cn(disclosureTrigger, "w-full")}
+        >
+          <span>
+            Used {tools.length} tool{tools.length === 1 ? "" : "s"}
+          </span>
+          <ChevronDown
+            className={cn(
+              "size-3.5 opacity-50 transition-transform duration-150",
+              open && "rotate-180"
+            )}
+          />
+        </button>
+      </CollapsibleTrigger>
+      <CollapsibleContent>{list}</CollapsibleContent>
+    </Collapsible>
+  )
+}
+
+function HighlightedCode({
+  code,
+  language,
+}: {
+  code: string
+  language?: string
+}) {
+  const { resolvedTheme } = useTheme()
+  const lang = normalizeLang(language)
+  const theme = resolvedTheme === "dark" ? "github-dark" : "github-light"
+  const cacheKey = `${theme}\0${lang}\0classic\0${code}`
+  const [rendered, setRendered] = React.useState<{
+    key: string
+    html: string
+  } | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    highlight(code, lang, theme, "classic")
+      .then((out) => {
+        if (!cancelled) setRendered({ key: cacheKey, html: out })
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [cacheKey, code, lang, theme])
+
+  // Paint straight from cache when we have it — no flash of unhighlighted code.
+  const html =
+    highlightCache.get(cacheKey) ??
+    (rendered?.key === cacheKey ? rendered.html : null)
+
+  if (!html) {
+    return (
+      <pre className="m-0 overflow-x-auto bg-muted px-3.5 py-3 font-mono text-[12.5px] leading-[1.55] text-foreground">
+        <code>{code}</code>
+      </pre>
+    )
+  }
+
+  return (
+    <div
+      className="lc-code-shiki overflow-x-auto bg-muted text-[12.5px] leading-[1.55] [&_code]:font-mono [&_pre]:m-0 [&_pre]:px-3.5 [&_pre]:py-3 [&_pre]:!bg-transparent"
+      dangerouslySetInnerHTML={{ __html: html }}
+    />
+  )
+}
+
+export const MessageCode = React.memo(function MessageCode({
+  block,
+  className,
+}: {
+  block: MessageCodeBlockData
+  className?: string
+}) {
+  const [copied, setCopied] = React.useState(false)
+
+  const copy = React.useCallback(() => {
+    void navigator.clipboard
+      .writeText(block.code)
+      .then(() => setCopied(true))
+      .catch(() => {})
+  }, [block.code])
+
+  React.useEffect(() => {
+    if (!copied) return
+    const id = window.setTimeout(() => setCopied(false), 1200)
+    return () => window.clearTimeout(id)
+  }, [copied])
+
+  const langLabel = (block.language ?? "text").toLowerCase()
+
+  if (langLabel === "mermaid") {
+    return (
+      <div className={cn("my-3", className)}>
+        <MessageMarkdown>{`\`\`\`mermaid\n${block.code}\n\`\`\``}</MessageMarkdown>
+      </div>
+    )
+  }
+
+  return (
+    <div
+      data-slot="message-code"
+      className={cn(
+        "my-3 overflow-hidden rounded-lg border bg-muted animate-in fade-in duration-150",
+        className
+      )}
+    >
+      <div
+        data-slot="message-code-header"
+        className="flex h-8 items-center gap-2 border-b px-2.5"
+      >
+        <span className="rounded-sm border px-1.5 py-0.5 font-mono text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+          {langLabel}
+        </span>
+        {block.title ? (
+          <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-muted-foreground">
+            {block.title}
+          </span>
+        ) : (
+          <span className="flex-1" />
+        )}
+        <button
+          type="button"
+          data-slot="message-code-copy"
+          data-state={copied ? "copied" : "idle"}
+          onClick={copy}
+          title={copied ? "Copied" : "Copy"}
+          aria-label={copied ? "Copied" : "Copy code"}
+          className="inline-grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:pointer-events-none [&_svg]:size-3.5"
+        >
+          {copied ? <Check /> : <Copy />}
+        </button>
+      </div>
+      <HighlightedCode code={block.code} language={block.language} />
+    </div>
+  )
+})
+
+function ArtifactIcon({ kind }: { kind?: string }) {
+  return kind === "table" ? (
+    <Table2 className="size-4" />
+  ) : (
+    <FileText className="size-4" />
+  )
+}
+
+export const MessageArtifact = React.memo(function MessageArtifact({
+  artifact,
+  className,
+}: {
+  artifact: MessageArtifactData
+  className?: string
+}) {
+  const meta = [artifact.kind, artifact.summary].filter(Boolean).join(" · ")
+  const interactive = !!artifact.onOpen
+
+  return (
+    <div
+      data-slot="message-artifact"
+      className={cn(
+        "my-3 overflow-hidden rounded-lg border bg-card animate-in fade-in duration-150",
+        className
+      )}
+    >
+      <button
+        type="button"
+        data-slot="message-artifact-trigger"
+        onClick={artifact.onOpen}
+        disabled={!interactive}
+        className={cn(
+          "flex w-full items-center gap-2.5 bg-muted px-3.5 py-2 text-left outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:ring-inset",
+          interactive ? "cursor-pointer hover:bg-accent" : "cursor-default",
+          artifact.content && "border-b"
+        )}
+      >
+        <span className="inline-flex shrink-0 text-primary">
+          <ArtifactIcon kind={artifact.kind} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[13px] font-medium text-foreground">
+            {artifact.title}
+          </span>
+          {meta ? (
+            <span className="mt-0.5 block truncate text-[11.5px] text-muted-foreground">
+              {meta}
+            </span>
+          ) : null}
+        </span>
+      </button>
+      {artifact.content ? (
+        <div
+          data-slot="message-artifact-content"
+          className="max-h-[min(14rem,40vh)] overflow-auto bg-muted px-3.5 py-2.5 font-mono text-[12.5px] leading-relaxed break-words whitespace-pre-wrap text-foreground"
+        >
+          {artifact.content}
+        </div>
+      ) : null}
+    </div>
+  )
+})
