@@ -26,9 +26,15 @@ import {
   CommandPalette,
   type CommandPaletteSession,
 } from "@/components/command-palette"
+import {
+  ContextUsage,
+  contextBaseTokens,
+  useDraftStore,
+} from "@/components/context-usage"
 import { FolderPicker } from "@/components/folder-picker"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
+import { ProviderLogo } from "@/components/provider-logo"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
   formatAskQuestionOutput,
@@ -64,6 +70,7 @@ import {
   DEFAULT_MODEL_EFFORTS,
   ModelPicker,
   type ModelOption,
+  type ModelPickerGroup,
 } from "@/components/ui/model-picker"
 import {
   PromptSuggestions,
@@ -94,6 +101,7 @@ import {
   seedAssistantMessage,
   toolsFromParts,
 } from "@/lib/message-stream"
+import { joinModelId } from "@/lib/model-providers/ids"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
@@ -285,6 +293,13 @@ export default function ChatPage() {
   const [providers, setProviders] = React.useState<ProviderInfo[]>([])
   const [providerId, setProviderId] = React.useState("")
   const [models, setModels] = React.useState<ModelOption[]>([])
+  /**
+   * Picker sections for the active provider, in order — empty for a provider
+   * that serves models from a single source.
+   */
+  const [modelGroups, setModelGroups] = React.useState<
+    Array<{ id: string; label: string }>
+  >([])
   const [capabilities, setCapabilities] =
     React.useState<ProviderCapabilities | null>(null)
   /** Model ids the active provider says take image input — empty until it says otherwise. */
@@ -391,6 +406,20 @@ export default function ChatPage() {
         ? messages.filter((message) => !isInternalMessage(message))
         : messages,
     [messages]
+  )
+  /**
+   * The composer's context ring. `base` is recomputed every render but only
+   * *changes* when a turn reports its usage, so the memoized composer below is
+   * not rebuilt while one is streaming.
+   */
+  const draftStore = useDraftStore()
+  const contextBase = React.useMemo(
+    () => contextBaseTokens(messages),
+    [messages]
+  )
+  const contextTotal = React.useMemo(
+    () => models.find((option) => option.id === model)?.contextLength,
+    [model, models]
   )
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
@@ -605,16 +634,26 @@ export default function ChatPage() {
       .fetchModels(providerId)
       .then((data) => {
         if (cancelled) return
+        const groups = data.groups ?? []
         setModels(data.models)
+        setModelGroups(groups)
         setCapabilities(data.capabilities ?? null)
         setVisionModels(data.visionModels ?? [])
-        const current = modelRef.current
+        // A grouped catalog hands out composite `<source>/<model>` ids. A pick
+        // stored before that — on the chat, or as the settings default — names
+        // a bare Ollama model, so try its composite form before deciding the
+        // model is gone and silently landing on the first of the list.
+        const resolve = (id: string) => {
+          if (!id) return ""
+          if (data.models.some((m) => m.id === id)) return id
+          if (groups.length === 0 || id.includes("/")) return ""
+          const composite = joinModelId("ollama", id)
+          return data.models.some((m) => m.id === composite) ? composite : ""
+        }
         const next =
-          current && data.models.some((m) => m.id === current)
-            ? current
-            : defaultModel && data.models.some((m) => m.id === defaultModel)
-              ? defaultModel
-              : (data.models[0]?.id ?? "")
+          resolve(modelRef.current) ||
+          resolve(defaultModel) ||
+          (data.models[0]?.id ?? "")
         setModel(next)
         // Only a provider the user just picked writes back: opening a chat
         // resolves models too, and that must not overwrite its stored agent.
@@ -869,7 +908,7 @@ export default function ChatPage() {
    *
    * Fire-and-forget on purpose: the answer is already delivered and persisted,
    * so this owns nothing the chat needs. It reports itself in two places for
-   * two different reasons — a toast at the bottom while it runs, because a
+   * two different reasons — a corner toast while it runs, because a
    * local model can take a few seconds and silence would read as a hang, and a
    * marker in the thread afterwards, because "a file that goes into every
    * future conversation just changed" deserves something the user can scroll
@@ -882,7 +921,9 @@ export default function ChatPage() {
     memoryRunsRef.current.add(sessionId)
 
     const toastId = `memory-${sessionId}`
-    const at = { id: toastId, position: "bottom-center" } as const
+    // No position override: this rides the app's own corner (the `Toaster`'s
+    // `bottom-right`), where every other notification in the app appears.
+    const at = { id: toastId } as const
     toast.loading("Updating memory\u2026", at)
     try {
       const result = await api.updateMemory(sessionId)
@@ -1702,6 +1743,20 @@ export default function ChatPage() {
   )?.name
 
   /**
+   * Group headings carry the source's brand mark. Built once per catalog, not
+   * per render: the composer memo below would otherwise be rebuilt every frame
+   * of a streaming turn.
+   */
+  const pickerGroups = React.useMemo<ModelPickerGroup[]>(
+    () =>
+      modelGroups.map((group) => ({
+        ...group,
+        icon: <ProviderLogo slug={group.id} className="size-3.5" />,
+      })),
+    [modelGroups]
+  )
+
+  /**
    * The composer holds the draft the user is typing and has nothing to do with
    * the answer streaming above it, so it is kept off the per-frame render path.
    */
@@ -1710,6 +1765,7 @@ export default function ChatPage() {
       <ChatInput
         onSend={handleSend}
         onStop={handleStop}
+        onTextChange={draftStore.set}
         isGenerating={isGenerating}
         placeholder={
           pendingAsk
@@ -1736,11 +1792,18 @@ export default function ChatPage() {
               value={model}
               onChange={chooseModel}
               options={models}
+              /* One section is just the flat list with a heading over it. */
+              groups={pickerGroups.length > 1 ? pickerGroups : undefined}
               efforts={showEfforts ? DEFAULT_MODEL_EFFORTS : false}
               effort={effort}
               onEffortChange={setEffort}
               side="top"
               className="min-w-0"
+            />
+            <ContextUsage
+              store={draftStore}
+              base={contextBase}
+              total={contextTotal}
             />
           </>
         }
@@ -1751,6 +1814,9 @@ export default function ChatPage() {
       chooseModel,
       chooseProvider,
       configureProvider,
+      contextBase,
+      contextTotal,
+      draftStore,
       effort,
       handleSend,
       handleStop,
@@ -1759,6 +1825,7 @@ export default function ChatPage() {
       model,
       models,
       pendingAsk,
+      pickerGroups,
       providerId,
       providers,
       showEfforts,

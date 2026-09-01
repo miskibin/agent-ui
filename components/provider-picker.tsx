@@ -3,6 +3,7 @@
 import { Check, ChevronDown, Plug } from "lucide-react"
 import * as React from "react"
 
+import { ProviderLogo, hasProviderLogo } from "@/components/provider-logo"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,6 +13,27 @@ import {
 } from "@/components/ui/dropdown-menu"
 import type { ProviderInfo } from "@/lib/providers/types"
 import { cn } from "@/lib/utils"
+
+/**
+ * Mirrored from `lib/providers/acp` (server-only, so it cannot be imported
+ * here): configured ACP agents live under `acp:<key>` ids.
+ */
+const ACP_PROVIDER_PREFIX = "acp:"
+
+/** Provider ids (or ACP agent keys) whose brand slug is not the id itself. */
+const LOGO_SLUGS: Record<string, string> = {
+  cursorAgent: "cursor",
+  dsh: "deepseek",
+}
+
+/** Brand-mark slug for a provider id; empty when no mark exists. */
+function providerLogoSlug(providerId: string): string {
+  const key = providerId.startsWith(ACP_PROVIDER_PREFIX)
+    ? providerId.slice(ACP_PROVIDER_PREFIX.length)
+    : providerId
+  const slug = LOGO_SLUGS[key] ?? key
+  return hasProviderLogo(slug) ? slug : ""
+}
 
 export type ProviderPickerProps = {
   providers: ProviderInfo[]
@@ -35,6 +57,7 @@ export const ProviderPicker = React.memo(function ProviderPicker({
   className,
 }: ProviderPickerProps) {
   const current = providers.find((provider) => provider.id === value)
+  const currentSlug = current ? providerLogoSlug(current.id) : ""
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -44,14 +67,22 @@ export const ProviderPicker = React.memo(function ProviderPicker({
           type="button"
           data-slot="provider-picker-trigger"
           title="Change provider"
+          /* The name is hidden on a narrow composer, so it is named here too. */
+          aria-label={current ? `Provider: ${current.name}` : "Change provider"}
           disabled={providers.length === 0}
           className={cn(
             "group inline-flex h-7 max-w-full min-w-0 items-center gap-1.5 rounded-md px-2 text-[12px] text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 data-[state=open]:bg-muted data-[state=open]:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0",
             className
           )}
         >
-          <Plug className="size-3.5" />
-          <span className="truncate">{current?.name ?? "Provider"}</span>
+          {currentSlug ? (
+            <ProviderLogo slug={currentSlug} className="size-3.5" />
+          ) : (
+            <Plug className="size-3.5" />
+          )}
+          <span className="hidden truncate sm:inline">
+            {current?.name ?? "Provider"}
+          </span>
           {current && !current.available ? (
             <span className="size-1.5 shrink-0 rounded-full bg-destructive" />
           ) : null}
@@ -73,6 +104,7 @@ export const ProviderPicker = React.memo(function ProviderPicker({
             Boolean(onConfigure) &&
             !provider.available &&
             Boolean(provider.configureBinary)
+          const slug = providerLogoSlug(provider.id)
 
           return (
             <div
@@ -92,8 +124,13 @@ export const ProviderPicker = React.memo(function ProviderPicker({
                   )}
                 />
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[13px] text-foreground">
-                    {provider.name}
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {slug ? (
+                      <ProviderLogo slug={slug} className="size-3.5" />
+                    ) : null}
+                    <span className="min-w-0 truncate text-[13px] text-foreground">
+                      {provider.name}
+                    </span>
                   </span>
                   <span className="mt-0.5 block text-[11px] text-muted-foreground">
                     {provider.available
