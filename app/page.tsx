@@ -32,7 +32,7 @@ import {
 import { ProviderPicker } from "@/components/provider-picker"
 import {
   formatAskQuestionOutput,
-  isPendingAskTool,
+  isOpenAskTool,
   type AskQuestionResult,
 } from "@/components/ui/ask-question"
 import { ChatInput, type ChatInputPayload } from "@/components/ui/chat-input"
@@ -214,7 +214,6 @@ export default function ChatPage() {
   >({})
   const [runs, setRuns] = React.useState<Record<string, SessionRun>>({})
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
-  const [clock, setClock] = React.useState(nowMs)
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
@@ -234,14 +233,16 @@ export default function ChatPage() {
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
   const isGenerating = !!activeRun
-  const anyRunning = Object.keys(runs).length > 0
   const threadLoading =
     !!activeId &&
     threads[activeId] === undefined &&
     (activeSession?.messageCount ?? 0) > 0
   const isEmptyChat = messages.length === 0 && !threadLoading
   const drawerOpen = mobileNavOpen && !isDesktop
-  const pendingAsk = findPendingAsk(messages)
+  const pendingAsk = React.useMemo(
+    () => findPendingAsk(messages) !== null,
+    [messages]
+  )
 
   /* ---------------------------------------------------------------------- */
   /* Loading                                                                 */
@@ -357,13 +358,6 @@ export default function ChatPage() {
       cancelled = true
     }
   }, [providerId, defaultModel])
-
-  // Tick every second while something is Working so elapsed labels stay fresh;
-  // otherwise age "now" into "2m" on a slower cadence.
-  React.useEffect(() => {
-    const timer = setInterval(() => setClock(nowMs()), anyRunning ? 1_000 : 30_000)
-    return () => clearInterval(timer)
-  }, [anyRunning])
 
   React.useEffect(() => {
     if (!bootstrappedRef.current) return
@@ -593,6 +587,46 @@ export default function ChatPage() {
         setFailures((prev) => ({ ...prev, [sessionId]: true }))
       }
 
+      /**
+       * Stream events land far faster than the browser can paint. Folding a
+       * burst into one queued frame keeps the message list at one render per
+       * frame instead of one per token, and the fold itself stays the shared
+       * reducer so a reload of the thread still matches the live stream.
+       */
+      let queued: AgentStreamEvent[] = []
+      let frame = 0
+      const flush = () => {
+        frame = 0
+        const batch = queued
+        queued = []
+        if (batch.length === 0 || controller.signal.aborted) return
+        patchAssistant((message) =>
+          batch.reduce(
+            (current, event) => applyStreamEvent(current, event),
+            message
+          )
+        )
+      }
+      const enqueue = (event: AgentStreamEvent) => {
+        queued.push(event)
+        if (frame) return
+        frame =
+          typeof requestAnimationFrame === "function"
+            ? requestAnimationFrame(flush)
+            : (setTimeout(flush, 16) as unknown as number)
+      }
+      /** Run-level events must not overtake the text they follow. */
+      const drain = () => {
+        if (frame) {
+          if (typeof cancelAnimationFrame === "function") {
+            cancelAnimationFrame(frame)
+          } else {
+            clearTimeout(frame)
+          }
+        }
+        flush()
+      }
+
       const onEvent = (event: AgentStreamEvent) => {
         if (controller.signal.aborted) return
         if (event.type === "session") {
@@ -600,6 +634,7 @@ export default function ChatPage() {
           return
         }
         if (event.type === "error") {
+          drain()
           toast.error(event.message)
           patchAssistant((message) => ({
             ...message,
@@ -609,6 +644,7 @@ export default function ChatPage() {
           return
         }
         if (event.type === "done") {
+          drain()
           const elapsed = (nowMs() - startedAt) / 1000
           patchAssistant((message) => ({
             ...message,
@@ -627,7 +663,7 @@ export default function ChatPage() {
         if (event.type === "thinking") setStage("thinking")
         else if (event.type === "text") setStage("responding")
         else if (event.type === "tool") setStage("searching")
-        patchAssistant((message) => applyStreamEvent(message, event))
+        enqueue(event)
       }
 
       try {
@@ -654,6 +690,7 @@ export default function ChatPage() {
           markFailed()
         }
       } finally {
+        drain()
         if (abortsRef.current.get(sessionId) === controller) {
           abortsRef.current.delete(sessionId)
         }
@@ -892,31 +929,15 @@ export default function ChatPage() {
           status: run ? "streaming" : failures[session.id] ? "fault" : undefined,
           subtitle,
           meta: run ? (
-            <span
-              className={cn(
-                "font-medium text-primary",
-                session.id !== activeId && "opacity-75"
-              )}
-            >
-              Working · {formatElapsed(run.startedAt, clock)}
-            </span>
+            <WorkingFor startedAt={run.startedAt} dim={session.id !== activeId} />
           ) : failures[session.id] ? (
             <span className="font-medium text-destructive">Failed</span>
           ) : (
-            relativeTime(session.updatedAt, clock)
+            <RelativeTime from={session.updatedAt} />
           ),
         }
       }),
-    [
-      activeId,
-      clock,
-      failures,
-      models,
-      providerId,
-      providerName,
-      runs,
-      sessions,
-    ]
+    [activeId, failures, models, providerId, providerName, runs, sessions]
   )
 
   const paletteSessions = React.useMemo<CommandPaletteSession[]>(
@@ -945,44 +966,173 @@ export default function ChatPage() {
   const showEfforts =
     !!capabilities?.effort && (settings?.chat.defaultEffort ?? "") !== ""
 
-  const activeProvider = providers.find((item) => item.id === providerId)
+  const activeProviderName = providers.find(
+    (item) => item.id === providerId
+  )?.name
 
-  const composer = (
-    <ChatInput
-      onSend={handleSend}
-      onStop={handleStop}
-      isGenerating={isGenerating}
-      placeholder={
-        pendingAsk
-          ? "Add more optional details…"
-          : activeProvider
-            ? `Ask ${activeProvider.name}…`
-            : "Ask anything"
-      }
-      className={cn(
-        "transition-[max-width,padding] duration-300 ease-out",
-        isEmptyChat && "max-w-3xl pb-0 sm:pb-0"
-      )}
-      tools={
-        <>
-          <ProviderPicker
-            providers={providers}
-            value={providerId}
-            onChange={setProviderId}
+  /**
+   * The composer holds the draft the user is typing and has nothing to do with
+   * the answer streaming above it, so it is kept off the per-frame render path.
+   */
+  const composer = React.useMemo(
+    () => (
+      <ChatInput
+        onSend={handleSend}
+        onStop={handleStop}
+        isGenerating={isGenerating}
+        placeholder={
+          pendingAsk
+            ? "Add more optional details…"
+            : activeProviderName
+              ? `Ask ${activeProviderName}…`
+              : "Ask anything"
+        }
+        className={cn(
+          "transition-[max-width,padding] duration-300 ease-out",
+          isEmptyChat && "max-w-3xl pb-0 sm:pb-0"
+        )}
+        tools={
+          <>
+            <ProviderPicker
+              providers={providers}
+              value={providerId}
+              onChange={setProviderId}
+            />
+            <ModelPicker
+              value={model}
+              onChange={setModel}
+              options={models}
+              efforts={showEfforts ? DEFAULT_MODEL_EFFORTS : false}
+              effort={effort}
+              onEffortChange={setEffort}
+              side="top"
+              className="min-w-0"
+            />
+          </>
+        }
+      />
+    ),
+    [
+      activeProviderName,
+      effort,
+      handleSend,
+      handleStop,
+      isEmptyChat,
+      isGenerating,
+      model,
+      models,
+      pendingAsk,
+      providerId,
+      providers,
+      showEfforts,
+    ]
+  )
+
+  /**
+   * The chat list only moves when a session does; keeping it out of the render
+   * the streaming turn drives means the sidebar is not rebuilt every frame.
+   */
+  const sidebar = React.useMemo(
+    () => (
+      <ChatSidebarDnd
+        onDrop={(drop) => {
+          if (drop.kind === "reorder") {
+            setSessions((prev) => arrayMove(prev, drop.from, drop.to))
+            const moved = sessions[drop.from]
+            if (moved) {
+              void api
+                .patchSession(moved.id, { order: drop.to })
+                .catch((err: unknown) =>
+                  toast.error(errorMessage(err, "Could not reorder chats"))
+                )
+            }
+          } else if (drop.action === "pin") {
+            togglePin(drop.itemId, true)
+          } else if (drop.action === "delete") {
+            removeSession(drop.itemId)
+            toast.message("Chat deleted")
+          }
+        }}
+        renderOverlay={(id) => {
+          const item = sessionItems.find((session) => session.id === id)
+          if (!item) return null
+          return <ChatSidebarItemGhost item={item} active={item.id === activeId} />
+        }}
+      >
+        <ChatSidebar
+          collapsed={isDesktop ? collapsed : false}
+          onCollapsedChange={(next) =>
+            isDesktop ? setCollapsed(next) : closeDrawer()
+          }
+          edgeZones
+          brand={
+            <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
+              Chats
+            </span>
+          }
+          nav={
+            <>
+              <SideRow
+                icon={<Pencil className="size-4" />}
+                onClick={() => void handleNewChat()}
+              >
+                New chat
+              </SideRow>
+              <SideRow
+                icon={<Search className="size-4" />}
+                hint="⌘K"
+                onClick={() => setPaletteOpen(true)}
+              >
+                Search chats
+              </SideRow>
+            </>
+          }
+          rail={
+            <>
+              <SideIconBtn
+                label="New chat"
+                onClick={() => void handleNewChat()}
+              >
+                <Pencil className="size-4" />
+              </SideIconBtn>
+              <SideIconBtn
+                label="Search chats"
+                onClick={() => setPaletteOpen(true)}
+              >
+                <Search className="size-4" />
+              </SideIconBtn>
+            </>
+          }
+        >
+          <SidebarSessionSection
+            open={chatsOpen}
+            onToggle={() => setChatsOpen((value) => !value)}
+            sessions={sessionItems}
+            activeId={activeId}
+            renameRequest={renameRequest}
+            onSelect={selectSession}
+            onRename={renameSession}
+            onTogglePin={togglePin}
+            onDelete={removeSession}
           />
-          <ModelPicker
-            value={model}
-            onChange={setModel}
-            options={models}
-            efforts={showEfforts ? DEFAULT_MODEL_EFFORTS : false}
-            effort={effort}
-            onEffortChange={setEffort}
-            side="top"
-            className="min-w-0"
-          />
-        </>
-      }
-    />
+        </ChatSidebar>
+      </ChatSidebarDnd>
+    ),
+    [
+      activeId,
+      chatsOpen,
+      collapsed,
+      handleNewChat,
+      isDesktop,
+      closeDrawer,
+      removeSession,
+      renameRequest,
+      renameSession,
+      selectSession,
+      sessionItems,
+      sessions,
+      togglePin,
+    ]
   )
 
   return (
@@ -1004,89 +1154,7 @@ export default function ChatPage() {
           !drawerOpen && "max-md:-translate-x-full"
         )}
       >
-        <ChatSidebarDnd
-          onDrop={(drop) => {
-            if (drop.kind === "reorder") {
-              setSessions((prev) => arrayMove(prev, drop.from, drop.to))
-              const moved = sessions[drop.from]
-              if (moved) {
-                void api
-                  .patchSession(moved.id, { order: drop.to })
-                  .catch((err: unknown) =>
-                    toast.error(errorMessage(err, "Could not reorder chats"))
-                  )
-              }
-            } else if (drop.action === "pin") {
-              togglePin(drop.itemId, true)
-            } else if (drop.action === "delete") {
-              removeSession(drop.itemId)
-              toast.message("Chat deleted")
-            }
-          }}
-          renderOverlay={(id) => {
-            const item = sessionItems.find((session) => session.id === id)
-            if (!item) return null
-            return <ChatSidebarItemGhost item={item} active={item.id === activeId} />
-          }}
-        >
-          <ChatSidebar
-            collapsed={isDesktop ? collapsed : false}
-            onCollapsedChange={(next) =>
-              isDesktop ? setCollapsed(next) : closeDrawer()
-            }
-            edgeZones
-            brand={
-              <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
-                Chats
-              </span>
-            }
-            nav={
-              <>
-                <SideRow
-                  icon={<Pencil className="size-4" />}
-                  onClick={() => void handleNewChat()}
-                >
-                  New chat
-                </SideRow>
-                <SideRow
-                  icon={<Search className="size-4" />}
-                  hint="⌘K"
-                  onClick={() => setPaletteOpen(true)}
-                >
-                  Search chats
-                </SideRow>
-              </>
-            }
-            rail={
-              <>
-                <SideIconBtn
-                  label="New chat"
-                  onClick={() => void handleNewChat()}
-                >
-                  <Pencil className="size-4" />
-                </SideIconBtn>
-                <SideIconBtn
-                  label="Search chats"
-                  onClick={() => setPaletteOpen(true)}
-                >
-                  <Search className="size-4" />
-                </SideIconBtn>
-              </>
-            }
-          >
-            <SidebarSessionSection
-              open={chatsOpen}
-              onToggle={() => setChatsOpen((value) => !value)}
-              sessions={sessionItems}
-              activeId={activeId}
-              renameRequest={renameRequest}
-              onSelect={selectSession}
-              onRename={renameSession}
-              onTogglePin={togglePin}
-              onDelete={removeSession}
-            />
-          </ChatSidebar>
-        </ChatSidebarDnd>
+        {sidebar}
       </div>
 
       <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -1190,6 +1258,39 @@ export default function ChatPage() {
 /* -------------------------------------------------------------------------- */
 /* Pieces                                                                      */
 /* -------------------------------------------------------------------------- */
+
+/**
+ * A live label owns its own tick. A single page-level clock re-rendered the
+ * whole app — sidebar, composer and message list included — once a second for
+ * the sake of one "12s" string.
+ */
+function useTick(everyMs: number) {
+  const [, setTick] = React.useState(0)
+  React.useEffect(() => {
+    const timer = setInterval(() => setTick((n) => n + 1), everyMs)
+    return () => clearInterval(timer)
+  }, [everyMs])
+}
+
+const WorkingFor = React.memo(function WorkingFor({
+  startedAt,
+  dim,
+}: {
+  startedAt: number
+  dim: boolean
+}) {
+  useTick(1_000)
+  return (
+    <span className={cn("font-medium text-primary", dim && "opacity-75")}>
+      Working · {formatElapsed(startedAt, nowMs())}
+    </span>
+  )
+})
+
+const RelativeTime = React.memo(function RelativeTime({ from }: { from: number }) {
+  useTick(30_000)
+  return <>{relativeTime(from, nowMs())}</>
+})
 
 const SidebarSessionSection = React.memo(function SidebarSessionSection({
   open,
@@ -1316,7 +1417,7 @@ function findPendingAsk(messages: StoredMessage[]) {
     const tools = message.tools?.length
       ? message.tools
       : toolsFromParts(message.parts ?? [])
-    const tool = tools.find(isPendingAskTool)
+    const tool = tools.find(isOpenAskTool)
     if (tool) return { messageId: message.id, toolId: tool.id }
   }
   return null
