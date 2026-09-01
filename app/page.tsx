@@ -34,6 +34,7 @@ import {
 import { FolderPicker } from "@/components/folder-picker"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
+import { PermissionPicker } from "@/components/permission-picker"
 import { ProviderLogo } from "@/components/provider-logo"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
@@ -111,7 +112,11 @@ import { joinModelId } from "@/lib/model-providers/ids"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
-import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
+import type {
+  PermissionMode,
+  ProviderCapabilities,
+  ProviderInfo,
+} from "@/lib/providers/types"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
 import { cn } from "@/lib/utils"
 
@@ -135,6 +140,17 @@ const MAX_PREVIEW_SIZE = 60
 
 const EMPTY_MESSAGES: StoredMessage[] = []
 const EMPTY_TODOS: TodoItem[] = []
+/** Stable identity for "this harness offers no permission choice". */
+const EMPTY_PERMISSION_MODES: PermissionMode[] = []
+
+/**
+ * What a chat falls back to when it has no stored pick: the widest mode the
+ * harness offers, which is what these harnesses did before the picker existed.
+ */
+function defaultPermissionMode(modes: PermissionMode[]): PermissionMode | "" {
+  if (modes.length === 0) return ""
+  return modes.includes("full") ? "full" : modes[modes.length - 1]
+}
 
 /**
  * The newest plan in a thread, whoever wrote it — a `todo_write`-style tool
@@ -333,6 +349,26 @@ export default function ChatPage() {
   const [visionModels, setVisionModels] = React.useState<string[]>([])
   const [model, setModel] = React.useState("")
   const [effort, setEffort] = React.useState("")
+  /**
+   * The open chat's stored permission pick, or "" for "never chosen". The mode
+   * a turn actually runs under is derived from this and the harness's own list
+   * (`effectivePermission` below), so a provider switch cannot leave the
+   * composer showing a mode the new harness does not offer.
+   */
+  const [permissionMode, setPermissionMode] = React.useState("")
+  /** The modes the active harness can enforce; empty = it offers no choice. */
+  const permissionModes =
+    capabilities?.permissionModes ?? EMPTY_PERMISSION_MODES
+  /**
+   * The mode this chat's turns run under: its own stored pick while the
+   * harness still offers it, else that harness's default. `""` means there is
+   * no choice to express, and keeps the field out of the request entirely.
+   */
+  const effectivePermission: PermissionMode | "" = permissionModes.includes(
+    permissionMode as PermissionMode
+  )
+    ? (permissionMode as PermissionMode)
+    : defaultPermissionMode(permissionModes)
 
   const [sessions, setSessions] = React.useState<SessionMeta[]>([])
   const [activeId, setActiveId] = React.useState("")
@@ -522,13 +558,23 @@ export default function ChatPage() {
           : fallback
       if (usable) setProviderId(usable)
       if (usable === stored && session?.model) setModel(session.model)
+      // Unlike the model, this is cleared when the chat has no pick of its own:
+      // the harness's default is derived, and a stale mode must not leak from
+      // the chat being left behind into the one being opened.
+      setPermissionMode(
+        usable === stored ? (session?.permissionMode ?? "") : ""
+      )
     },
     []
   )
 
   /** Writes the picked agent onto the open chat, so reopening it restores it. */
   const persistAgent = React.useCallback(
-    (patch: { providerId?: string; model?: string }) => {
+    (patch: {
+      providerId?: string
+      model?: string
+      permissionMode?: string
+    }) => {
       const sessionId = activeIdRef.current
       if (!sessionId) return
       patchLocal(sessionId, patch)
@@ -576,6 +622,14 @@ export default function ChatPage() {
     (id: string) => {
       setModel(id)
       persistAgent({ model: id })
+    },
+    [persistAgent]
+  )
+
+  const choosePermission = React.useCallback(
+    (mode: PermissionMode) => {
+      setPermissionMode(mode)
+      persistAgent({ permissionMode: mode })
     },
     [persistAgent]
   )
@@ -802,7 +856,12 @@ export default function ChatPage() {
       const sessionId = activeIdRef.current
       if (!sessionId) {
         void api
-          .createSession({ providerId, model, ...next })
+          .createSession({
+            providerId,
+            model,
+            permissionMode: effectivePermission || undefined,
+            ...next,
+          })
           .then((created) => {
             setSessions((prev) => [created, ...prev])
             setThreads((prev) => ({ ...prev, [created.id]: [] }))
@@ -820,7 +879,7 @@ export default function ChatPage() {
           toast.error(errorMessage(err, "Could not set the folder"))
         )
     },
-    [model, patchLocal, providerId]
+    [effectivePermission, model, patchLocal, providerId]
   )
 
   const togglePin = React.useCallback((id: string, pinned: boolean) => {
@@ -920,7 +979,11 @@ export default function ChatPage() {
       return
     }
     try {
-      const created = await api.createSession({ providerId, model })
+      const created = await api.createSession({
+        providerId,
+        model,
+        permissionMode: effectivePermission || undefined,
+      })
       setSessions((prev) => [created, ...prev])
       setThreads((prev) => ({ ...prev, [created.id]: [] }))
       if (messages.length > 0) {
@@ -931,7 +994,14 @@ export default function ChatPage() {
     } catch (err) {
       toast.error(errorMessage(err, "Could not start a new chat"))
     }
-  }, [messages.length, model, providerId, selectSession, sessions])
+  }, [
+    effectivePermission,
+    messages.length,
+    model,
+    providerId,
+    selectSession,
+    sessions,
+  ])
 
   /* ---------------------------------------------------------------------- */
   /* Running a turn                                                          */
@@ -998,6 +1068,7 @@ export default function ChatPage() {
       providerId: string
       model: string
       effort?: string
+      permissionMode?: PermissionMode
       attachments?: MessageAttachmentData[]
       animate?: boolean
       titleFrom?: string
@@ -1280,6 +1351,7 @@ export default function ChatPage() {
             model: args.model,
             sessionId,
             effort: args.effort,
+            permissionMode: args.permissionMode,
             userMessageId: userMessage.id,
             assistantMessageId: assistantId,
             attachments: args.attachments,
@@ -1396,7 +1468,11 @@ export default function ChatPage() {
 
       if (!sessionId) {
         try {
-          const created = await api.createSession({ providerId, model })
+          const created = await api.createSession({
+            providerId,
+            model,
+            permissionMode: effectivePermission || undefined,
+          })
           sessionId = created.id
           prior = EMPTY_MESSAGES
           setSessions((prev) => [created, ...prev])
@@ -1431,6 +1507,7 @@ export default function ChatPage() {
         providerId,
         model,
         effort: capabilities?.effort ? effort : undefined,
+        permissionMode: effectivePermission || undefined,
         attachments,
         animate: prior.length === 0,
         titleFrom:
@@ -1445,6 +1522,7 @@ export default function ChatPage() {
       activeId,
       capabilities?.effort,
       capabilities?.vision,
+      effectivePermission,
       effort,
       model,
       patchLocal,
@@ -1504,11 +1582,21 @@ export default function ChatPage() {
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,
+          permissionMode: effectivePermission || undefined,
           internal: true,
         })
       })()
     },
-    [activeId, capabilities?.effort, commitThread, effort, model, providerId, runPrompt]
+    [
+      activeId,
+      capabilities?.effort,
+      commitThread,
+      effectivePermission,
+      effort,
+      model,
+      providerId,
+      runPrompt,
+    ]
   )
 
   const handleEditMessage = React.useCallback(
@@ -1548,10 +1636,20 @@ export default function ChatPage() {
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,
+          permissionMode: effectivePermission || undefined,
         })
       })()
     },
-    [activeId, capabilities?.effort, commitThread, effort, model, providerId, runPrompt]
+    [
+      activeId,
+      capabilities?.effort,
+      commitThread,
+      effectivePermission,
+      effort,
+      model,
+      providerId,
+      runPrompt,
+    ]
   )
 
   const handleDeleteMessage = React.useCallback(
@@ -1834,6 +1932,13 @@ export default function ChatPage() {
               side="top"
               className="min-w-0"
             />
+            {permissionModes.length > 0 && effectivePermission ? (
+              <PermissionPicker
+                modes={permissionModes}
+                value={effectivePermission}
+                onChange={choosePermission}
+              />
+            ) : null}
             <ContextUsage
               store={draftStore}
               input={contextTurn.input}
@@ -1847,12 +1952,14 @@ export default function ChatPage() {
     [
       activeProviderName,
       chooseModel,
+      choosePermission,
       chooseProvider,
       configureProvider,
       contextTotal,
       contextTurn.input,
       contextTurn.output,
       draftStore,
+      effectivePermission,
       effort,
       handleSend,
       handleStop,
@@ -1861,6 +1968,7 @@ export default function ChatPage() {
       model,
       models,
       pendingAsk,
+      permissionModes,
       pickerGroups,
       providerId,
       providers,
