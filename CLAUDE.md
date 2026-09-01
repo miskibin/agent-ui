@@ -91,6 +91,15 @@ one interface:
   back on the app's own origin — a browser will not load `file://` from an http page. The route
   refuses cross-site requests and serves everything sandboxed and `nosniff`; `files.anyPath` in
   settings narrows it from any path (the default) to the app's folders.
+- The file panel: every file a turn touched opens beside the conversation. The components are
+  vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/page.tsx` owns the state
+  — which file is open, the split width under `agent-ui:preview-size`, closing on a chat switch —
+  and mounts the panel as the second pane of a `ResizablePanelGroup` *below* the `AppHeader`, which
+  keeps spanning the full width because it is also the desktop window's drag chrome. Below `md` the
+  same panel slides over the conversation inside that wrapper. `GET /api/file` reads the text: the
+  root is the chat's stored folder, else the provider's workspace, and it is resolved server-side
+  from the session id — the client never names a root. Anything outside it, or inside the app's
+  data directory, is a 403; the panel falls back to the diff alone on any failure.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.

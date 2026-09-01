@@ -167,6 +167,32 @@ export function putMessages(
   })
 }
 
+export type FileResponse = {
+  path: string
+  content: string
+  /** The file was over the route's cap — `content` is only its head. */
+  truncated?: boolean
+}
+
+/**
+ * One file's text, resolved against the provider's workspace. Only ever used
+ * to enrich the preview panel, which already has the diff — callers are
+ * expected to swallow the rejection.
+ */
+export function fetchFile(
+  path: string,
+  providerId: string,
+  sessionId = ""
+): Promise<FileResponse> {
+  const query = new URLSearchParams({ path, provider: providerId })
+  // The chat's own folder, when it has one — resolved server-side from the
+  // stored session, so this is a name, not a root the client gets to pick.
+  if (sessionId) query.set("session", sessionId)
+  return fetch(`/api/file?${query}`, { cache: "no-store" }).then(
+    json<FileResponse>
+  )
+}
+
 export type ChatRequest = {
   prompt: string
   providerId: string
