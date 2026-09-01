@@ -4,6 +4,12 @@ import { mkdir, readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { ModelOption } from "@/components/ui/model-picker"
+import { joinModelId, splitModelId } from "@/lib/model-providers/ids"
+import {
+  enabledModelSources,
+  listSourceModels,
+  type ModelSource,
+} from "@/lib/model-providers/server"
 import { hasPiBinary } from "@/lib/pi-runtime"
 import { withSystemPrefix } from "@/lib/providers/system-prefix"
 import {
@@ -15,7 +21,7 @@ import {
   type OllamaModel,
 } from "@/lib/providers/ollama-api"
 import { dataDir } from "@/lib/settings/server"
-import type { PiSettings } from "@/lib/settings/schema"
+import type { AppSettings, PiSettings } from "@/lib/settings/schema"
 import type {
   AgentProvider,
   AgentRunOptions,
@@ -25,21 +31,28 @@ import type {
 
 export const PI_PROVIDER_ID = "pi"
 
+/** The local server's slug — the `ollama` half of `ollama/<model>`. */
+const OLLAMA_SOURCE = "ollama"
+
 /**
- * The `pi` CLI (https://pi.dev) driving local Ollama models — the minimal
- * agentic harness: four tools (read / write / edit / bash), one subprocess per
- * turn, sessions on disk.
+ * The `pi` CLI (https://pi.dev) driving local Ollama models *and* whatever
+ * OpenAI-compatible model providers are configured — the minimal agentic
+ * harness: four tools (read / write / edit / bash), one subprocess per turn,
+ * sessions on disk.
  *
- * pi reaches Ollama through its OpenAI-compatible endpoint, declared in a
- * `models.json` we generate under `$AGENT_UI_DIR/pi`. Pointing
+ * pi reaches every endpoint through the `models.json` we generate under
+ * `$AGENT_UI_DIR/pi`: one entry per source, addressed the same
+ * `<provider>/<model>` way this app spells a composite model id. Pointing
  * `PI_CODING_AGENT_DIR` there keeps that generated config — and the sessions
  * this app starts — out of the user's own `~/.pi/agent`.
  */
 export function createPiProvider(
   settings: PiSettings,
-  ollamaBaseUrl: string
+  ollamaBaseUrl: string,
+  appSettings: AppSettings
 ): AgentProvider {
   const baseUrl = normalizeBaseUrl(ollamaBaseUrl)
+  const sources = enabledModelSources(appSettings)
   const binPath = settings.binPath.trim()
   const workspace = settings.workspace.trim() || process.cwd()
   const configDir = join(dataDir(), "pi")
@@ -93,8 +106,29 @@ export function createPiProvider(
 
     async listModels(): Promise<ModelOption[]> {
       const models = await fetchOllamaModels(baseUrl)
-      await writeModelsConfig(configDir, baseUrl, models)
-      return models.map(toModelOption)
+      const remote = await collectSourceModels(sources)
+      await writeModelsConfig(configDir, baseUrl, models, remote)
+      return [
+        ...models.map((model) => ({
+          ...toModelOption(model),
+          id: joinModelId(OLLAMA_SOURCE, model.id),
+          group: OLLAMA_SOURCE,
+        })),
+        ...remote.flatMap(({ source, models: listed }) =>
+          listed.map((model) => ({
+            id: joinModelId(source.slug, model.id),
+            name: model.name,
+            group: source.slug,
+          }))
+        ),
+      ]
+    },
+
+    async listModelGroups() {
+      return [
+        { id: OLLAMA_SOURCE, label: "Ollama" },
+        ...sources.map((source) => ({ id: source.slug, label: source.name })),
+      ]
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
@@ -107,9 +141,18 @@ export function createPiProvider(
       }
       // pi resolves `--model` against its own catalog, so the config has to
       // know about the tag before the process starts.
+      const selected = splitModelId(options.model)
       try {
         const models = await fetchOllamaModels(baseUrl)
-        await writeModelsConfig(configDir, baseUrl, models)
+        const remote = await collectSourceModels(sources)
+        await writeModelsConfig(
+          configDir,
+          baseUrl,
+          models,
+          // A source whose catalog could not be listed would otherwise leave
+          // pi unable to resolve the very model that was picked from it.
+          withSelected(remote, selected)
+        )
       } catch (err) {
         yield { type: "error", message: ollamaReachErrorMessage(err, baseUrl) }
         return
@@ -118,12 +161,13 @@ export function createPiProvider(
       yield {
         type: "status",
         stage: "loading",
-        text: `Starting pi with ${options.model}`,
+        text: `Starting pi with ${selected.model}`,
       }
       const { runPiAgent } = await import("@/lib/pi-agent")
       yield* runPiAgent({
         prompt: withSystemPrefix(options.prompt, options.system),
-        model: `ollama/${options.model}`,
+        // pi addresses models exactly the way a composite id spells them.
+        model: joinModelId(selected.source, selected.model),
         sessionId: options.sessionId,
         thinking: options.effort,
         // A per-chat folder beats the one workspace from settings.
@@ -150,17 +194,60 @@ type ModelsConfig = {
   >
 }
 
+type SourceModels = {
+  source: ModelSource
+  models: Array<{ id: string; name: string }>
+}
+
 /**
- * Regenerates `models.json` from whatever Ollama is currently serving.
- * `apiKey` is a placeholder Ollama ignores — pi hides models it considers
- * unauthenticated, so a dummy value is what makes them selectable. The `compat`
- * flags turn off two things Ollama's OpenAI shim rejects: the `developer` role
- * and `reasoning_effort`.
+ * Every configured source's catalog, in settings order. A source that cannot
+ * be listed (key rejected, endpoint down) contributes an empty list rather
+ * than failing the call: one misconfigured provider must not take the whole
+ * model picker — or a running turn — down with it.
+ */
+async function collectSourceModels(
+  sources: ModelSource[]
+): Promise<SourceModels[]> {
+  return Promise.all(
+    sources.map(async (source) => ({
+      source,
+      models: await listSourceModels(source).catch(() => []),
+    }))
+  )
+}
+
+/** Ensures the picked model is in its own source's list — see the call site. */
+function withSelected(
+  listed: SourceModels[],
+  selected: { source: string; model: string }
+): SourceModels[] {
+  return listed.map((entry) =>
+    entry.source.slug === selected.source &&
+    !entry.models.some((model) => model.id === selected.model)
+      ? {
+          ...entry,
+          models: [...entry.models, { id: selected.model, name: selected.model }],
+        }
+      : entry
+  )
+}
+
+/**
+ * Regenerates `models.json` from whatever Ollama is currently serving plus one
+ * entry per configured model provider, keyed by slug so pi's own
+ * `<provider>/<model>` addressing matches this app's composite ids.
+ *
+ * Ollama's `apiKey` is a placeholder it ignores — pi hides models it considers
+ * unauthenticated, so a dummy value is what makes them selectable, and a
+ * keyless custom endpoint gets the same treatment. The `compat` flags turn off
+ * two things Ollama's OpenAI shim rejects: the `developer` role and
+ * `reasoning_effort`.
  */
 async function writeModelsConfig(
   configDir: string,
   baseUrl: string,
-  models: OllamaModel[]
+  models: OllamaModel[],
+  sources: SourceModels[]
 ) {
   const config: ModelsConfig = {
     providers: {
@@ -174,6 +261,21 @@ async function writeModelsConfig(
         },
         models: models.map((model) => ({ id: model.id, name: model.name })),
       },
+      ...Object.fromEntries(
+        sources.map(({ source, models: listed }) => [
+          source.slug,
+          {
+            baseUrl: source.baseUrl,
+            api: "openai-completions",
+            apiKey: source.apiKey || "placeholder",
+            compat: {
+              supportsDeveloperRole: false,
+              supportsReasoningEffort: false,
+            },
+            models: listed.map((model) => ({ id: model.id, name: model.name })),
+          },
+        ])
+      ),
     },
   }
   const serialized = `${JSON.stringify(config, null, 2)}\n`

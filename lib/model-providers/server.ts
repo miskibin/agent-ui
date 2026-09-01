@@ -65,6 +65,12 @@ export function enabledModelSources(settings: AppSettings): ModelSource[] {
  * endpoint whose `/models` is missing, gated or enormous. Otherwise the
  * OpenAI-compatible catalog is fetched. Throws with a message meant for a
  * toast: this one *is* an error, unlike a provider being merely unreachable.
+ *
+ * The key goes out three ways at once: `Authorization: Bearer` is what every
+ * OpenAI-compatible catalog wants, and `x-api-key` + `anthropic-version` are
+ * what Anthropic's `/v1/models` wants instead — it rejects a plain bearer.
+ * The extra two headers are ignored everywhere else, which is cheaper than
+ * special-casing one preset.
  */
 export async function listSourceModels(
   source: ModelSource
@@ -78,7 +84,11 @@ export async function listSourceModels(
     res = await fetch(`${source.baseUrl}/models`, {
       cache: "no-store",
       headers: source.apiKey
-        ? { Authorization: `Bearer ${source.apiKey}` }
+        ? {
+            Authorization: `Bearer ${source.apiKey}`,
+            "x-api-key": source.apiKey,
+            "anthropic-version": "2023-06-01",
+          }
         : undefined,
       signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
     })

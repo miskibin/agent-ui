@@ -92,4 +92,11 @@ export type AgentProvider = {
    * asked. Omit it and every model is treated as vision-incapable.
    */
   visionModels?(): Promise<string[]>
+  /**
+   * Sections for grouped model pickers: `[{ id: sourceSlug, label: sourceName }]`,
+   * matching the `group` each option from `listModels()` carries. Only
+   * providers that serve models from more than one source need it; omit it and
+   * the picker stays a flat list.
+   */
+  listModelGroups?(): Promise<Array<{ id: string; label: string }>>
 }

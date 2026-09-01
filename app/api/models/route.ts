@@ -40,11 +40,16 @@ export async function GET(req: Request) {
     const visionModels = provider.visionModels
       ? await provider.visionModels().catch(() => [])
       : undefined
+    // Sections for the picker, when the provider serves more than one source.
+    const groups = provider.listModelGroups
+      ? await provider.listModelGroups().catch(() => undefined)
+      : undefined
     return NextResponse.json({
       providerId,
       models,
       capabilities: info.capabilities,
       ...(visionModels ? { visionModels } : null),
+      ...(groups ? { groups } : null),
     })
   } catch (err) {
     return NextResponse.json({

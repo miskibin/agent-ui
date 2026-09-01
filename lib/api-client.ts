@@ -1,5 +1,5 @@
 import type { MessageAttachmentData } from "@/components/ui/message"
-import type { ModelOption } from "@/components/ui/model-picker"
+import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker"
 import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
@@ -120,6 +120,11 @@ export type ModelsResponse = {
   capabilities?: ProviderCapabilities
   /** Model ids known to take image input — undefined when the provider can't tell. */
   visionModels?: string[]
+  /**
+   * Picker sections, in order, matching the `group` on each option — present
+   * only for providers that serve models from more than one source.
+   */
+  groups?: ModelPickerGroup[]
   error?: string
 }
 
