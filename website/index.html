@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Agent UI — One fast workspace for every coding agent</title>
+    <meta
+      name="description"
+      content="A fast, local-first desktop workspace for Cursor Agent, DeepSeek Harness, pi, Ollama, and any ACP agent."
+    >
+    <meta name="theme-color" content="#0b0c0e">
+    <link rel="canonical" href="https://miskibin.github.io/agent-ui/">
+    <link rel="icon" href="assets/icon.png">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="Agent UI — Your agents. One workspace.">
+    <meta
+      property="og:description"
+      content="A fast, local-first desktop workspace for coding agents."
+    >
+    <meta property="og:url" content="https://miskibin.github.io/agent-ui/">
+    <meta property="og:image" content="https://miskibin.github.io/agent-ui/assets/chat-run.png">
+    <meta name="twitter:card" content="summary_large_image">
+    <link rel="stylesheet" href="styles.css">
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Agent UI home">
+        <img src="assets/icon.png" alt="" width="32" height="32">
+        <span>Agent UI</span>
+      </a>
+      <nav aria-label="Main navigation">
+        <a href="#why">Why Agent UI</a>
+        <a href="#workspaces">Workspaces</a>
+        <a href="#harnesses">Harnesses</a>
+      </nav>
+      <a class="header-cta" href="https://github.com/miskibin/agent-ui" target="_blank" rel="noreferrer">
+        View on GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-grid" aria-hidden="true"></div>
+        <div class="hero-copy">
+          <p class="eyebrow"><span></span> Local-first agent workspace</p>
+          <h1>Your agents.<br><em>One workspace.</em></h1>
+          <p class="hero-lede">
+            Run Cursor Agent, DeepSeek Harness, pi, Ollama, and any ACP agent from one fast desktop.
+            Keep the folders, files, permissions, and context under your control.
+          </p>
+          <div class="hero-actions">
+            <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">
+              Download the desktop app <span aria-hidden="true">↓</span>
+            </a>
+            <a class="button button-secondary" href="https://github.com/miskibin/agent-ui#quick-start">
+              Build from source <span aria-hidden="true">→</span>
+            </a>
+          </div>
+          <div class="hero-proof" role="group" aria-label="Product highlights">
+            <span><strong>Local</strong> by default</span>
+            <span><strong>Swappable</strong> backends</span>
+            <span><strong>Visible</strong> tool runs</span>
+          </div>
+        </div>
+
+        <div class="hero-visual" role="group" aria-label="Agent UI product preview">
+          <div class="window-chrome">
+            <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+            <span>agent-ui — workspace</span>
+            <span class="window-status"><i></i> local</span>
+          </div>
+          <img
+            src="assets/chat-run.png"
+            alt="Agent UI showing a coding-agent conversation, rendered markdown, and a live file diff"
+            width="2880"
+            height="1800"
+            fetchpriority="high"
+          >
+          <div class="visual-note note-stream"><i></i> Streaming</div>
+          <div class="visual-note note-diff">+3 <span>−1</span> file diff</div>
+        </div>
+
+        <div class="harness-marquee" role="group" aria-label="Supported agent backends">
+          <span>Cursor Agent</span><b>·</b><span>DeepSeek Harness</span><b>·</b><span>pi</span><b>·</b>
+          <span>Ollama</span><b>·</b><span>OpenAI-compatible</span><b>·</b><span>ACP</span>
+        </div>
+      </section>
+
+      <section class="manifesto section" id="why">
+        <div class="section-heading split-heading">
+          <div>
+            <p class="kicker">The idea</p>
+            <h2>The agent is only half the experience.</h2>
+          </div>
+          <p>
+            Great models still need a place to work. Agent UI adds the durable layer around them:
+            projects, conversations, permissions, files, diffs, and a clear view of what is happening.
+          </p>
+        </div>
+
+        <div class="equation" role="group" aria-label="Model plus harness plus Agent UI makes a complete coding workspace">
+          <article>
+            <span class="equation-number">01</span>
+            <div class="equation-mark">M</div>
+            <h3>Model</h3>
+            <p>The intelligence you choose — local or hosted.</p>
+          </article>
+          <div class="operator" aria-hidden="true">+</div>
+          <article>
+            <span class="equation-number">02</span>
+            <div class="equation-mark">H</div>
+            <h3>Harness</h3>
+            <p>The tools, planning loop, and execution runtime.</p>
+          </article>
+          <div class="operator" aria-hidden="true">+</div>
+          <article class="equation-highlight">
+            <span class="equation-number">03</span>
+            <div class="equation-mark">UI</div>
+            <h3>Workspace</h3>
+            <p>The interface that makes agent work legible and manageable.</p>
+          </article>
+          <div class="operator" aria-hidden="true">=</div>
+          <div class="equation-result">
+            <span>Complete</span>
+            <strong>coding system</strong>
+          </div>
+        </div>
+      </section>
+
+      <section class="statement section-wide">
+        <p class="kicker">Why Agent UI</p>
+        <h2>Switch the engine.<br><em>Keep your cockpit.</em></h2>
+        <p class="statement-copy">
+          Stop relearning a different interface for every agent. Agent UI normalizes the parts you use
+          every day without flattening what makes each harness useful.
+        </p>
+      </section>
+
+      <section class="feature-showcase section" id="workspaces">
+        <div class="feature-copy">
+          <p class="kicker">01 — See the work</p>
+          <h2>Every run has a shape.</h2>
+          <p>
+            Reasoning, status, tool calls, markdown, artifacts, and file changes stream into one coherent
+            timeline. Long runs feel alive instead of frozen, and the result stays reviewable after they end.
+          </p>
+          <ul class="feature-list">
+            <li><span>↳</span> Live reasoning and progress states</li>
+            <li><span>↳</span> Expandable tool calls and permission prompts</li>
+            <li><span>↳</span> Rich markdown, code, math, and diagrams</li>
+            <li><span>↳</span> File previews and inline diffs</li>
+          </ul>
+        </div>
+        <figure class="product-frame product-frame-dark">
+          <figcaption><span>Live run</span><span>Everything in context</span></figcaption>
+          <img
+            src="assets/chat-dark.png"
+            alt="Dark Agent UI conversation with agent output, tool activity, and the composer"
+            width="2720"
+            height="1720"
+            loading="lazy"
+          >
+        </figure>
+      </section>
+
+      <section class="benefit-grid section">
+        <article class="benefit benefit-large">
+          <p class="benefit-index">01</p>
+          <h3>Fast enough to disappear.</h3>
+          <p>
+            Streaming updates are batched, message rows stay stable, and heavy views load when you need them.
+            The desktop shell boots the local app before showing the window, without a white flash.
+          </p>
+          <div class="pulse-line" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        </article>
+        <article class="benefit">
+          <p class="benefit-index">02</p>
+          <h3>Local-first, not cloud-dependent.</h3>
+          <p>Your chats and settings live in local JSON. Use local models, hosted APIs, or both.</p>
+          <div class="mini-terminal" aria-hidden="true"><span>data</span><b>~/.agent-ui/</b><i>local</i></div>
+        </article>
+        <article class="benefit">
+          <p class="benefit-index">03</p>
+          <h3>Permissions you can see.</h3>
+          <p>Choose read-only, edits, or full access per session whenever the harness supports it.</p>
+          <div class="permission-scale" aria-hidden="true"><span>read</span><span class="active">edit</span><span>full</span></div>
+        </article>
+        <article class="benefit benefit-wide">
+          <p class="benefit-index">04</p>
+          <h3>Built around real repositories.</h3>
+          <p>
+            Give each chat a working folder. Sessions are grouped by checkout and branch, so parallel work
+            stays organized without pretending your filesystem does not exist.
+          </p>
+        </article>
+      </section>
+
+      <section class="workspace-section section-wide">
+        <div class="workspace-grid">
+          <figure class="product-frame folder-frame">
+            <figcaption><span>Working folder</span><span>Pick the real checkout</span></figcaption>
+            <img
+              src="assets/folder-picker.png"
+              alt="Agent UI working-folder picker showing two local repositories"
+              width="2720"
+              height="1720"
+              loading="lazy"
+            >
+          </figure>
+          <div class="workspace-copy">
+            <p class="kicker">02 — Stay oriented</p>
+            <h2>Your workspaces are the navigation.</h2>
+            <p>
+              Chats follow the projects they belong to. Pin the important ones, search everything with
+              <kbd>⌘ K</kbd>, and keep two agents working in two checkouts without mixing their context.
+            </p>
+            <div class="command-card">
+              <span class="command-icon" aria-hidden="true">⌕</span>
+              <div><strong>Command palette</strong><small>Chats, actions, settings — one shortcut.</small></div>
+              <kbd>⌘ K</kbd>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="harness-section section" id="harnesses">
+        <div class="section-heading split-heading">
+          <div>
+            <p class="kicker">03 — Bring your agent</p>
+            <h2>One UI. No backend lock-in.</h2>
+          </div>
+          <p>
+            Pick a harness, then pick its model source. Agent UI keeps those choices separate, so a new model
+            does not require a new desktop — and an ACP-compatible agent needs configuration, not a fork.
+          </p>
+        </div>
+
+        <div class="harness-grid">
+          <article class="harness-card featured">
+            <div class="harness-top"><span class="provider-mark cursor">›_</span><span class="available">Available</span></div>
+            <h3>Cursor Agent</h3>
+            <p>Full agentic runs in the folder you choose, backed by the local Cursor CLI.</p>
+            <span class="card-meta">Native sessions · tools · resume</span>
+          </article>
+          <article class="harness-card">
+            <div class="harness-top"><span class="provider-mark dsh">DS</span><span class="available">ACP</span></div>
+            <h3>DeepSeek Harness</h3>
+            <p>DeepSeek's tool-rich harness, integrated over its ACP profile with sandbox controls.</p>
+            <span class="card-meta">25 tools · plans · permissions</span>
+          </article>
+          <article class="harness-card">
+            <div class="harness-top"><span class="provider-mark pi">π</span><span class="available">Lean</span></div>
+            <h3>pi</h3>
+            <p>A small agent harness that gives local and hosted models room to reason and act.</p>
+            <span class="card-meta">Files · shell · compact context</span>
+          </article>
+          <article class="harness-card">
+            <div class="harness-top"><span class="provider-mark ollama">◌</span><span class="available">Local</span></div>
+            <h3>Ollama</h3>
+            <p>Direct chat with local models, including thinking support and honest cold-start status.</p>
+            <span class="card-meta">Private · offline · model catalog</span>
+          </article>
+          <article class="harness-card">
+            <div class="harness-top"><span class="provider-mark direct">↗</span><span class="available">Direct</span></div>
+            <h3>Model providers</h3>
+            <p>Connect OpenAI-compatible endpoints from ten presets or add your own base URL.</p>
+            <span class="card-meta">Hosted · self-hosted · tested</span>
+          </article>
+          <article class="harness-card dashed">
+            <div class="harness-top"><span class="provider-mark acp">+</span><span class="available">Open</span></div>
+            <h3>Any ACP agent</h3>
+            <p>Add a command, arguments, workspace, and permission policy. No application code required.</p>
+            <span class="card-meta">Configure, don't integrate</span>
+          </article>
+        </div>
+      </section>
+
+      <section class="settings-section section-wide">
+        <div class="settings-copy">
+          <p class="kicker">04 — Make it yours</p>
+          <h2>Your setup, without the setup tax.</h2>
+          <p>
+            Configure harness paths, model providers, defaults, memory, sound, and themes once. Agent UI
+            checks availability at runtime and tells you what needs attention.
+          </p>
+          <div class="theme-chips" role="group" aria-label="Included visual themes">
+            <span>Modern Minimal</span><span>Graphite</span><span>T3 Chat</span><span>Perpetuity</span><span>+5</span>
+          </div>
+        </div>
+        <figure class="product-frame settings-frame">
+          <figcaption><span>Appearance</span><span>Nine themes, light and dark</span></figcaption>
+          <img
+            src="assets/settings.png"
+            alt="Agent UI appearance settings with a grid of built-in themes"
+            width="1360"
+            height="860"
+            loading="lazy"
+          >
+        </figure>
+      </section>
+
+      <section class="principles section">
+        <p class="kicker">Small details, serious workspace</p>
+        <div class="principle-list">
+          <article><span>01</span><h3>Cold model?</h3><p>The app says it is loading — and names it — instead of pretending it is thinking.</p></article>
+          <article><span>02</span><h3>Long task?</h3><p>The latest plan stays above the composer, with progress visible at a glance.</p></article>
+          <article><span>03</span><h3>Agent waiting?</h3><p>Status appears in the conversation and the sidebar, so background work never looks dead.</p></article>
+          <article><span>04</span><h3>Run finished?</h3><p>Completion sound, file summary, and diff review put the result back in your hands.</p></article>
+        </div>
+      </section>
+
+      <section class="final-cta section-wide">
+        <div class="final-grid" aria-hidden="true"></div>
+        <img class="final-icon" src="assets/icon.png" alt="" width="76" height="76">
+        <p class="kicker">Open source · local first · built for agents</p>
+        <h2>Give your agents<br><em>a better place to work.</em></h2>
+        <div class="hero-actions">
+          <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">
+            Download Agent UI <span aria-hidden="true">↓</span>
+          </a>
+          <a class="button button-secondary" href="https://github.com/miskibin/agent-ui">
+            Star on GitHub <span aria-hidden="true">↗</span>
+          </a>
+        </div>
+        <p class="version-note">Windows x64 · signed automatic updates</p>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="brand" href="#top"><img src="assets/icon.png" alt="" width="28" height="28"><span>Agent UI</span></a>
+      <p>One fast workspace for every coding agent.</p>
+      <div>
+        <a href="https://github.com/miskibin/agent-ui">GitHub</a>
+        <a href="https://github.com/miskibin/agent-ui/releases">Releases</a>
+        <a href="https://github.com/miskibin/agent-ui/blob/main/LICENSE">License</a>
+      </div>
+    </footer>
+  </body>
+</html>

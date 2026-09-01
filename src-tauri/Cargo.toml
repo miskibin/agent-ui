@@ -1,6 +1,6 @@
 [package]
 name = "agent-ui"
-version = "0.1.0"
+version = "0.3.1"
 description = "Agent UI desktop shell"
 edition = "2021"
 rust-version = "1.82"
