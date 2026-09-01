@@ -14,9 +14,63 @@ on:
 permissions:
   contents: write
 
+env:
+  # The tag being cut: the pushed tag, or the one a manual dispatch asked for.
+  RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+
 jobs:
+  # The release is created once, up front, so the bundle jobs upload into the
+  # same one instead of four of them racing to create it. It stays a draft
+  # until every platform has uploaded, so it never goes public half-populated.
+  create-release:
+    name: Create draft release
+    runs-on: ubuntu-latest
+
+    outputs:
+      release_id: ${{ steps.create.outputs.result }}
+
+    steps:
+      - uses: actions/github-script@v8
+        id: create
+        with:
+          # `result-encoding: string` keeps the id out of JSON quoting, so it
+          # can be passed straight to tauri-action's `releaseId`.
+          result-encoding: string
+          script: |
+            const tag = process.env.RELEASE_TAG
+            if (!tag) throw new Error("No release tag resolved for this run")
+
+            // Re-running the workflow for a tag must not create a second
+            // release for it.
+            const releases = await github.paginate(github.rest.repos.listReleases, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              per_page: 100,
+            })
+            const existing = releases.find((release) => release.tag_name === tag)
+            if (existing) {
+              core.info(`Reusing release ${existing.id} for ${tag}`)
+              return existing.id
+            }
+
+            // A draft release does not move any ref; the tag is created at
+            // `target_commitish` when the publish job flips it to public.
+            const { data } = await github.rest.repos.createRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              tag_name: tag,
+              target_commitish: context.sha,
+              name: `Agent UI ${tag}`,
+              draft: true,
+              prerelease: false,
+              generate_release_notes: true,
+            })
+            core.info(`Created release ${data.id} for ${tag}`)
+            return data.id
+
   bundle:
     name: ${{ matrix.label }}
+    needs: create-release
     runs-on: ${{ matrix.os }}
 
     strategy:
@@ -88,8 +142,23 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AGENT_UI_DESKTOP_PREPARED: "1"
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          releaseName: Agent UI ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
-          releaseDraft: true
-          prerelease: false
+          releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+
+  # Only now, with every installer attached, does the release become visible.
+  publish:
+    name: Publish release
+    needs: [create-release, bundle]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: Number("${{ needs.create-release.outputs.release_id }}"),
+              draft: false,
+            })
+            core.info(`Published ${process.env.RELEASE_TAG}`)
