@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils"
 import { AppearanceSection } from "./appearance-section"
 import { ChatSection } from "./chat-section"
 import { DataSection } from "./data-section"
+import { MemorySection } from "./memory-section"
 import { ProvidersSection } from "./providers-section"
 import { useAppSettings } from "./use-app-settings"
 
@@ -23,6 +24,7 @@ const SECTIONS = [
   { id: "appearance", label: "Appearance" },
   { id: "providers", label: "Providers" },
   { id: "chat", label: "Chat" },
+  { id: "memory", label: "Memory" },
   { id: "data", label: "Data" },
 ]
 
@@ -118,6 +120,7 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
             <AppearanceSection />
             <ProvidersSection {...settings} />
             <ChatSection {...settings} />
+            <MemorySection {...settings} />
             <DataSection dataDir={dataDir} {...settings} />
 
             <p className="pb-6 text-[11px] text-muted-foreground">

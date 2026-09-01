@@ -20,6 +20,7 @@ import {
   type OllamaModel,
 } from "@/lib/providers/ollama-api"
 import type { AcpAgentSettings } from "@/lib/settings/schema"
+import { withSystemPrefix } from "@/lib/providers/system-prefix"
 import type {
   AgentProvider,
   AgentRunOptions,
@@ -188,7 +189,7 @@ export function createAcpProvider(
       const { runAcpAgent } = await import("@/lib/acp-agent")
       yield* runAcpAgent({
         spawn: spec,
-        prompt: options.prompt,
+        prompt: withSystemPrefix(options.prompt, options.system),
         model: decodeModelId(id, options.model, isDsh),
         effort: options.effort,
         sessionId: options.sessionId,
