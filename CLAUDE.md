@@ -40,7 +40,11 @@ one interface:
   (`tools`, `resume`, `effort`, `vision`). One streaming protocol for every backend:
   `AgentStreamEvent` (`session · thinking · tool · text · done · error`).
 - Providers: `mock` (scripted), `cursor` (spawns the `cursor-agent` CLI, resumes by session id),
-  `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history).
+  `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
+  `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over the same Ollama server —
+  four tools, resumes by pi session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-agent.ts`
+  owns the subprocess and event translation, and a generated `models.json` under
+  `$AGENT_UI_DIR/pi` points pi at Ollama's OpenAI-compatible endpoint).
   New backend = one file in `lib/providers/` + a `registry.ts` entry + settings schema wiring.
 - Persistence: JSON under `~/.agent-ui` (`AGENT_UI_DIR` override) via `lib/store/` —
   `sessions/index.json` (sidebar metadata) separate from `sessions/<id>.json` (transcripts).

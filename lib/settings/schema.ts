@@ -20,6 +20,14 @@ export type OllamaSettings = {
   baseUrl: string
 }
 
+export type PiSettings = {
+  enabled: boolean
+  /** Absolute path to the `pi` binary; empty = autodetect on PATH. */
+  binPath: string
+  /** Directory the agent may read and write; empty = the app's cwd. */
+  workspace: string
+}
+
 export type CursorAgentSettings = {
   enabled: boolean
   /** Absolute path override; empty = autodetect on PATH. */
@@ -34,6 +42,7 @@ export type ProviderSettings = {
   /** Provider id the composer uses by default. */
   active: string
   ollama: OllamaSettings
+  pi: PiSettings
   cursorAgent: CursorAgentSettings
   mock: MockSettings
 }
@@ -59,6 +68,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   providers: {
     active: "mock",
     ollama: { enabled: true, baseUrl: "http://localhost:11434" },
+    pi: { enabled: true, binPath: "", workspace: "" },
     cursorAgent: { enabled: true, binPath: "" },
     mock: { enabled: true },
   },
@@ -84,6 +94,10 @@ export function normalizeSettings(raw: unknown): AppSettings {
       ollama: {
         ...DEFAULT_SETTINGS.providers.ollama,
         ...asObject(asObject(value.providers).ollama),
+      },
+      pi: {
+        ...DEFAULT_SETTINGS.providers.pi,
+        ...asObject(asObject(value.providers).pi),
       },
       cursorAgent: {
         ...DEFAULT_SETTINGS.providers.cursorAgent,

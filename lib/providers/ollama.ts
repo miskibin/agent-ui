@@ -1,7 +1,13 @@
 import "server-only"
 
-import type { ModelOption } from "@/components/ui/model-picker"
 import type { OllamaSettings } from "@/lib/settings/schema"
+import {
+  fetchOllamaModels,
+  normalizeBaseUrl,
+  ollamaReachErrorMessage,
+  probeOllama,
+  toModelOption,
+} from "@/lib/providers/ollama-api"
 import type {
   AgentProvider,
   AgentRunOptions,
@@ -11,23 +17,6 @@ import type {
 
 export const OLLAMA_PROVIDER_ID = "ollama"
 
-const PROBE_MS = 1_500
-/** Availability is probed per request; a short cache keeps pickers snappy. */
-const PROBE_CACHE_MS = 10_000
-
-type TagsResponse = {
-  models?: Array<{
-    name?: string
-    model?: string
-    size?: number
-    details?: {
-      family?: string
-      parameter_size?: string
-      quantization_level?: string
-    }
-  }>
-}
-
 type ChatChunk = {
   message?: { content?: string; thinking?: string }
   done?: boolean
@@ -35,15 +24,13 @@ type ChatChunk = {
   total_duration?: number
 }
 
-const probeCache = new Map<string, { at: number; ok: boolean }>()
-
 /**
  * A direct adapter for a local Ollama server — no CLI, no agent loop, just
  * `/api/chat` with `stream: true`. Ollama is stateless, so the chat route
  * replays the thread through `options.history` on every turn.
  */
 export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
-  const baseUrl = settings.baseUrl.trim().replace(/\/+$/, "")
+  const baseUrl = normalizeBaseUrl(settings.baseUrl)
 
   return {
     async info(): Promise<ProviderInfo> {
@@ -65,34 +52,15 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         return { ...base, unavailableReason: "Disabled in settings" }
       }
       if (!baseUrl) return { ...base, unavailableReason: "No base URL set" }
-      const reachable = await probe(baseUrl)
+      const reachable = await probeOllama(baseUrl)
       return reachable
         ? { ...base, available: true }
         : { ...base, unavailableReason: `No server at ${baseUrl}` }
     },
 
     async listModels() {
-      const res = await fetch(`${baseUrl}/api/tags`, {
-        cache: "no-store",
-        signal: AbortSignal.timeout(5_000),
-      })
-      if (!res.ok) throw new Error(`Ollama /api/tags failed (${res.status})`)
-      const data = (await res.json()) as TagsResponse
-      return (data.models ?? [])
-        .map((entry): ModelOption | null => {
-          const id = entry.model || entry.name
-          if (!id) return null
-          return {
-            id,
-            name: entry.name ?? id,
-            badge: entry.details?.family,
-            description: entry.details?.quantization_level,
-            meta: [entry.details?.parameter_size, formatSize(entry.size)]
-              .filter(Boolean)
-              .join(" · "),
-          }
-        })
-        .filter((model): model is ModelOption => model !== null)
+      const models = await fetchOllamaModels(baseUrl)
+      return models.map(toModelOption)
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
@@ -126,7 +94,7 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         }
       } catch (err) {
         if (options.signal.aborted) return
-        yield { type: "error", message: reachErrorMessage(err, baseUrl) }
+        yield { type: "error", message: ollamaReachErrorMessage(err, baseUrl) }
         return
       }
 
@@ -185,7 +153,7 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         }
       } catch (err) {
         if (!options.signal.aborted) {
-          yield { type: "error", message: reachErrorMessage(err, baseUrl) }
+          yield { type: "error", message: ollamaReachErrorMessage(err, baseUrl) }
         }
       } finally {
         await reader.cancel().catch(() => {})
@@ -212,35 +180,4 @@ function post(
     signal,
     cache: "no-store",
   })
-}
-
-/** Never throws — an unreachable server is a UI state, not an error. */
-async function probe(baseUrl: string) {
-  const cached = probeCache.get(baseUrl)
-  if (cached && Date.now() - cached.at < PROBE_CACHE_MS) return cached.ok
-  let ok = false
-  try {
-    const res = await fetch(`${baseUrl}/api/tags`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(PROBE_MS),
-    })
-    ok = res.ok
-  } catch {
-    ok = false
-  }
-  probeCache.set(baseUrl, { at: Date.now(), ok })
-  return ok
-}
-
-function reachErrorMessage(err: unknown, baseUrl: string) {
-  const message = err instanceof Error ? err.message : String(err)
-  return /fetch failed|ECONNREFUSED/i.test(message)
-    ? `Could not reach Ollama at ${baseUrl}`
-    : message
-}
-
-function formatSize(bytes?: number) {
-  if (!bytes || bytes <= 0) return undefined
-  const gb = bytes / 1024 ** 3
-  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${Math.round(bytes / 1024 ** 2)} MB`
 }
