@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Everything lib/desktop.ts needs: window controls for the custom header, drag regions, resize events, platform detection, and the native folder chooser behind the working-folder picker.",
+  "description": "Everything lib/desktop.ts needs: window controls for the custom header, drag regions, resize events, platform detection, the native folder chooser behind the working-folder picker, and the update check / install / relaunch flow.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
@@ -18,6 +18,8 @@
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "dialog:allow-open",
-    "os:default"
+    "os:default",
+    "updater:default",
+    "process:allow-restart"
   ]
 }

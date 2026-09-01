@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server"
 
+import type { MessageAttachmentData } from "@/components/ui/message"
+import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
 import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
 import { getProvider } from "@/lib/providers/registry"
 import type { AgentStreamEvent, ChatTurn } from "@/lib/providers/types"
@@ -33,6 +35,7 @@ type ChatBody = {
    */
   userMessageId?: string
   assistantMessageId?: string
+  attachments?: unknown
 }
 
 /**
@@ -83,12 +86,16 @@ export async function POST(req: Request) {
   const model = body.model?.trim() || session.model
   const settings = await readSettings()
   const prior = await readMessages(sessionId)
+  const attachments: MessageAttachmentData[] = sanitizeAttachments(
+    body.attachments
+  )
 
   const userMessage: StoredMessage = {
     id: body.userMessageId || newId(),
     content: prompt,
     sender: "user",
     createdAt: Date.now(),
+    ...(attachments.length ? { attachments } : null),
   }
 
   const shouldTitle =
@@ -96,26 +103,40 @@ export async function POST(req: Request) {
     prior.length === 0 &&
     (!session.title || session.title === "New chat")
 
+  // The stored provider session id belongs to whichever backend produced it.
+  // Handing it to a *different* provider after a mid-session switch would
+  // resume a conversation that backend never started.
+  const providerChanged = session.providerId !== providerId
+
   await writeMessages(sessionId, [...prior, userMessage], {
     providerId,
     model,
+    ...(providerChanged ? { providerSessionId: "" } : null),
     ...(shouldTitle ? { title: deriveSessionTitle(prompt) } : null),
   })
 
   // Providers that resume server-side get the id; stateless ones get the
-  // transcript replayed instead.
+  // transcript replayed instead — images included, so a vision model keeps
+  // seeing what was attached earlier in the thread.
   const history: ChatTurn[] | undefined = info.capabilities.resume
     ? undefined
     : prior
-        .filter((message) => message.content.trim().length > 0)
+        .filter(
+          (message) =>
+            message.content.trim().length > 0 ||
+            (message.attachments?.length ?? 0) > 0
+        )
         .map((message) => ({
           role: message.sender === "user" ? ("user" as const) : ("assistant" as const),
           content: message.content,
+          ...(info.capabilities.vision && message.attachments?.length
+            ? { images: message.attachments.map((a) => base64FromDataUrl(a.url)) }
+            : null),
         }))
 
   const startedAt = Date.now()
   let assistant = seedAssistantMessage(body.assistantMessageId || newId())
-  let providerSessionId = session.providerSessionId
+  let providerSessionId = providerChanged ? undefined : session.providerSessionId
   let durationMs: number | undefined
   let usage: AgentTokenUsage | undefined
   const cwd = body.cwd?.trim() || session.cwd
@@ -147,6 +168,9 @@ export async function POST(req: Request) {
           effort: info.capabilities.effort ? body.effort : undefined,
           cwd,
           history,
+          images: info.capabilities.vision
+            ? attachments.map((a) => base64FromDataUrl(a.url))
+            : undefined,
           signal: abort.signal,
         })) {
           if (event.type === "session") providerSessionId = event.sessionId

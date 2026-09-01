@@ -48,7 +48,10 @@ import {
   type ChatSidebarItemData,
 } from "@/components/ui/chat-sidebar"
 import type { GenerationStage } from "@/components/ui/generation-status"
-import type { MessageToolCallData } from "@/components/ui/message"
+import type {
+  MessageAttachmentData,
+  MessageToolCallData,
+} from "@/components/ui/message"
 import { MessageList } from "@/components/ui/message-list"
 import {
   DEFAULT_MODEL_EFFORTS,
@@ -62,6 +65,11 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
+import {
+  MAX_IMAGE_BYTES,
+  isImageFile,
+  readFileAsDataUrl,
+} from "@/lib/attachments"
 import type {
   AgentStatusStage,
   AgentStreamEvent,
@@ -224,6 +232,8 @@ export default function ChatPage() {
   const [models, setModels] = React.useState<ModelOption[]>([])
   const [capabilities, setCapabilities] =
     React.useState<ProviderCapabilities | null>(null)
+  /** Model ids the active provider says take image input — empty until it says otherwise. */
+  const [visionModels, setVisionModels] = React.useState<string[]>([])
   const [model, setModel] = React.useState("")
   const [effort, setEffort] = React.useState("")
 
@@ -368,6 +378,7 @@ export default function ChatPage() {
         if (cancelled) return
         setModels(data.models)
         setCapabilities(data.capabilities ?? null)
+        setVisionModels(data.visionModels ?? [])
         setModel((current) => {
           if (current && data.models.some((m) => m.id === current)) return current
           if (defaultModel && data.models.some((m) => m.id === defaultModel)) {
@@ -576,6 +587,7 @@ export default function ChatPage() {
       providerId: string
       model: string
       effort?: string
+      attachments?: MessageAttachmentData[]
       animate?: boolean
       titleFrom?: string
     }) => {
@@ -587,6 +599,7 @@ export default function ChatPage() {
         content: prompt,
         sender: "user",
         createdAt: startedAt,
+        ...(args.attachments?.length ? { attachments: args.attachments } : null),
       }
       const seeded = [...prior, userMessage, seedAssistantMessage(assistantId)]
 
@@ -794,6 +807,7 @@ export default function ChatPage() {
             effort: args.effort,
             userMessageId: userMessage.id,
             assistantMessageId: assistantId,
+            attachments: args.attachments,
           },
           { onEvent, signal: controller.signal }
         )
@@ -844,9 +858,60 @@ export default function ChatPage() {
       }
 
       const skillPrefix = skills.length > 0 ? `[skills: ${skills.join(", ")}] ` : ""
+
+      // Only images can travel as real attachments, and only to a provider
+      // and model that can actually look at them — everything else falls
+      // back to the original behavior: a plain name mentioned in the text.
+      const visionEligible = !!capabilities?.vision && visionModels.includes(model)
+      const imageFiles = files.filter(isImageFile)
+      const otherFiles = files.filter((file) => !isImageFile(file))
+      const oversizedImages = imageFiles.filter(
+        (file) => file.size > MAX_IMAGE_BYTES
+      )
+      const sizedImages = imageFiles.filter(
+        (file) => file.size <= MAX_IMAGE_BYTES
+      )
+
+      if (oversizedImages.length > 0) {
+        const limitMb = Math.round(MAX_IMAGE_BYTES / (1024 * 1024))
+        toast.error(
+          oversizedImages.length === 1
+            ? `"${oversizedImages[0].name}" is over ${limitMb}MB — attaching the name only`
+            : `${oversizedImages.length} images are over ${limitMb}MB — attaching the names only`
+        )
+      }
+
+      let attachments: MessageAttachmentData[] = []
+      let namedOnly = [...otherFiles, ...oversizedImages]
+
+      if (sizedImages.length > 0) {
+        if (visionEligible) {
+          try {
+            attachments = await Promise.all(
+              sizedImages.map(async (file) => ({
+                id: newId(),
+                name: file.name,
+                mimeType: file.type || "image/*",
+                url: await readFileAsDataUrl(file),
+              }))
+            )
+          } catch (err) {
+            toast.error(errorMessage(err, "Could not read an attached image"))
+            namedOnly = [...namedOnly, ...sizedImages]
+          }
+        } else {
+          const activeName =
+            providers.find((item) => item.id === providerId)?.name ?? providerId
+          toast.message(
+            `${activeName || "This provider"} can't see images — attaching the name only`
+          )
+          namedOnly = [...namedOnly, ...sizedImages]
+        }
+      }
+
       const fileNote =
-        files.length > 0
-          ? `\n\nAttached: ${files.map((file) => file.name).join(", ")}`
+        namedOnly.length > 0
+          ? `\n\nAttached: ${namedOnly.map((file) => file.name).join(", ")}`
           : ""
       const content = `${skillPrefix}${text}${fileNote}`
 
@@ -887,6 +952,7 @@ export default function ChatPage() {
         providerId,
         model,
         effort: capabilities?.effort ? effort : undefined,
+        attachments,
         animate: prior.length === 0,
         titleFrom:
           prior.length === 0 &&
@@ -899,13 +965,16 @@ export default function ChatPage() {
     [
       activeId,
       capabilities?.effort,
+      capabilities?.vision,
       effort,
       model,
       patchLocal,
       providerId,
+      providers,
       runPrompt,
       sessions,
       settings?.chat.autoTitle,
+      visionModels,
     ]
   )
 

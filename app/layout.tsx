@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import "./globals.css"
 import { Toaster } from "sonner"
+import { DesktopUpdater } from "@/components/desktop-updater"
 import { ThemeProvider } from "@/components/theme-provider"
 import {
   APPEARANCE_BOOTSTRAP_SCRIPT,
@@ -53,6 +54,9 @@ export default function RootLayout({
           <AppearanceProvider>{children}</AppearanceProvider>
         </ThemeProvider>
         <Toaster position="top-right" richColors />
+        {/* Renders nothing: schedules the desktop shell's update check for an
+            idle moment after startup. A no-op in a browser tab. */}
+        <DesktopUpdater />
       </body>
     </html>
   )

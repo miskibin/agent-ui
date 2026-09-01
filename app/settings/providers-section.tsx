@@ -4,7 +4,6 @@ import * as React from "react"
 import { RotateCw, TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import {
@@ -18,135 +17,17 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import type { AppSettings } from "@/lib/settings/schema"
 
+import { AcpAgentRows } from "./acp-agents"
+import { StatusBadge, statusKey, useProviderStatus } from "./provider-status"
 import { SettingsRow, SettingsSection } from "./section"
 import type { AppSettingsApi } from "./use-app-settings"
 
-const PROVIDERS = [
+const BUILT_IN_PROVIDERS = [
   { id: "mock", label: "Mock" },
   { id: "ollama", label: "Ollama" },
   { id: "pi", label: "pi (Ollama)" },
   { id: "cursorAgent", label: "Cursor Agent" },
 ] as const
-
-type ProviderStatus = { available: boolean; detail?: string }
-type StatusPhase = "loading" | "ready" | "unavailable"
-type StatusState = { phase: StatusPhase; map: Record<string, ProviderStatus> }
-
-/** "cursor-agent", "cursorAgent" and "Cursor Agent" all collapse to one key. */
-function statusKey(id: string) {
-  return id.toLowerCase().replace(/[^a-z0-9]/g, "")
-}
-
-function readAvailable(value: unknown): ProviderStatus | null {
-  if (typeof value === "boolean") return { available: value }
-  if (!value || typeof value !== "object") return null
-  const entry = value as Record<string, unknown>
-  const flag =
-    entry.available ?? entry.reachable ?? entry.ok ?? entry.installed ?? null
-  const status = typeof entry.status === "string" ? entry.status : null
-  const available =
-    typeof flag === "boolean"
-      ? flag
-      : status
-        ? ["ok", "ready", "available", "online", "reachable"].includes(
-            status.toLowerCase()
-          )
-        : false
-  const detail = [entry.detail, entry.error, entry.message, entry.version].find(
-    (candidate) => typeof candidate === "string" && candidate.length > 0
-  )
-  return { available, detail: detail as string | undefined }
-}
-
-/**
- * `/api/providers` belongs to the agent runtime and its exact shape is still
- * settling, so this accepts an array, `{ providers: [...] }`, or an id-keyed
- * map, and treats anything it can't read as "status unknown".
- */
-function parseStatus(data: unknown): Record<string, ProviderStatus> {
-  const map: Record<string, ProviderStatus> = {}
-  const container = (data ?? {}) as Record<string, unknown>
-  const list = Array.isArray(data)
-    ? data
-    : Array.isArray(container.providers)
-      ? (container.providers as unknown[])
-      : null
-
-  if (list) {
-    for (const item of list) {
-      if (!item || typeof item !== "object") continue
-      const entry = item as Record<string, unknown>
-      const id = entry.id ?? entry.name ?? entry.provider
-      if (typeof id !== "string") continue
-      const status = readAvailable(entry)
-      if (status) map[statusKey(id)] = status
-    }
-    return map
-  }
-
-  for (const [id, value] of Object.entries(container)) {
-    const status = readAvailable(value)
-    if (status) map[statusKey(id)] = status
-  }
-  return map
-}
-
-function useProviderStatus() {
-  const [state, setState] = React.useState<StatusState>({
-    phase: "loading",
-    map: {},
-  })
-
-  const refresh = React.useCallback(async () => {
-    try {
-      const res = await fetch("/api/providers", { cache: "no-store" })
-      if (!res.ok) throw new Error(String(res.status))
-      const map = parseStatus(await res.json())
-      setState({ phase: "ready", map })
-      return map
-    } catch {
-      setState({ phase: "unavailable", map: {} })
-      return null
-    }
-  }, [])
-
-  React.useEffect(() => {
-    // Microtask defer keeps the effect body setState-free for the strict
-    // react-hooks rules; the fetch itself is async anyway.
-    queueMicrotask(() => void refresh())
-  }, [refresh])
-
-  return { ...state, refresh }
-}
-
-function StatusBadge({
-  phase,
-  status,
-}: {
-  phase: StatusPhase
-  status: ProviderStatus | undefined
-}) {
-  if (phase === "loading") return <Skeleton className="h-5 w-20" />
-  if (phase === "unavailable") return null
-  const available = status?.available ?? false
-
-  return (
-    <Badge
-      variant={available ? "secondary" : "outline"}
-      title={status?.detail}
-      className="gap-1.5 text-[11px] font-normal"
-    >
-      <span
-        className={
-          available
-            ? "size-1.5 rounded-full bg-emerald-500"
-            : "size-1.5 rounded-full bg-muted-foreground/50"
-        }
-      />
-      {available ? "Reachable" : "Unreachable"}
-    </Badge>
-  )
-}
 
 export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
   const { phase, map, refresh } = useProviderStatus()
@@ -160,6 +41,24 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
         providers: { ...current.providers, ...patch },
       })),
     [update]
+  )
+
+  const setAcp = React.useCallback(
+    (acp: AppSettings["providers"]["acp"]) => setProviders({ acp }),
+    [setProviders]
+  )
+
+  // ACP agents are configured rather than coded, so the default-provider list
+  // has to be derived from settings instead of a static const.
+  const choices = React.useMemo(
+    () => [
+      ...BUILT_IN_PROVIDERS.map((provider) => ({ ...provider })),
+      ...Object.entries(providers.acp.agents).map(([key, agent]) => ({
+        id: `acp:${key}`,
+        label: agent.name || key,
+      })),
+    ],
+    [providers.acp.agents]
   )
 
   const testOllama = React.useCallback(async () => {
@@ -194,7 +93,7 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {PROVIDERS.map((provider) => (
+                {choices.map((provider) => (
                   <SelectItem key={provider.id} value={provider.id}>
                     {provider.label}
                   </SelectItem>
@@ -353,6 +252,13 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
           }
         />
       </SettingsRow>
+
+      <AcpAgentRows
+        acp={providers.acp}
+        phase={phase}
+        statuses={map}
+        onChange={setAcp}
+      />
 
       {phase === "unavailable" ? (
         <p className="flex items-center gap-2 bg-muted/40 px-4 py-2.5 text-[11.5px] text-muted-foreground">

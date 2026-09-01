@@ -1,3 +1,4 @@
+import type { MessageAttachmentData } from "@/components/ui/message"
 import type { ModelOption } from "@/components/ui/model-picker"
 import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
@@ -97,6 +98,8 @@ export type ModelsResponse = {
   providerId: string
   models: ModelOption[]
   capabilities?: ProviderCapabilities
+  /** Model ids known to take image input — undefined when the provider can't tell. */
+  visionModels?: string[]
   error?: string
 }
 
@@ -173,6 +176,8 @@ export type ChatRequest = {
   /** Minted here so optimistic rows and persisted rows share their ids. */
   userMessageId: string
   assistantMessageId: string
+  /** Images the composer resolved as vision-eligible for this turn. */
+  attachments?: MessageAttachmentData[]
 }
 
 /** Streams `POST /api/chat`, handing every SSE event to `onEvent`. */

@@ -55,6 +55,57 @@ export type MockSettings = {
   enabled: boolean
 }
 
+/**
+ * What we answer an ACP agent's `session/request_permission` with. The turn is
+ * a live subprocess blocked on our reply, and the browser's only channel back
+ * is a *new* POST, so v1 decides from this policy instead of asking the user
+ * mid-run — the same stance `pi` (no prompt at all) and `cursorAgent`
+ * (`--trust --force`) already ship with.
+ */
+export type AcpPermissionMode =
+  | "auto-approve"
+  | "auto-approve-reads"
+  | "reject-all"
+
+/** dsh's own sandbox + approval policy, passed as `DSH_PERMISSION_MODE`. */
+export type DshSandboxMode =
+  | "read-only"
+  | "workspace-write"
+  | "danger-full-access"
+
+/**
+ * Extra knobs only the built-in `dsh` entry uses. An OpenAI-compatible
+ * `baseUrl` (Ollama, say) is wired in through a generated `--patch` overlay;
+ * leaving it empty falls back to DeepSeek's own hosted route, which reads
+ * `apiKey` (or an inherited `DEEPSEEK_API_KEY`).
+ */
+export type DshSettings = {
+  baseUrl: string
+  apiKey: string
+  sandbox: DshSandboxMode
+}
+
+export type AcpAgentSettings = {
+  enabled: boolean
+  /** Display name in the provider picker. */
+  name: string
+  /** `dsh` gets the generated config + `--profile acp`; `generic` is spawned as configured. */
+  kind: "dsh" | "generic"
+  /** Command to spawn — an absolute path, or a name resolved on PATH. */
+  command: string
+  args: string[]
+  env: Record<string, string>
+  /** Session `cwd`, and the root `fs/*` requests are confined to; empty = the app's cwd. */
+  workspace: string
+  permissionMode: AcpPermissionMode
+  dsh: DshSettings
+}
+
+export type AcpSettings = {
+  /** Keyed by a slug that becomes the `acp:<key>` provider id. */
+  agents: Record<string, AcpAgentSettings>
+}
+
 export type ProviderSettings = {
   /** Provider id the composer uses by default. */
   active: string
@@ -62,6 +113,7 @@ export type ProviderSettings = {
   pi: PiSettings
   cursorAgent: CursorAgentSettings
   mock: MockSettings
+  acp: AcpSettings
 }
 
 export type ChatSettings = {
@@ -80,6 +132,24 @@ export type AppSettings = {
   chat: ChatSettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
   recentFolders: string[]
+}
+
+/**
+ * The one ACP agent that ships configured. Listed like `pi`/`cursorAgent` even
+ * when the binary is missing, so the picker can say *why* it is greyed out.
+ * ACP support lives only on dsh's npm `alpha` tag:
+ * `npm i -g --ignore-scripts @deepseek-ai/dsh@0.1.2-alpha.3`.
+ */
+export const DEFAULT_DSH_AGENT: AcpAgentSettings = {
+  enabled: true,
+  name: "DeepSeek Harness",
+  kind: "dsh",
+  command: "dsh",
+  args: [],
+  env: {},
+  workspace: "",
+  permissionMode: "auto-approve",
+  dsh: { baseUrl: "", apiKey: "", sandbox: "workspace-write" },
 }
 
 /** How many folders the picker remembers. */
@@ -101,6 +171,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     pi: { enabled: true, binPath: "", workspace: "" },
     cursorAgent: { enabled: true, binPath: "" },
     mock: { enabled: true },
+    acp: { agents: { dsh: DEFAULT_DSH_AGENT } },
   },
   chat: {
     defaultModel: "",
@@ -161,10 +232,86 @@ export function normalizeSettings(raw: unknown): AppSettings {
         ...DEFAULT_SETTINGS.providers.mock,
         ...asObject(asObject(value.providers).mock),
       },
+      acp: {
+        agents: normalizeAcpAgents(asObject(asObject(value.providers).acp).agents),
+      },
     },
     chat: { ...DEFAULT_SETTINGS.chat, ...asObject(value.chat) },
     recentFolders: asFolderList(value.recentFolders),
   }
+}
+
+const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
+  "auto-approve",
+  "auto-approve-reads",
+  "reject-all",
+]
+const DSH_SANDBOX_MODES: DshSandboxMode[] = [
+  "read-only",
+  "workspace-write",
+  "danger-full-access",
+]
+
+/**
+ * The one open-ended dictionary in the settings file: built-in agents are
+ * merged over their defaults (so a settings.json predating ACP still gains the
+ * `dsh` entry), and user-added ones are validated field by field because there
+ * is no default to fall back on.
+ */
+function normalizeAcpAgents(raw: unknown): Record<string, AcpAgentSettings> {
+  const defaults = DEFAULT_SETTINGS.providers.acp.agents
+  const stored = asObject(raw)
+  const merged: Record<string, AcpAgentSettings> = {}
+  for (const [id, fallback] of Object.entries(defaults)) {
+    merged[id] = normalizeAcpAgent(stored[id], fallback)
+  }
+  for (const [id, entry] of Object.entries(stored)) {
+    if (id in merged) continue
+    merged[id] = normalizeAcpAgent(entry, { ...DEFAULT_DSH_AGENT, name: id, kind: "generic", command: "" })
+  }
+  return merged
+}
+
+function normalizeAcpAgent(
+  raw: unknown,
+  fallback: AcpAgentSettings
+): AcpAgentSettings {
+  const value = asObject(raw)
+  const dsh = asObject(value.dsh)
+  return {
+    enabled: typeof value.enabled === "boolean" ? value.enabled : fallback.enabled,
+    name: asString(value.name) ?? fallback.name,
+    kind: value.kind === "dsh" || value.kind === "generic" ? value.kind : fallback.kind,
+    command: asString(value.command) ?? fallback.command,
+    args: Array.isArray(value.args)
+      ? value.args.filter((arg): arg is string => typeof arg === "string")
+      : fallback.args,
+    env: asStringRecord(value.env) ?? fallback.env,
+    workspace: asString(value.workspace) ?? fallback.workspace,
+    permissionMode: ACP_PERMISSION_MODES.includes(value.permissionMode as AcpPermissionMode)
+      ? (value.permissionMode as AcpPermissionMode)
+      : fallback.permissionMode,
+    dsh: {
+      baseUrl: asString(dsh.baseUrl) ?? fallback.dsh.baseUrl,
+      apiKey: asString(dsh.apiKey) ?? fallback.dsh.apiKey,
+      sandbox: DSH_SANDBOX_MODES.includes(dsh.sandbox as DshSandboxMode)
+        ? (dsh.sandbox as DshSandboxMode)
+        : fallback.dsh.sandbox,
+    },
+  }
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === "string" ? value : undefined
+}
+
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined
+  const out: Record<string, string> = {}
+  for (const [key, entry] of Object.entries(value)) {
+    if (typeof entry === "string") out[key] = entry
+  }
+  return out
 }
 
 function asObject(value: unknown): Record<string, unknown> {

@@ -97,6 +97,11 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
+        // Auto-update. The frontend drives it through the injected
+        // `window.__TAURI__.updater` / `.process` globals (see lib/desktop.ts);
+        // `process` is here only so the app can relaunch into the new build.
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.manage(Sidecar::default());
 

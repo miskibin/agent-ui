@@ -20,7 +20,9 @@ serde_json = "1"
 tauri = { version = "2.11", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-os = "2.3"
+tauri-plugin-process = "2.3"
 tauri-plugin-shell = "2.3"
+tauri-plugin-updater = "2.11"
 
 [features]
 # Enabled automatically by `tauri build`. It is also what `tauri::is_dev()`
