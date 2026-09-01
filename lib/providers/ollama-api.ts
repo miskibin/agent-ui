@@ -162,6 +162,32 @@ export async function fetchOllamaModels(
     .filter((model): model is OllamaModel => model !== null)
 }
 
+/**
+ * Models Ollama currently holds in memory (`/api/ps`).
+ *
+ * This is what separates "the model is thinking" from "the model is still
+ * being read off disk": a cold 8B model can take a minute before it emits a
+ * single token, and that minute is worth naming. Never throws — an unanswered
+ * probe just means we cannot promise either way.
+ */
+export async function fetchLoadedOllamaModels(
+  baseUrl: string
+): Promise<string[]> {
+  try {
+    const res = await fetch(`${baseUrl}/api/ps`, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(PROBE_MS),
+    })
+    if (!res.ok) return []
+    const data = (await res.json()) as TagsResponse
+    return (data.models ?? [])
+      .map((entry) => entry.model || entry.name)
+      .filter((id): id is string => !!id)
+  } catch {
+    return []
+  }
+}
+
 export function toModelOption(model: OllamaModel): ModelOption {
   return {
     id: model.id,

@@ -1,6 +1,6 @@
 import type { MessageAttachmentData } from "@/components/ui/message"
 import type { ModelOption } from "@/components/ui/model-picker"
-import type { FolderInfo } from "@/lib/folder"
+import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
 import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
@@ -59,6 +59,26 @@ export function rememberFolder(path: string): Promise<AppSettings> {
       ...current.recentFolders.filter((entry) => entry !== path),
     ].slice(0, MAX_RECENT_FOLDERS),
   }))
+}
+
+/** Drops a folder from the picker's MRU list. */
+export function forgetFolder(path: string): Promise<AppSettings> {
+  return updateSettings((current) => ({
+    ...current,
+    recentFolders: current.recentFolders.filter((entry) => entry !== path),
+  }))
+}
+
+/**
+ * Sub-directories of one folder, for the picker's browser. An empty path
+ * lists the user's home; a half-typed one lists the nearest folder above it,
+ * which the response names.
+ */
+export function fetchFolderListing(path: string): Promise<FolderListing> {
+  const query = path ? `?path=${encodeURIComponent(path)}` : ""
+  return fetch(`/api/fs/list${query}`, { cache: "no-store" }).then(
+    json<FolderListing>
+  )
 }
 
 /** Does this path exist, is it a directory, and what git branches does it have. */

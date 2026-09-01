@@ -5,10 +5,6 @@ import Link from "next/link"
 import * as React from "react"
 
 import {
-  GenerationStatus,
-  type GenerationStage,
-} from "@/components/ui/generation-status"
-import {
   hasNativeWindowControls,
   isDesktop,
   isMaximized,
@@ -26,9 +22,11 @@ import { cn } from "@/lib/utils"
  *
  * The bar is deliberately quiet: the mark alone (no wordmark — the window
  * already says what app this is), a hairline that only separates, and one line
- * of 13px text for the open chat. Anything a page wants next to that title —
- * the working-folder chip, a back link — goes in `AppHeaderTitle`'s children,
- * which is the row's one flexible slot.
+ * of 13px text for the open chat. It carries no state of its own — a run's
+ * progress belongs above the turn it describes, a chat's working folder above
+ * the composer that will use it — so anything a page does want beside the
+ * title (a back link) goes in `AppHeaderTitle`'s children, the row's one
+ * flexible slot.
  *
  * Everything is slot-based (`AppHeaderBrand`, `AppHeaderTitle`,
  * `AppHeaderActions`, `AppHeaderButton`) so the chat page and the settings page
@@ -148,17 +146,12 @@ export type AppHeaderTitleProps = Omit<
   "title"
 > & {
   title?: React.ReactNode
-  /** Shows the live spinner + stage word next to the title. */
-  generating?: boolean
-  stage?: GenerationStage
   /** Hairline before the title, separating it from the brand. */
   divider?: boolean
 }
 
 export function AppHeaderTitle({
   title,
-  generating = false,
-  stage = "thinking",
   divider = true,
   className,
   children,
@@ -187,15 +180,6 @@ export function AppHeaderTitle({
         >
           {title}
         </span>
-      ) : null}
-      {generating ? (
-        /* `size` is the indicator's box, not the type: 13px box, 6.5px dot,
-           which sits right against the 12px label beside it. */
-        <GenerationStatus
-          stage={stage}
-          size={13}
-          className="shrink-0 text-[12px]"
-        />
       ) : null}
       {children}
     </div>
