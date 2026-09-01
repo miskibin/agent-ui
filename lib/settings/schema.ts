@@ -1,4 +1,9 @@
 import {
+  MODEL_PROVIDER_PRESETS,
+  MODEL_PROVIDER_SLUG_RE,
+  RESERVED_MODEL_PROVIDER_SLUGS,
+} from "@/lib/model-providers/presets"
+import {
   FOLLOW_THEME,
   findFont,
   type FontRole,
@@ -170,9 +175,33 @@ export type MemorySettings = {
   maxChars: number
 }
 
+/**
+ * One OpenAI-compatible model source, keyed in `modelProviders` by a slug that
+ * becomes the `<slug>/<model>` prefix of every composite model id it serves.
+ * Every preset ships disabled and keyless: a provider only appears in the
+ * pickers once someone has actually configured it.
+ */
+export type ModelProviderEntry = {
+  enabled: boolean
+  /** Display name in pickers and settings. */
+  name: string
+  /** OpenAI-compatible base URL ending in the version segment, no trailing slash. */
+  baseUrl: string
+  apiKey: string
+  /** Manual model ids; empty = fetch `${baseUrl}/models`. */
+  models: string[]
+}
+
 export type AppSettings = {
   appearance: AppearanceSettings
   providers: ProviderSettings
+  /**
+   * Hosted model sources, keyed by slug. Separate from `providers` because
+   * these are *models* behind one shared OpenAI-compatible protocol, not
+   * separate agent backends with their own streaming, resume and tool
+   * semantics.
+   */
+  modelProviders: Record<string, ModelProviderEntry>
   chat: ChatSettings
   files: FileSettings
   memory: MemorySettings
@@ -200,6 +229,21 @@ export const DEFAULT_DSH_AGENT: AcpAgentSettings = {
 
 /** How many folders the picker remembers. */
 export const MAX_RECENT_FOLDERS = 8
+
+/** Every shipped preset, disabled and keyless — see `ModelProviderEntry`. */
+function defaultModelProviders(): Record<string, ModelProviderEntry> {
+  const entries: Record<string, ModelProviderEntry> = {}
+  for (const preset of MODEL_PROVIDER_PRESETS) {
+    entries[preset.slug] = {
+      enabled: false,
+      name: preset.name,
+      baseUrl: preset.baseUrl,
+      apiKey: "",
+      models: [],
+    }
+  }
+  return entries
+}
 
 /**
  * Characters of memory handed to a turn. Small on purpose: at this size every
@@ -229,6 +273,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     mock: { enabled: true },
     acp: { agents: { dsh: DEFAULT_DSH_AGENT } },
   },
+  modelProviders: defaultModelProviders(),
   chat: {
     defaultModel: "",
     defaultEffort: "high",
@@ -304,6 +349,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
         agents: normalizeAcpAgents(asObject(asObject(value.providers).acp).agents),
       },
     },
+    modelProviders: normalizeModelProviders(value.modelProviders),
     chat: { ...DEFAULT_SETTINGS.chat, ...asObject(value.chat) },
     files: {
       anyPath: asObject(value.files).anyPath !== false,
@@ -371,6 +417,71 @@ function normalizeAcpAgent(
         : fallback.dsh.sandbox,
     },
   }
+}
+
+/**
+ * Same shape of merge as `normalizeAcpAgents`: presets are merged over their
+ * defaults, so a settings.json written before a preset existed still gains it
+ * (disabled, with the current base URL), and user-added sources are validated
+ * field by field.
+ *
+ * Two keys never survive: a slug outside the separator-free alphabet, because
+ * it would become a `<slug>/<model>` prefix that no longer round-trips, and a
+ * reserved one, because `ollama` already names the local source.
+ */
+function normalizeModelProviders(raw: unknown): Record<string, ModelProviderEntry> {
+  const defaults = DEFAULT_SETTINGS.modelProviders
+  const stored = asObject(raw)
+  const merged: Record<string, ModelProviderEntry> = {}
+  for (const [slug, fallback] of Object.entries(defaults)) {
+    merged[slug] = normalizeModelProvider(stored[slug], fallback)
+  }
+  for (const [slug, entry] of Object.entries(stored)) {
+    if (slug in merged) continue
+    if (!MODEL_PROVIDER_SLUG_RE.test(slug)) continue
+    if (RESERVED_MODEL_PROVIDER_SLUGS.includes(slug)) continue
+    merged[slug] = normalizeModelProvider(entry, {
+      enabled: false,
+      name: slug,
+      baseUrl: "",
+      apiKey: "",
+      models: [],
+    })
+  }
+  return merged
+}
+
+function normalizeModelProvider(
+  raw: unknown,
+  fallback: ModelProviderEntry
+): ModelProviderEntry {
+  const value = asObject(raw)
+  const baseUrl = asString(value.baseUrl)
+  return {
+    enabled: value.enabled === true,
+    name: asString(value.name)?.trim() || fallback.name,
+    // Kept trailing-slash-free: every caller joins `/models` or
+    // `/chat/completions` onto this.
+    baseUrl:
+      baseUrl === undefined
+        ? fallback.baseUrl
+        : baseUrl.trim().replace(/\/+$/, ""),
+    apiKey: asString(value.apiKey)?.trim() ?? fallback.apiKey,
+    models: Array.isArray(value.models)
+      ? asModelIdList(value.models)
+      : fallback.models,
+  }
+}
+
+/** Trimmed, de-duplicated, order preserved — this is a hand-typed list. */
+function asModelIdList(value: unknown[]): string[] {
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (typeof entry !== "string") continue
+    const id = entry.trim()
+    if (id) seen.add(id)
+  }
+  return [...seen]
 }
 
 /**
