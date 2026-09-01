@@ -24,7 +24,7 @@ const PERMISSION_LABELS: Record<
 > = {
   "read-only": {
     name: "Read-only",
-    description: "Reads files, asks before anything else",
+    description: "Runs read-only tools, refuses the rest",
     icon: Eye,
   },
   edits: {

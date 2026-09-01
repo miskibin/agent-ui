@@ -310,6 +310,8 @@ async function writeModelsConfig(
   // change when the user pulls or removes one.
   const current = await readFile(path, "utf8").catch(() => null)
   if (current === serialized) return
-  await mkdir(configDir, { recursive: true })
-  await writeFile(path, serialized, "utf8")
+  // Owner-only: this overlay carries every hosted source's API key.
+  // (Both modes are advisory on Windows, which has no POSIX bits.)
+  await mkdir(configDir, { recursive: true, mode: 0o700 })
+  await writeFile(path, serialized, { encoding: "utf8", mode: 0o600 })
 }

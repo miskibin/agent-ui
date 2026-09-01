@@ -144,13 +144,10 @@ const EMPTY_TODOS: TodoItem[] = []
 const EMPTY_PERMISSION_MODES: PermissionMode[] = []
 
 /**
- * What a chat falls back to when it has no stored pick: the widest mode the
- * harness offers, which is what these harnesses did before the picker existed.
+ * What the composer shows when the harness reports no default of its own.
+ * Display only — see `effectivePermission`.
  */
-function defaultPermissionMode(modes: PermissionMode[]): PermissionMode | "" {
-  if (modes.length === 0) return ""
-  return modes.includes("full") ? "full" : modes[modes.length - 1]
-}
+const FALLBACK_PERMISSION_MODE: PermissionMode = "full"
 
 /**
  * The newest plan in a thread, whoever wrote it — a `todo_write`-style tool
@@ -352,7 +349,7 @@ export default function ChatPage() {
   /**
    * The open chat's stored permission pick, or "" for "never chosen". The mode
    * a turn actually runs under is derived from this and the harness's own list
-   * (`effectivePermission` below), so a provider switch cannot leave the
+   * (`chosenPermission` below), so a provider switch cannot leave the
    * composer showing a mode the new harness does not offer.
    */
   const [permissionMode, setPermissionMode] = React.useState("")
@@ -360,15 +357,27 @@ export default function ChatPage() {
   const permissionModes =
     capabilities?.permissionModes ?? EMPTY_PERMISSION_MODES
   /**
-   * The mode this chat's turns run under: its own stored pick while the
-   * harness still offers it, else that harness's default. `""` means there is
-   * no choice to express, and keeps the field out of the request entirely.
+   * The mode this chat's turns are *sent* under — an explicit pick, and only
+   * that. `""` (nothing chosen, or a pick this harness does not offer) keeps
+   * the field out of the request entirely, which every provider already reads
+   * as "whatever settings say". Synthesizing a default here would hand the
+   * harness a policy the user never chose, widening both the ACP approval
+   * policy and, for dsh, the sandbox its process is spawned into.
    */
-  const effectivePermission: PermissionMode | "" = permissionModes.includes(
+  const chosenPermission: PermissionMode | "" = permissionModes.includes(
     permissionMode as PermissionMode
   )
     ? (permissionMode as PermissionMode)
-    : defaultPermissionMode(permissionModes)
+    : ""
+  /**
+   * What the composer *displays*: the pick, else the policy the harness says
+   * it already runs under. Display only — never sent.
+   */
+  const effectivePermission: PermissionMode | "" =
+    chosenPermission ||
+    (permissionModes.length === 0
+      ? ""
+      : (capabilities?.defaultPermissionMode ?? FALLBACK_PERMISSION_MODE))
 
   const [sessions, setSessions] = React.useState<SessionMeta[]>([])
   const [activeId, setActiveId] = React.useState("")
@@ -734,7 +743,13 @@ export default function ChatPage() {
         const resolve = (id: string) => {
           if (!id) return ""
           if (data.models.some((m) => m.id === id)) return id
-          if (groups.length === 0 || id.includes("/")) return ""
+          if (groups.length === 0) return ""
+          // A slash does not make an id composite: `hf.co/user/model` is a
+          // legitimate Ollama tag, and its first segment names no source here.
+          // Only a known group id means the id was already composite.
+          const slash = id.indexOf("/")
+          const source = slash > 0 ? id.slice(0, slash) : ""
+          if (source && groups.some((group) => group.id === source)) return ""
           const composite = joinModelId("ollama", id)
           return data.models.some((m) => m.id === composite) ? composite : ""
         }
@@ -859,7 +874,7 @@ export default function ChatPage() {
           .createSession({
             providerId,
             model,
-            permissionMode: effectivePermission || undefined,
+            permissionMode: chosenPermission || undefined,
             ...next,
           })
           .then((created) => {
@@ -879,7 +894,7 @@ export default function ChatPage() {
           toast.error(errorMessage(err, "Could not set the folder"))
         )
     },
-    [effectivePermission, model, patchLocal, providerId]
+    [chosenPermission, model, patchLocal, providerId]
   )
 
   const togglePin = React.useCallback((id: string, pinned: boolean) => {
@@ -982,7 +997,7 @@ export default function ChatPage() {
       const created = await api.createSession({
         providerId,
         model,
-        permissionMode: effectivePermission || undefined,
+        permissionMode: chosenPermission || undefined,
       })
       setSessions((prev) => [created, ...prev])
       setThreads((prev) => ({ ...prev, [created.id]: [] }))
@@ -995,7 +1010,7 @@ export default function ChatPage() {
       toast.error(errorMessage(err, "Could not start a new chat"))
     }
   }, [
-    effectivePermission,
+    chosenPermission,
     messages.length,
     model,
     providerId,
@@ -1471,7 +1486,7 @@ export default function ChatPage() {
           const created = await api.createSession({
             providerId,
             model,
-            permissionMode: effectivePermission || undefined,
+            permissionMode: chosenPermission || undefined,
           })
           sessionId = created.id
           prior = EMPTY_MESSAGES
@@ -1507,7 +1522,7 @@ export default function ChatPage() {
         providerId,
         model,
         effort: capabilities?.effort ? effort : undefined,
-        permissionMode: effectivePermission || undefined,
+        permissionMode: chosenPermission || undefined,
         attachments,
         animate: prior.length === 0,
         titleFrom:
@@ -1522,7 +1537,7 @@ export default function ChatPage() {
       activeId,
       capabilities?.effort,
       capabilities?.vision,
-      effectivePermission,
+      chosenPermission,
       effort,
       model,
       patchLocal,
@@ -1582,7 +1597,7 @@ export default function ChatPage() {
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,
-          permissionMode: effectivePermission || undefined,
+          permissionMode: chosenPermission || undefined,
           internal: true,
         })
       })()
@@ -1591,7 +1606,7 @@ export default function ChatPage() {
       activeId,
       capabilities?.effort,
       commitThread,
-      effectivePermission,
+      chosenPermission,
       effort,
       model,
       providerId,
@@ -1636,7 +1651,7 @@ export default function ChatPage() {
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,
-          permissionMode: effectivePermission || undefined,
+          permissionMode: chosenPermission || undefined,
         })
       })()
     },
@@ -1644,7 +1659,7 @@ export default function ChatPage() {
       activeId,
       capabilities?.effort,
       commitThread,
-      effectivePermission,
+      chosenPermission,
       effort,
       model,
       providerId,

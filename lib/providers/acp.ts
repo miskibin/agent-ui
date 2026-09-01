@@ -87,6 +87,7 @@ export function createAcpProvider(
 ): AgentProvider {
   const id = acpProviderId(key)
   const isDsh = agent.kind === "dsh"
+  const modes = isDsh ? DSH_PERMISSION_MODES : ACP_PERMISSION_MODES
   const command = agent.command.trim()
   const configDir = acpConfigDir(dataDir, key)
   // The session `cwd` and the root `fs/*` requests are confined to. It is also
@@ -162,7 +163,8 @@ export function createAcpProvider(
           // disappears, so the control would be dead.
           effort: isDsh && !baseUrl,
           vision: false,
-          permissionModes: isDsh ? DSH_PERMISSION_MODES : ACP_PERMISSION_MODES,
+          permissionModes: modes,
+          defaultPermissionMode: configuredMode(agent, isDsh, modes),
         },
         available: false,
       }
@@ -295,6 +297,65 @@ function dshSandbox(mode: PermissionMode | undefined): DshSandboxMode | null {
     default:
       return null
   }
+}
+
+/** The app's modes, narrow → wide, so two different axes can be compared. */
+const MODE_RANK: Record<PermissionMode, number> = {
+  "read-only": 0,
+  edits: 1,
+  full: 2,
+}
+
+/**
+ * A configured ACP approval policy, read back as one of the app's modes.
+ *
+ * `reject-all` approves strictly less than `read-only` does — the picker has
+ * no mode for "refuses everything" — so it reads as the narrowest one there
+ * is. This is only ever used to label a default, never to send one back.
+ */
+function policyAsMode(policy: AcpAgentSettings["permissionMode"]): PermissionMode {
+  return policy === "auto-approve" ? "full" : "read-only"
+}
+
+/** A configured dsh sandbox level, read back as one of the app's modes. */
+function sandboxAsMode(sandbox: DshSandboxMode): PermissionMode {
+  switch (sandbox) {
+    case "read-only":
+      return "read-only"
+    case "workspace-write":
+      return "edits"
+    default:
+      return "full"
+  }
+}
+
+/**
+ * What this agent already runs under, for the composer to show on a chat that
+ * has chosen nothing: the *narrower* of the two axes that constrain it — the
+ * approval policy, and for dsh the sandbox its process is spawned into.
+ *
+ * Display only. An unchosen mode is never sent (`app/page.tsx`), so settings
+ * stay in charge either way; this exists so the picker cannot label a stock
+ * dsh install "Full access" when its sandbox says `workspace-write`. The
+ * answer is clamped to the modes this provider publishes, and never widened
+ * past the real policy.
+ */
+function configuredMode(
+  agent: AcpAgentSettings,
+  isDsh: boolean,
+  modes: PermissionMode[]
+): PermissionMode | undefined {
+  if (modes.length === 0) return undefined
+  let rank = MODE_RANK[policyAsMode(agent.permissionMode)]
+  if (isDsh) {
+    rank = Math.min(rank, MODE_RANK[sandboxAsMode(agent.dsh.sandbox)])
+  }
+  const offered = [...modes].sort((a, b) => MODE_RANK[a] - MODE_RANK[b])
+  let picked = offered[0]
+  for (const mode of offered) {
+    if (MODE_RANK[mode] <= rank) picked = mode
+  }
+  return picked
 }
 
 /**

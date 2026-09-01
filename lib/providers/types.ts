@@ -26,6 +26,13 @@ export type ProviderCapabilities = {
    * fixed policy (its settings, or no tools at all).
    */
   permissionModes?: PermissionMode[]
+  /**
+   * What the harness *already* runs under, for a picker to show when the chat
+   * has made no pick of its own — the narrowest of whatever axes constrain it
+   * (approval policy, sandbox). Display only: an unchosen mode is never sent,
+   * so the harness's own settings stay in charge. Absent = unknown.
+   */
+  defaultPermissionMode?: PermissionMode
 }
 
 export type ProviderInfo = {
