@@ -1,0 +1,62 @@
+/**
+ * Local files an answer points at.
+ *
+ * An agent that just wrote `wykres.png` links it the way it thinks of it — as
+ * a path on this machine: `![](C:\Users\me\wykres.png)`. A browser cannot load
+ * that: the page is served over http, and `file://` is not a subresource it
+ * will fetch, whatever the markdown says. So the path is rewritten to a URL on
+ * the app's own origin, `GET /api/files`, which reads the file and serves it
+ * back. Percent-encoding it also fixes the other half of the problem — a path
+ * with a space in it (`Agent UI`) is not a markdown link target at all.
+ *
+ * Only image targets are rewritten. A plain link to a file stays a link: it
+ * would navigate away from the chat, and nothing about that is an improvement.
+ */
+
+/** Anything that names a place on this machine rather than a URL. */
+const LOCAL_PATH = /^(?:[A-Za-z]:[\\/]|\\\\|\/|~[\\/])/
+
+/** `![alt](target)` — deliberately looser than CommonMark, see above. */
+const MARKDOWN_IMAGE = /!\[([^\]\n]*)\]\(([^)\n]+)\)/g
+
+/** A trailing `"title"` / `'title'`, which is part of the target group above. */
+const TITLE = /^(.*?)\s+("[^"]*"|'[^']*')$/
+
+/** The route's own prefix — see the idempotence note on `linkLocalImages`. */
+const FILE_ROUTE = "/api/files?path="
+
+export function localFileUrl(path: string) {
+  return `${FILE_ROUTE}${encodeURIComponent(path)}`
+}
+
+export function isLocalPath(target: string) {
+  return LOCAL_PATH.test(target)
+}
+
+/**
+ * Rewrites the image targets in one markdown string that name a local file.
+ * Everything else — `http(s)`, `data:`, relative paths, links that merely look
+ * like one — is returned untouched, and the string identity is preserved when
+ * nothing matches so memoized rows do not re-render for a no-op.
+ *
+ * Idempotent, and it has to be: the streaming reducer re-runs this over the
+ * accumulated text on every delta, so a target already pointing at the route
+ * must be left exactly as it is rather than encoded a second time.
+ */
+export function linkLocalImages(markdown: string): string {
+  if (!markdown.includes("![")) return markdown
+  return markdown.replace(MARKDOWN_IMAGE, (whole, alt: string, raw: string) => {
+    let target = raw.trim()
+    const titled = TITLE.exec(target)
+    const title = titled ? ` ${titled[2]}` : ""
+    if (titled) target = titled[1].trim()
+    // A target wrapped in <> is how markdown carries a space today; either way
+    // it is the path we want.
+    if (target.startsWith("<") && target.endsWith(">")) {
+      target = target.slice(1, -1).trim()
+    }
+    if (!target || target.startsWith(FILE_ROUTE)) return whole
+    if (!isLocalPath(target)) return whole
+    return `![${alt}](${localFileUrl(target)}${title})`
+  })
+}
