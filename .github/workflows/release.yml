@@ -5,6 +5,11 @@ on:
     tags:
       - "v*"
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to build and publish (e.g. v0.1.0)"
+        required: true
+        type: string
 
 permissions:
   contents: write
@@ -83,8 +88,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AGENT_UI_DESKTOP_PREPARED: "1"
         with:
-          tagName: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', github.run_number) }}
-          releaseName: Agent UI ${{ github.ref_type == 'tag' && github.ref_name || github.run_number }}
+          tagName: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
+          releaseName: Agent UI ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
