@@ -37,6 +37,83 @@ type TagsResponse = {
 
 const probeCache = new Map<string, { at: number; ok: boolean }>()
 
+type ShowResponse = { capabilities?: unknown }
+
+/** Family/name substrings for servers too old to report `/api/show` capabilities. */
+const VISION_HINTS = [
+  "llava",
+  "bakllava",
+  "moondream",
+  "minicpm-v",
+  "qwen2-vl",
+  "qwen2.5vl",
+  "qwen2.5-vl",
+  "pixtral",
+  "llama3.2-vision",
+  "llama4",
+  "gemma3",
+  "granite3.2-vision",
+  "cogvlm",
+]
+const VISION_HINT_PATTERN = /(^|[^a-z0-9])(vl|vision)([^a-z0-9]|$)/
+
+/** Cheap fallback when `/api/show` doesn't report capabilities: family/name hints. */
+export function looksVisionCapable(model: OllamaModel) {
+  const haystack = `${model.family ?? ""} ${model.id}`.toLowerCase()
+  return (
+    VISION_HINTS.some((hint) => haystack.includes(hint)) ||
+    VISION_HINT_PATTERN.test(haystack)
+  )
+}
+
+const SHOW_MS = 2_000
+
+/** Authoritative per-model capability list; `null` when the call fails. */
+async function fetchModelCapabilities(
+  baseUrl: string,
+  model: string
+): Promise<string[] | null> {
+  try {
+    const res = await fetch(`${baseUrl}/api/show`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model }),
+      cache: "no-store",
+      signal: AbortSignal.timeout(SHOW_MS),
+    })
+    if (!res.ok) return null
+    const data = (await res.json()) as ShowResponse
+    return Array.isArray(data.capabilities)
+      ? data.capabilities.filter((c): c is string => typeof c === "string")
+      : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Which of these models take image input. `/api/show` is authoritative on
+ * Ollama servers new enough to report `capabilities`; older servers fall
+ * back to a family/name heuristic. Probed in parallel and best-effort — a
+ * slow or failing model just drops out of the list rather than failing the
+ * whole page.
+ */
+export async function fetchVisionCapableModelIds(
+  baseUrl: string,
+  models: OllamaModel[]
+): Promise<string[]> {
+  const checks = await Promise.all(
+    models.map(async (model) => {
+      const capabilities = await fetchModelCapabilities(baseUrl, model.id)
+      const vision = capabilities
+        ? capabilities.includes("vision")
+        : looksVisionCapable(model)
+      return vision ? model.id : null
+    })
+  )
+  return checks.filter((id): id is string => id !== null)
+}
+
 /** Trailing slashes make every joined path double up — strip them once here. */
 export function normalizeBaseUrl(raw: string) {
   return raw.trim().replace(/\/+$/, "")

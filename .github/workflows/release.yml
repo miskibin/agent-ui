@@ -136,13 +136,24 @@ jobs:
         env:
           NEXT_TELEMETRY_DISABLED: "1"
 
+      # `bundle.createUpdaterArtifacts` makes this also emit the updater
+      # archive, its `.sig`, and the `latest.json` manifest the shell polls —
+      # but only when the signing key is available. Both secrets must be set
+      # (see "Updater" in README.md); without them the bundle step fails, which
+      # is the intended loud failure rather than a release nobody can update to.
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           AGENT_UI_DESKTOP_PREPARED: "1"
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+          # Uploads `latest.json` alongside the installers — it is the file the
+          # updater endpoint resolves to. Default on; spelled out because the
+          # whole update path breaks silently without it.
+          includeUpdaterJson: true
 
   # Only now, with every installer attached, does the release become visible.
   publish:

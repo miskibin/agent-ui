@@ -34,10 +34,17 @@ export async function GET(req: Request) {
   }
 
   try {
+    const models = await provider.listModels()
+    // Best-effort: a vision probe failing (older server, flaky network)
+    // degrades to "no model known to take images" rather than a 500.
+    const visionModels = provider.visionModels
+      ? await provider.visionModels().catch(() => [])
+      : undefined
     return NextResponse.json({
       providerId,
-      models: await provider.listModels(),
+      models,
       capabilities: info.capabilities,
+      ...(visionModels ? { visionModels } : null),
     })
   } catch (err) {
     return NextResponse.json({
