@@ -45,6 +45,8 @@ import {
 const MAX_FIELD = 50_000
 /** The handshake is bounded; the turn itself is bounded by the route's abort. */
 const HANDSHAKE_MS = 45_000
+/** Config options are a refinement of the turn, so they wait much less. */
+const CONFIG_MS = 10_000
 /** How long a closing agent gets to drain before SIGTERM. */
 const SHUTDOWN_MS = 750
 
@@ -217,7 +219,9 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
       const handler = onRequest
       const answer = handler
         ? handler(method, message.params)
-        : Promise.reject(new AcpRpcError(-32601, `Method not found: ${method}`))
+        : Promise.reject(
+            new AcpRpcError(ACP_ERROR.methodNotFound, `Method not found: ${method}`)
+          )
       void answer.then(
         (result) => write({ jsonrpc: "2.0", id, result: result ?? null }),
         (err: unknown) => {
@@ -585,7 +589,7 @@ export async function* runAcpAgent(
         ? { outcome: { outcome: "selected", optionId: chosen.optionId } }
         : { outcome: { outcome: "cancelled" } }
     }
-    throw new AcpRpcError(-32601, `Method not found: ${method}`)
+    throw new AcpRpcError(ACP_ERROR.methodNotFound, `Method not found: ${method}`)
   })
 
   try {
@@ -752,7 +756,7 @@ async function setConfigOption(
   if (!wanted) return
   for (const candidate of configCandidates(configId, wanted)) {
     try {
-      await conn.request("session/set_config_option", { sessionId, configId, value: candidate }, HANDSHAKE_MS)
+      await conn.request("session/set_config_option", { sessionId, configId, value: candidate }, CONFIG_MS)
       return
     } catch {
       /* try the next alias */
@@ -813,7 +817,7 @@ export async function probeAcpConfigOptions(
 ): Promise<AcpConfigOption[]> {
   const conn = connectAcp(spec)
   conn.onRequest(async () => {
-    throw new AcpRpcError(-32601, "Not available while probing")
+    throw new AcpRpcError(ACP_ERROR.methodNotFound, "Not available while probing")
   })
   try {
     const init = await conn.request<AcpInitializeResult>(
