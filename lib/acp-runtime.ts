@@ -19,7 +19,7 @@ export type AcpCommand = { cmd: string; args: string[] }
 /** A JS entry point needs a Node to run it; anything else is executable. */
 export function resolveAcpCommand(command: string, args: string[]): AcpCommand {
   const target = command.trim()
-  return target.endsWith(".js")
+  return /\.[cm]?js$/.test(target)
     ? { cmd: process.execPath, args: [target, ...args] }
     : { cmd: target, args: [...args] }
 }
