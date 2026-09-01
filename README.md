@@ -8,6 +8,8 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it. While a turn runs you watch it work; once it settles, the reasoning and tool calls fold into a single "Worked for 12s" row above the answer, one click from being opened again, with copy / regenerate / delete and a details popover — model, duration, tokens in and out, tok/s, folder — next to it.
 
+Every file the agent touches is one click from the transcript. An edit headline, a row in the files-changed card or a `path.ts` chip in the answer's own text opens a **side-by-side file panel** — the diff, or the whole file with the edited lines marked, syntax-highlighted and scrolled to the first change. Material-style file icons mark the file everywhere it is named. On a wide window the panel is one half of a **draggable split** below the header — the width you drag it to is remembered — and below `md` it slides over the conversation instead. The panel reads the file through `GET /api/file`, which is confined to the active provider's workspace (and never the app's own data directory), and falls back to the diff alone when there is nothing to read.
+
 ### The wait says what it is
 
 The stretch before a local model's first token is the one that looks broken, and "Thinking" is the wrong word for it: nothing is thinking yet, the weights are still being read off disk. Backends can send a `status` line, and the app shows it where the turn it belongs to is — above the empty answer, and on that chat's sidebar row — counting up, so a long wait reads as a long wait rather than a hang. Ollama asks `/api/ps` before every run, so it knows whether the model is cold and says so by name.
@@ -183,6 +185,7 @@ app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
 - One streaming protocol (`AgentStreamEvent`: `session · status · thinking · tool · text · done · error`) between every backend and the UI. `status` carries progress that is not part of the answer; `done` carries the turn's token usage.
 - The chat surface is a pure client page: nothing on the critical path waits for the server, the sidebar seeds from a localStorage snapshot before the network answers, and message rows keep the memoization guarantees of the component family during streaming.
 - UI comes from the chat-components registry — themed by shadcn tokens, customizable through `data-slot` attributes without forking.
+- `GET /api/file` backs the file panel: it resolves a path against the chat's own folder when it has one, else the running provider's workspace (`cursor-agent` and the mock use the app's cwd, pi its configured workspace), refuses anything outside that root or inside the app's data directory, and caps a read at 1.5 MB.
 
 ## Development
 
