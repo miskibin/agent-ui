@@ -6,9 +6,9 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 ![Agent UI — streaming agent run](.github/screenshots/chat-run.png)
 
-Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it.
+Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it. While a turn runs you watch it work; once it settles, the reasoning and tool calls fold into a single "Worked for 12s" row above the answer, one click from being opened again.
 
-| Dark mode (Ocean theme) | ⌘K command palette |
+| Dark mode (Cosmic Night theme) | ⌘K command palette |
 | --- | --- |
 | ![Dark mode](.github/screenshots/chat-dark.png) | ![Command palette](.github/screenshots/palette.png) |
 
@@ -24,6 +24,10 @@ Reasoning streams, tool calls with live status (including failures), Shiki code,
 | **Mock** | ✅ | — | Scripted runs that exercise every UI part; no binary, no network |
 
 Providers are detected at runtime and surfaced in the picker with availability badges. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
+
+### One folder per chat
+
+The chip next to the chat title picks the folder this conversation works in — validated as you type, with the repo's local branches offered when the folder is a git repo, and the folders you used before one click away. Providers that spawn a CLI (Cursor, pi) run in it, so two chats can work in two checkouts at once; the sidebar shows each chat's folder under its title. Nothing is checked out for you — the branch is what you record, not what the app switches to.
 
 ### The pi harness
 
@@ -75,7 +79,7 @@ node .next/standalone/server.js
 Everything is local JSON under `~/.agent-ui` (override with `AGENT_UI_DIR`):
 
 - `settings.json` — appearance, providers, chat behavior
-- `sessions/index.json` — sidebar metadata (titles, pins, order, provider/model, timestamps)
+- `sessions/index.json` — sidebar metadata (titles, pins, order, provider/model, working folder, timestamps)
 - `sessions/<id>.json` — full transcripts (reasoning, tool calls, markdown)
 
 - `pi/models.json` — generated: points pi at your Ollama server's OpenAI-compatible endpoint
@@ -87,7 +91,9 @@ The agent backends keep their own conversation context (Cursor and pi sessions r
 
 `/settings` applies everything instantly and persists to `settings.json`:
 
-- **Appearance** — six hand-tuned shadcn theme presets (Default, Clay, Ocean, Forest, Rose, Violet) with separate light/dark palettes, light/dark/system mode, and a corner-radius slider. A tiny inline bootstrap script applies the stored theme before first paint — no flash.
+- **Appearance** — nine complete shadcn themes vendored from the [tweakcn](https://tweakcn.com) registry (Modern Minimal, Graphite, T3 Chat, Catppuccin, Mocha Mousse, Cosmic Night, Amethyst Haze, Perpetuity, Notebook). A theme is not just a palette: it brings its own typeface, corner radius, shadows and letter-spacing, in separate light and dark sets, and the app's own surfaces (code blocks, tool cards, message bubbles) are mixed from those tokens so a warm theme warms the whole window. Plus light/dark/system mode and an optional radius override. A tiny inline bootstrap script applies the stored theme before first paint — no flash.
+
+  Adding a theme is one entry in `scripts/import-tweakcn.mjs` and `node scripts/import-tweakcn.mjs`, which refreshes the checked-in `lib/theme/themes/generated.ts`; if it names a typeface the app does not load yet, the script says so.
 - **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, default provider, with live reachability badges.
 - **Chat** — default reasoning effort, prompt suggestions, auto-titling.
 - **Data** — data directory and a clear-all-chats action.

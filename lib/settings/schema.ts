@@ -11,8 +11,13 @@ export type AppearanceSettings = {
   /** Theme preset id — the presets themselves live in the theme registry. */
   theme: string
   mode: ThemeMode
-  /** Corner radius base in rem applied to --radius. */
-  radius: number
+  /**
+   * Corner radius in rem, overriding the one the theme ships with.
+   * `null` (the default) means "follow the theme" — which is why the pre-0.2
+   * `radius` field is deliberately not migrated: it would pin every theme to
+   * one rounding.
+   */
+  radiusOverride: number | null
 }
 
 export type OllamaSettings = {
@@ -61,10 +66,19 @@ export type AppSettings = {
   appearance: AppearanceSettings
   providers: ProviderSettings
   chat: ChatSettings
+  /** Most-recently used working folders, newest first — the folder picker's list. */
+  recentFolders: string[]
 }
 
+/** How many folders the picker remembers. */
+export const MAX_RECENT_FOLDERS = 8
+
 export const DEFAULT_SETTINGS: AppSettings = {
-  appearance: { theme: "default", mode: "system", radius: 0.625 },
+  appearance: {
+    theme: "modern-minimal",
+    mode: "system",
+    radiusOverride: null,
+  },
   providers: {
     active: "mock",
     ollama: { enabled: true, baseUrl: "http://localhost:11434" },
@@ -78,15 +92,29 @@ export const DEFAULT_SETTINGS: AppSettings = {
     showSuggestions: true,
     autoTitle: true,
   },
+  recentFolders: [],
 }
 
 /** Deep-merges a possibly stale/partial persisted value over the defaults. */
 export function normalizeSettings(raw: unknown): AppSettings {
   const value = (raw ?? {}) as Partial<Record<keyof AppSettings, unknown>>
+  const appearance = asObject(value.appearance)
   return {
     appearance: {
-      ...DEFAULT_SETTINGS.appearance,
-      ...asObject(value.appearance),
+      theme:
+        typeof appearance.theme === "string"
+          ? appearance.theme
+          : DEFAULT_SETTINGS.appearance.theme,
+      mode: isMode(appearance.mode)
+        ? appearance.mode
+        : DEFAULT_SETTINGS.appearance.mode,
+      // Pre-0.2 files carry a plain `radius`; dropping it hands the themes
+      // back their own rounding instead of freezing the old slider value.
+      radiusOverride:
+        typeof appearance.radiusOverride === "number" &&
+        Number.isFinite(appearance.radiusOverride)
+          ? appearance.radiusOverride
+          : null,
     },
     providers: {
       ...DEFAULT_SETTINGS.providers,
@@ -109,6 +137,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
       },
     },
     chat: { ...DEFAULT_SETTINGS.chat, ...asObject(value.chat) },
+    recentFolders: asFolderList(value.recentFolders),
   }
 }
 
@@ -116,4 +145,21 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+function isMode(value: unknown): value is ThemeMode {
+  return value === "light" || value === "dark" || value === "system"
+}
+
+/** Trimmed, de-duplicated, newest first, capped. */
+function asFolderList(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const seen = new Set<string>()
+  for (const entry of value) {
+    if (typeof entry !== "string") continue
+    const path = entry.trim()
+    if (path) seen.add(path)
+    if (seen.size >= MAX_RECENT_FOLDERS) break
+  }
+  return [...seen]
 }

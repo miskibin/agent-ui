@@ -24,7 +24,7 @@ import {
 
 import {
   applyAppearance,
-  clampRadius,
+  normalizeRadiusOverride,
   readAppearanceMirror,
   writeAppearanceMirror,
 } from "./apply"
@@ -42,12 +42,16 @@ function normalizeAppearance(
   return {
     theme: findPreset(value.theme).id,
     mode: asMode(value.mode) ?? DEFAULT_SETTINGS.appearance.mode,
-    radius: clampRadius(Number(value.radius)),
+    radiusOverride: normalizeRadiusOverride(value.radiusOverride),
   }
 }
 
 function isSame(a: AppearanceSettings, b: AppearanceSettings) {
-  return a.theme === b.theme && a.mode === b.mode && a.radius === b.radius
+  return (
+    a.theme === b.theme &&
+    a.mode === b.mode &&
+    a.radiusOverride === b.radiusOverride
+  )
 }
 
 /* -------------------------------------------------------------------------
