@@ -134,6 +134,25 @@ export function fetchModels(providerId: string): Promise<ModelsResponse> {
   }).then(json<ModelsResponse>)
 }
 
+export type ModelProviderProbeResult = {
+  ok: boolean
+  count?: number
+  error?: string
+}
+
+/**
+ * Tests one `modelProviders` entry's `/models` endpoint server-side, so the
+ * API key never has to round-trip through the browser. Always resolves —
+ * `ok: false` carries the reason rather than a rejected promise.
+ */
+export function probeModelProvider(slug: string): Promise<ModelProviderProbeResult> {
+  return fetch("/api/model-providers/probe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ slug }),
+  }).then(json<ModelProviderProbeResult>)
+}
+
 export function fetchSessions(): Promise<SessionMeta[]> {
   return fetch("/api/sessions", { cache: "no-store" })
     .then(json<{ sessions: SessionMeta[] }>)

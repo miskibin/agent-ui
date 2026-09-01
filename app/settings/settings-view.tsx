@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   ArrowLeft,
   Bot,
+  Boxes,
   Brain,
   Database,
   MessageSquare,
@@ -25,10 +26,11 @@ import { AppearanceSection } from "./appearance-section"
 import { ChatSection } from "./chat-section"
 import { DataSection } from "./data-section"
 import { MemorySection } from "./memory-section"
+import { ModelProvidersSection } from "./model-providers-section"
 import { ProvidersSection } from "./providers-section"
 import { useAppSettings } from "./use-app-settings"
 
-type SectionId = "appearance" | "chat" | "providers" | "memory" | "data"
+type SectionId = "appearance" | "chat" | "providers" | "models" | "memory" | "data"
 
 type SettingsSection = {
   id: SectionId
@@ -69,6 +71,12 @@ const SECTION_GROUPS: SettingsGroup[] = [
         label: "Providers",
         icon: Bot,
         keywords: "default provider mock ollama pi cursor acp dsh agent model",
+      },
+      {
+        id: "models",
+        label: "Model providers",
+        icon: Boxes,
+        keywords: "models providers api key openai endpoint anthropic xai google deepseek groq mistral openrouter",
       },
       {
         id: "memory",
@@ -311,6 +319,9 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
             {active === "appearance" ? <AppearanceSection /> : null}
             {active === "providers" ? (
               <ProvidersSection {...settings} />
+            ) : null}
+            {active === "models" ? (
+              <ModelProvidersSection {...settings} />
             ) : null}
             {active === "chat" ? <ChatSection {...settings} /> : null}
             {active === "memory" ? <MemorySection {...settings} /> : null}
