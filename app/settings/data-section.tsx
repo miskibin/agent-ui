@@ -5,12 +5,18 @@ import { Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
+import { Switch } from "@/components/ui/switch"
 
 import { SettingsRow, SettingsSection } from "./section"
+import type { AppSettingsApi } from "./use-app-settings"
 
 const CONFIRM_TIMEOUT = 5000
 
-export function DataSection({ dataDir }: { dataDir: string }) {
+export function DataSection({
+  dataDir,
+  settings,
+  update,
+}: AppSettingsApi & { dataDir: string }) {
   const [armed, setArmed] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
 
@@ -52,6 +58,21 @@ export function DataSection({ dataDir }: { dataDir: string }) {
           {dataDir}
         </code>
       </SettingsRow>
+
+      <SettingsRow
+        title="Local files"
+        htmlFor="files-any-path"
+        description="Show images an answer links by absolute path, from anywhere on this machine. Off limits it to the app's own folder, a chat's working folder, and the agent workspace."
+        control={
+          <Switch
+            id="files-any-path"
+            checked={settings.files.anyPath}
+            onCheckedChange={(anyPath) =>
+              update((current) => ({ ...current, files: { anyPath } }))
+            }
+          />
+        }
+      />
 
       <SettingsRow
         title="Clear all chats"

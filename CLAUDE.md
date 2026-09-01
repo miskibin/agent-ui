@@ -66,6 +66,11 @@ one interface:
   `sessions/index.json` (sidebar metadata) separate from `sessions/<id>.json` (transcripts).
   Settings in `settings.json` via `lib/settings/` (`GET/PUT /api/settings`, deep-merged over
   defaults so old files keep loading).
+- Local files an answer points at: `lib/message-stream.ts` rewrites markdown image targets that
+  name a path on this machine (`lib/local-media.ts`) to `GET /api/files`, which streams the file
+  back on the app's own origin — a browser will not load `file://` from an http page. The route
+  refuses cross-site requests and serves everything sandboxed and `nosniff`; `files.anyPath` in
+  settings narrows it from any path (the default) to the app's folders.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.

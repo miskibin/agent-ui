@@ -118,7 +118,7 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
             <AppearanceSection />
             <ProvidersSection {...settings} />
             <ChatSection {...settings} />
-            <DataSection dataDir={dataDir} />
+            <DataSection dataDir={dataDir} {...settings} />
 
             <p className="pb-6 text-[11px] text-muted-foreground">
               Agent UI runs entirely on this machine.

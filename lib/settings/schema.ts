@@ -126,10 +126,25 @@ export type ChatSettings = {
   autoTitle: boolean
 }
 
+export type FileSettings = {
+  /**
+   * Whether `GET /api/files` serves any absolute path on this machine, which
+   * is what lets an answer show an image it wrote anywhere on disk. Turning it
+   * off narrows the route to the app's data directory, the folders chats are
+   * pointed at, and the agent workspace — the places the app already works in.
+   *
+   * On is the default: this is a local-first app talking to a local agent, and
+   * the paths come from the answer, so the switch is here for anyone who would
+   * rather the route could not read `~/.ssh` on a bad answer's say-so.
+   */
+  anyPath: boolean
+}
+
 export type AppSettings = {
   appearance: AppearanceSettings
   providers: ProviderSettings
   chat: ChatSettings
+  files: FileSettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
   recentFolders: string[]
 }
@@ -178,6 +193,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultEffort: "high",
     showSuggestions: true,
     autoTitle: true,
+  },
+  files: {
+    anyPath: true,
   },
   recentFolders: [],
 }
@@ -237,6 +255,9 @@ export function normalizeSettings(raw: unknown): AppSettings {
       },
     },
     chat: { ...DEFAULT_SETTINGS.chat, ...asObject(value.chat) },
+    files: {
+      anyPath: asObject(value.files).anyPath !== false,
+    },
     recentFolders: asFolderList(value.recentFolders),
   }
 }

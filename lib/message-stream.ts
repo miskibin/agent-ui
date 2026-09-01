@@ -1,5 +1,6 @@
 import type { MessagePart, MessageToolCallData } from "@/components/ui/message"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
+import { linkLocalImages } from "@/lib/local-media"
 import type { StoredMessage } from "@/lib/store/types"
 
 /**
@@ -30,16 +31,27 @@ export function toolsFromParts(parts: MessagePart[]) {
     .map((part) => part.tool)
 }
 
-/** Appends to the tail text part when there is one — keeps streaming O(1). */
+/**
+ * Appends to the tail text part when there is one — keeps streaming O(1).
+ *
+ * The rewrite of local image paths happens here, on the accumulated tail
+ * rather than the delta, because a path arrives in pieces: `![](C:\Users\m`
+ * matches nothing and is left as text until its closing paren lands. Doing it
+ * in the shared reducer is what keeps a reloaded thread identical to the live
+ * stream — both sides fold the same way.
+ */
 export function appendTextPart(
   parts: MessagePart[],
   text: string
 ): MessagePart[] {
   const last = parts.at(-1)
   if (last?.type === "text") {
-    return [...parts.slice(0, -1), { ...last, text: last.text + text }]
+    return [
+      ...parts.slice(0, -1),
+      { ...last, text: linkLocalImages(last.text + text) },
+    ]
   }
-  return [...parts, { type: "text", id: newId(), text }]
+  return [...parts, { type: "text", id: newId(), text: linkLocalImages(text) }]
 }
 
 export function appendThinkingPart(
