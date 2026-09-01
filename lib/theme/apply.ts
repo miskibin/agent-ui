@@ -4,19 +4,23 @@
  * The stylesheet we own (`<style id="agent-ui-theme">`) carries *every* preset
  * at once, keyed by the `data-theme` attribute on <html>:
  *
- *   :root[data-theme="ocean"] { --background: … }
- *   .dark[data-theme="ocean"] { --background: … }
+ *   :root[data-theme="graphite"] { --background: … --radius: … --font-sans: … }
+ *   .dark[data-theme="graphite"] { --background: … }
  *
  * Both selectors outrank the `:root` / `.dark` blocks in `app/globals.css`, and
  * the `.dark` half composes with next-themes, which owns the mode class. So
  * switching preset is a single attribute write — no stylesheet regeneration,
  * no per-variable `setProperty` loop — and the pre-paint guard below stays a
- * couple of hundred bytes because it never has to carry color data.
+ * couple of hundred bytes because it never has to carry theme data.
+ *
+ * Every variable in the registry item is emitted as-is; the one edit is fonts,
+ * where the loaded `var(--font-…)` is prepended to the theme's stack.
  */
 
 import { DEFAULT_SETTINGS, type AppearanceSettings } from "@/lib/settings/schema"
 
-import { THEME_PRESETS, THEME_TOKENS, findPreset } from "./presets"
+import { withLoadedFont } from "./fonts"
+import { THEME_PRESETS, findPreset, presetVars } from "./presets"
 
 /** Id of the stylesheet rendered in <head> by `app/layout.tsx`. */
 export const THEME_STYLE_ID = "agent-ui-theme"
@@ -24,17 +28,37 @@ export const THEME_STYLE_ID = "agent-ui-theme"
 /** localStorage mirror read by the pre-paint guard. */
 export const APPEARANCE_STORAGE_KEY = "agent-ui:appearance"
 
+/**
+ * Sticky "this browser is the desktop shell" flag. Written by the header once
+ * Tauri is detected and read by the same pre-paint guard, so the loading
+ * skeleton can reserve the window-control strip instead of reflowing when the
+ * client chunk hydrates.
+ */
+export const DESKTOP_STORAGE_KEY = "agent-ui:desktop"
+
+/** Radius override bounds — the slider in Settings → Appearance. */
 export const MIN_RADIUS = 0
-export const MAX_RADIUS = 1
+export const MAX_RADIUS = 1.5
 
 export function clampRadius(value: number): number {
-  if (!Number.isFinite(value)) return DEFAULT_SETTINGS.appearance.radius
+  if (!Number.isFinite(value)) return 0.5
   return Math.min(MAX_RADIUS, Math.max(MIN_RADIUS, value))
 }
 
-function block(selector: string, tokens: Record<string, string>) {
+/** `null` (the default) means "whatever radius the theme ships with". */
+export function normalizeRadiusOverride(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? clampRadius(value)
+    : null
+}
+
+const FONT_KEYS = new Set(["font-sans", "font-mono", "font-serif"])
+
+function block(selector: string, vars: Record<string, string>) {
   let css = `${selector}{`
-  for (const token of THEME_TOKENS) css += `--${token}:${tokens[token]};`
+  for (const [key, value] of Object.entries(vars)) {
+    css += `--${key}:${FONT_KEYS.has(key) ? withLoadedFont(value) : value};`
+  }
   return `${css}}`
 }
 
@@ -42,21 +66,26 @@ function block(selector: string, tokens: Record<string, string>) {
 export function themePresetCss(): string {
   let css = ""
   for (const preset of THEME_PRESETS) {
-    css += block(`:root[data-theme="${preset.id}"]`, preset.light)
-    css += block(`.dark[data-theme="${preset.id}"]`, preset.dark)
+    css += block(`:root[data-theme="${preset.id}"]`, presetVars(preset, "light"))
+    css += block(`.dark[data-theme="${preset.id}"]`, preset.cssVars.dark)
   }
   return css
 }
 
 /**
- * Pre-paint guard. Reads the localStorage mirror and stamps the preset +
- * radius onto <html> before the first paint, so a reload never flashes the
- * default palette. Dependency-free, try/catch-wrapped, and mode-agnostic —
- * next-themes' own inline script still owns the `.dark` class.
+ * Pre-paint guard. Reads the localStorage mirrors and stamps the preset (plus
+ * an optional radius override and the desktop flag) onto <html> before the
+ * first paint, so a reload never flashes the default theme or a browser-shaped
+ * header. Dependency-free, try/catch-wrapped, and mode-agnostic — next-themes'
+ * own inline script still owns the `.dark` class.
  */
-export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,v=JSON.parse(localStorage.getItem(${JSON.stringify(
+export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s=localStorage,v=JSON.parse(s.getItem(${JSON.stringify(
   APPEARANCE_STORAGE_KEY
-)})||"{}");if(typeof v.theme==="string")d.setAttribute("data-theme",v.theme);if(typeof v.radius==="number"&&v.radius>=${MIN_RADIUS}&&v.radius<=${MAX_RADIUS})d.style.setProperty("--radius",v.radius+"rem")}catch(e){}`
+)})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
+  DEFAULT_SETTINGS.appearance.theme
+)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(s.getItem(${JSON.stringify(
+  DESKTOP_STORAGE_KEY
+)})==="1")d.setAttribute("data-desktop","1")}catch(e){}`
 
 /**
  * Guarantees the preset stylesheet exists. It is server-rendered in <head>, so
@@ -72,17 +101,20 @@ function ensureStyleElement() {
 }
 
 /**
- * Applies preset + radius to the document. Mode is *not* handled here — that
- * goes through next-themes' `setTheme` so the two never fight over the class.
+ * Applies preset + radius override to the document. Mode is *not* handled here
+ * — that goes through next-themes' `setTheme` so the two never fight over the
+ * class.
  */
 export function applyAppearance(
-  appearance: Pick<AppearanceSettings, "theme" | "radius">
+  appearance: Pick<AppearanceSettings, "theme" | "radiusOverride">
 ) {
   if (typeof document === "undefined") return
   ensureStyleElement()
   const root = document.documentElement
   root.setAttribute("data-theme", findPreset(appearance.theme).id)
-  root.style.setProperty("--radius", `${clampRadius(appearance.radius)}rem`)
+  const radius = normalizeRadiusOverride(appearance.radiusOverride)
+  if (radius === null) root.style.removeProperty("--radius")
+  else root.style.setProperty("--radius", `${radius}rem`)
 }
 
 export function readAppearanceMirror(): Partial<AppearanceSettings> | null {
@@ -106,5 +138,15 @@ export function writeAppearanceMirror(appearance: AppearanceSettings) {
     )
   } catch {
     // Private mode / disabled storage: the guard just falls back to defaults.
+  }
+}
+
+/** Remembers that this browser is the Tauri shell (see the guard above). */
+export function rememberDesktopShell(desktop: boolean) {
+  try {
+    if (desktop) window.localStorage.setItem(DESKTOP_STORAGE_KEY, "1")
+    else window.localStorage.removeItem(DESKTOP_STORAGE_KEY)
+  } catch {
+    // Nothing to reserve — the header still renders correctly after hydration.
   }
 }
