@@ -25,7 +25,13 @@ type ChatChunk = {
       content?: string | null
       /** DeepSeek / xAI spell visible reasoning this way. */
       reasoning_content?: string | null
+      /**
+       * Nothing here declares tools, but a model trained to reach for them
+       * answers with one anyway — see `emptyTurnMessage`.
+       */
+      tool_calls?: unknown[] | null
     }
+    finish_reason?: string | null
   }>
   usage?: {
     prompt_tokens?: number
@@ -165,6 +171,10 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
       const lines = new LineBuffer()
       let usage: { input?: number; output?: number } | undefined
       let closed = false
+      // A turn that streams reasoning and then stops without a word of
+      // content is silent in the UI, so the end of the stream checks for it.
+      let sawText = false
+      let toolAttempt = false
 
       try {
         while (!closed) {
@@ -198,11 +208,15 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
                 output: chunk.usage.completion_tokens,
               }
             }
-            const delta = chunk.choices?.[0]?.delta
+            const choice = chunk.choices?.[0]
+            if (choice?.finish_reason === "tool_calls") toolAttempt = true
+            const delta = choice?.delta
+            if (delta?.tool_calls?.length) toolAttempt = true
             if (delta?.reasoning_content) {
               yield { type: "thinking", text: delta.reasoning_content }
             }
             if (delta?.content) {
+              sawText = true
               yield { type: "text", text: delta.content }
             }
           }
@@ -217,6 +231,10 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
       }
 
       if (options.signal.aborted) return
+      if (!sawText) {
+        yield { type: "error", message: emptyTurnMessage(source, toolAttempt) }
+        return
+      }
       const durationMs = Date.now() - startedAt
       yield {
         type: "done",
@@ -302,6 +320,20 @@ function dropOffendingField(fields: RequestFields, detail: string): boolean {
     return true
   }
   return false
+}
+
+/**
+ * What to say when a turn ends having streamed reasoning but no content.
+ *
+ * Models tuned for agent harnesses answer some prompts with a tool call even
+ * when the request declares no tools — DeepSeek then drops the call it parsed
+ * and the turn arrives empty. Without this the user sees a thinking block and
+ * nothing else, which reads as a broken app rather than a wrong backend.
+ */
+function emptyTurnMessage(source: ModelSource, toolAttempt: boolean) {
+  return toolAttempt
+    ? `The model tried to call a tool, and Chat (direct) has no tools — pick a harness that does (pi, or an ACP agent) for this prompt.`
+    : `${source.name} returned an empty response — the model produced reasoning but no answer. Try again, or rephrase the prompt.`
 }
 
 /** An error the endpoint reported inside the stream rather than as a status. */

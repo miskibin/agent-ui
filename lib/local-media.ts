@@ -60,3 +60,35 @@ export function linkLocalImages(markdown: string): string {
     return `![${alt}](${localFileUrl(target)}${title})`
   })
 }
+
+/**
+ * The same route, for a path a *tool* named rather than an answer's markdown.
+ * A tool row usually carries an absolute path; a relative one only means
+ * anything against the folder the turn ran in, so it is joined with the chat's
+ * cwd and dropped when there is none.
+ */
+export function localFileUrlFrom(path: string, cwd?: string) {
+  const target = path.trim()
+  if (!target) return undefined
+  if (isLocalPath(target)) return localFileUrl(target)
+  const root = cwd?.trim()
+  if (!root) return undefined
+  const separator = root.includes("\\") ? "\\" : "/"
+  const base = root.replace(/[\/]+$/, "")
+  return localFileUrl(`${base}${separator}${target.replace(/^[\/]+/, "")}`)
+}
+
+/** Every local file an answer's markdown already points at through the route. */
+export function localFilesInMarkdown(markdown: string): string[] {
+  if (!markdown.includes(FILE_ROUTE)) return []
+  const found: string[] = []
+  const pattern = new RegExp(`${FILE_ROUTE.replace("?", "\?")}([^)\s"']+)`, "g")
+  for (const match of markdown.matchAll(pattern)) {
+    try {
+      found.push(decodeURIComponent(match[1]))
+    } catch {
+      /* a target that is not encoded is not one we wrote */
+    }
+  }
+  return found
+}

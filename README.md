@@ -32,7 +32,7 @@ The stretch before a local model's first token is the one that looks broken, and
 | --- | :-: | :-: | --- |
 | **Cursor Agent** | ✅ | ✅ | Spawns the local `agent` CLI; full agentic runs in your workspace |
 | **Ollama** | — | replayed | Direct `/api/chat` streaming with `thinking` support (deepseek-r1, qwen3…); stateless, so the app replays the stored transcript |
-| **pi (Ollama)** | ✅ | ✅ | Spawns the [`pi`](https://pi.dev) CLI in `--mode json` — read/write/edit/bash over your local models, sessions on disk |
+| **pi** | ✅ | ✅ | Spawns the [`pi`](https://pi.dev) CLI in `--mode json` — read/write/edit/bash over your local *and* hosted models, sessions on disk |
 | **DeepSeek Harness** | ✅ | ✅ | Spawns `dsh --profile acp` and speaks [ACP](https://agentclientprotocol.com) over stdio — 25 tools, DeepSeek's own models or any OpenAI-compatible endpoint |
 | *any ACP agent* | ✅ | ✅ | Add a command in settings; no code change needed |
 | **Chat (direct)** | — | replayed | Tool-less streaming chat against any configured model provider's `/chat/completions` — no CLI, no sandbox |
@@ -42,13 +42,15 @@ Providers are detected at runtime and surfaced in the picker with availability b
 
 Picking a model is three choices, not one: a harness (Cursor, pi, Chat, dsh, …), then a **model provider** — Ollama, or one of the OpenAI-compatible sources configured in **Settings → Model providers** — then a model from that provider's catalog. Ten presets ship built in (OpenAI, Anthropic, xAI, Google, DeepSeek, Groq, Mistral, OpenRouter, Together AI, Fireworks); add your own with a name, base URL and optional API key, and **Test** checks it against the provider's `/models` before you rely on it. A model's id everywhere in the app is `<provider>/<model>` — `openai/gpt-4o`, `ollama/qwen3:8b` — so the picker can group every source under its own heading instead of one flat list, with a brand mark next to each.
 
-Every harness that isn't tied to one model source draws from this same list: `pi` unions it with Ollama's own catalog when it writes `models.json`, and **Chat (direct)** streams straight against whichever source the model id names.
+Every harness that isn't tied to one model source draws from this same list: `pi` unions it with Ollama's own catalog when it writes `models.json`, and **Chat (direct)** streams straight against whichever source the model id names. Neither half is required — `pi` is just as usable with only a DeepSeek key and no local server as with only Ollama and no keys.
+
+**Reasoning effort** rides along in the same picker, one submenu below the model, for every harness whose backend can carry it: Ollama gets a graded `think` level where the model has one, hosted providers get `reasoning_effort`, and ACP agents get the matching session config option. The one exception is Cursor Agent, whose CLI picks reasoning depth per model and takes no flag — that row simply has no effort line.
 
 Permission is one concept across every harness that supports it: **read-only**, **edits**, or **full access**. A provider that can enforce a mode advertises which ones, and only then does the composer show a per-chat picker next to the model — ACP's generic client offers read-only/full, the DeepSeek Harness maps all three onto its own sandbox setting. The choice is remembered per session.
 
 ### One folder per chat
 
-The picker sits directly above the composer on a new chat, where choosing where the agent works is the next thing to do. Once the conversation starts it steps out of the way: the folder is then the sidebar row's own second line, next to every other chat's. Providers that spawn a CLI (Cursor, pi) run in it, so two chats can work in two checkouts at once. Nothing is checked out for you — the branch is what you record, not what the app switches to.
+The picker sits directly above the composer on a new chat, where choosing where the agent works is the next thing to do. Once the conversation starts it steps out of the way, and the folder becomes how the sidebar is organised: the chats of one checkout are one section, headed by the folder and the branch, with the pinned chats above them and the folderless ones last. Providers that spawn a CLI (Cursor, pi) run in it, so two chats can work in two checkouts at once. Nothing is checked out for you — the branch is what you record, not what the app switches to.
 
 ![Choosing a working folder](.github/screenshots/folder-picker.png)
 
@@ -63,14 +65,14 @@ The path is validated on the server while you type, and the repo's local branche
 
 ### The pi harness
 
-Ollama on its own answers questions; `pi` turns the same models into an agent that reads and edits files and runs commands. It is the smallest harness that does this well — four tools, ~7k tokens of cold-start context, so a 4–8B model still has room to think:
+Ollama on its own answers questions; `pi` turns the same models — or any model provider you configured — into an agent that reads and edits files and runs commands. It is the smallest harness that does this well — four tools, ~7k tokens of cold-start context, so a 4–8B model still has room to think:
 
 ```bash
 npm install -g --ignore-scripts @earendil-works/pi-coding-agent   # provides `pi`
 ollama pull qwen3:8b                                             # or qwen2.5-coder:7b
 ```
 
-Then pick **pi (Ollama)** in the composer. The app writes a `models.json` pointing pi at your Ollama server, so no manual `~/.pi` setup is needed, and `PI_CODING_AGENT_DIR` keeps it separate from a personal pi install.
+Then pick **pi** in the composer. The app writes a `models.json` with one entry per model source — your Ollama server, every enabled model provider, or just one of the two — so no manual `~/.pi` setup is needed, and `PI_CODING_AGENT_DIR` keeps it separate from a personal pi install.
 
 Two things worth knowing:
 
@@ -162,7 +164,7 @@ Everything is local JSON under `~/.agent-ui` (override with `AGENT_UI_DIR`):
 - `sessions/<id>.json` — full transcripts (reasoning, tool calls, markdown)
 - `memory/<category>.md` — one markdown file per memory category, only if you turn memory on
 
-- `pi/models.json` — generated: points pi at your Ollama server's OpenAI-compatible endpoint
+- `pi/models.json` — generated: one entry per model source, your Ollama server's OpenAI-compatible endpoint and every enabled model provider
 - `pi/sessions/*.jsonl` — pi's own transcripts, kept out of your personal `~/.pi/agent`
 - `dsh/patch.json` — generated: the `--patch` overlay declaring your OpenAI-compatible endpoint as a dsh model route
 - `dsh/sessions/**` — dsh's own session logs, kept out of your personal `~/.dsh`

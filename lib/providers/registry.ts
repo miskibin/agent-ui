@@ -53,8 +53,9 @@ function build(id: string, settings: AppSettings): AgentProvider | null {
   if (id === MOCK_PROVIDER_ID) return createMockProvider(providers.mock.enabled)
   if (id === CURSOR_PROVIDER_ID) return createCursorProvider(providers.cursorAgent)
   if (id === OLLAMA_PROVIDER_ID) return createOllamaProvider(providers.ollama)
-  // The harness talks to the same server as the plain Ollama provider, but
-  // stays usable when that one is switched off.
+  // The harness draws on both catalogs — the Ollama server the plain provider
+  // uses (and stays usable when that one is switched off) and every enabled
+  // entry under `settings.modelProviders`.
   if (id === PI_PROVIDER_ID) {
     return createPiProvider(providers.pi, providers.ollama.baseUrl, settings)
   }

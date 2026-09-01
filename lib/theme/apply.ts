@@ -77,16 +77,25 @@ export function normalizeZoom(value: unknown): number {
 
 function applyZoom(root: HTMLElement, zoom: number) {
   const next = clampZoom(zoom)
-  // `zoom` alone — no width/height compensation. A percentage resolves against
-  // a containing block already converted into the zoomed coordinate space, so
-  // the `height: 100%` chain in globals.css lands exactly on the window at every
-  // zoom level. Sizing the root at 100/zoom instead (or letting anything below
-  // ask for `svh`/`vw`, which `zoom` does *not* scale) overshoots the viewport
-  // by that same factor and is what put scrollbars on a resized UI.
+  // The scale is published as a variable, never as `zoom` on <html>: the
+  // wrapper in app/layout.tsx is what actually zooms, so Radix's portals — which
+  // render into <body>, outside it — stay in the same coordinate space as the
+  // anchors they measure. Zooming <html> instead puts them *inside* the scaled
+  // subtree, where Floating UI reads rects in visual pixels but writes the
+  // position into a layout-unit box, and every menu drifts off screen by the
+  // scale factor. The vendored menus read the same variable to scale their own
+  // content, so they end up the right size in the right place.
+  //
+  // No width/height compensation either: a percentage resolves against a
+  // containing block already converted into the zoomed space, so the
+  // `height: 100%` chain in globals.css lands exactly on the window. Anything
+  // asking for `svh`/`vw` — which `zoom` does *not* scale — overshoots by that
+  // same factor, which is what put scrollbars on a resized UI.
   root.style.removeProperty("width")
   root.style.removeProperty("height")
-  if (next === DEFAULT_ZOOM) root.style.removeProperty("zoom")
-  else root.style.setProperty("zoom", String(next))
+  root.style.removeProperty("zoom")
+  if (next === DEFAULT_ZOOM) root.style.removeProperty("--ui-scale")
+  else root.style.setProperty("--ui-scale", String(next))
 }
 
 const FONT_KEYS = new Set(["font-sans", "font-mono", "font-serif"])
@@ -121,7 +130,7 @@ export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s
   APPEARANCE_STORAGE_KEY
 )})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
   DEFAULT_SETTINGS.appearance.theme
-)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){d.style.setProperty("zoom",String(Math.round(v.zoom*10)/10))}var f=${JSON.stringify(
+)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){d.style.setProperty("--ui-scale",String(Math.round(v.zoom*10)/10))}var f=${JSON.stringify(
   {
     "--font-sans": {
       stacks: fontStackMap("sans"),

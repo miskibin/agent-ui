@@ -25,7 +25,7 @@ import type { AppSettingsApi } from "./use-app-settings"
 const BUILT_IN_PROVIDERS = [
   { id: "mock", label: "Mock" },
   { id: "ollama", label: "Ollama" },
-  { id: "pi", label: "pi (Ollama)" },
+  { id: "pi", label: "pi" },
   { id: "cursorAgent", label: "Cursor Agent" },
 ] as const
 
@@ -165,9 +165,9 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
       </SettingsRow>
 
       <SettingsRow
-        title="pi (Ollama)"
+        title="pi"
         htmlFor="provider-pi"
-        description="Agentic harness: the pi CLI drives the models above with read, write, edit and bash tools."
+        description="Agentic harness: the pi CLI drives the Ollama models above and every enabled model provider with read, write, edit and bash tools."
         control={
           <>
             <StatusBadge phase={phase} status={map[statusKey("pi")]} />

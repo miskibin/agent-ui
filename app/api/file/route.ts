@@ -3,6 +3,7 @@ import path from "node:path"
 
 import { NextResponse } from "next/server"
 
+import { acpAgentKey } from "@/lib/providers/acp"
 import { CURSOR_PROVIDER_ID } from "@/lib/providers/cursor"
 import { PI_PROVIDER_ID } from "@/lib/providers/pi"
 import { dataDir, readSettings } from "@/lib/settings/server"
@@ -36,6 +37,11 @@ async function workspaceRoot(providerId: string, sessionId: string) {
   if (providerId === PI_PROVIDER_ID) {
     const settings = await readSettings()
     return settings.providers.pi.workspace?.trim() || process.cwd()
+  }
+  const acpKey = acpAgentKey(providerId)
+  if (acpKey) {
+    const settings = await readSettings()
+    return settings.providers.acp.agents[acpKey]?.workspace?.trim() || process.cwd()
   }
   // cursorAgent runs in the app's cwd (lib/providers/cursor.ts); so does
   // everything else that has no workspace of its own.

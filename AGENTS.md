@@ -33,7 +33,8 @@ upstream component needs a new prop or slot: go through steps 1–4.
 `components/theme-provider.tsx`, `app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
 `lib/theme/`, `lib/memory/`,
-`lib/api-client.ts`, `lib/message-stream.ts`, `lib/desktop.ts`, `lib/folder.ts`,
+`lib/api-client.ts`, `lib/message-stream.ts`, `lib/turn-files.ts`, `lib/session-groups.ts`,
+`lib/desktop.ts`, `lib/folder.ts`,
 `lib/fs-paths.ts`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
@@ -50,17 +51,25 @@ one interface:
   `status` is progress that is *not* message content (a cold model being loaded, a CLI
   being spawned); the UI shows the latest one while the turn is still empty and drops it
   when real output arrives. `done` carries the turn's token usage, which the chat route
-  persists as message metadata. Permission is unified the same way: `PermissionMode` is
+  persists as message metadata. Reasoning effort is offered wherever the backend can carry
+  it, not only where it is native: Ollama walks a `think` ladder (graded level → boolean →
+  off) on the 400s that tell those cases apart, ACP sets a `reasoning_effort` session config
+  option whose failure is already swallowed, and the OpenAI-compatible paths send
+  `reasoning_effort` and retry without it. `cursor` is the one harness without the control —
+  its CLI has no flag for it. Permission is unified the same way: `PermissionMode` is
   `read-only | edits | full`, a provider lists which of those it can enforce in
   `capabilities.permissionModes`, and the composer's `components/permission-picker.tsx`
   shows up only then — ACP's generic client offers read-only/full, dsh maps all three onto
   its own sandbox — with the chosen mode persisted per session.
 - Providers: `mock` (scripted), `cursor` (spawns the `cursor-agent` CLI, resumes by session id),
   `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
-  `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over the same Ollama server —
-  four tools, resumes by pi session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-agent.ts`
-  owns the subprocess and event translation, and a generated `models.json` under
-  `$AGENT_UI_DIR/pi` points pi at Ollama's OpenAI-compatible endpoint).
+  `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over *every* configured
+  model source — the local Ollama server, the hosted providers under `settings.modelProviders`,
+  or either on its own; it is unavailable only when neither is there. Four tools, resumes by pi
+  session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-agent.ts` owns the subprocess and
+  event translation, and a generated `models.json` under `$AGENT_UI_DIR/pi` writes one entry per
+  source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and on
+  for the hosted ones, which read it).
   New backend = one file in `lib/providers/` + a `registry.ts` entry + settings schema wiring.
   Picking a model is a three-step choice — harness, then model provider, then model — and a
   provider that runs its own agent loop (`pi`) or streams tool-less chat directly
@@ -112,7 +121,29 @@ one interface:
   name a path on this machine (`lib/local-media.ts`) to `GET /api/files`, which streams the file
   back on the app's own origin — a browser will not load `file://` from an http page. The route
   refuses cross-site requests and serves everything sandboxed and `nosniff`; `files.anyPath` in
-  settings narrows it from any path (the default) to the app's folders.
+  settings narrows it from any path (the default) to the app's folders. The same route is what
+  makes an image *visible* everywhere else: `resolveFileUrl` (a `MessageList` prop, wired in
+  `app/page.tsx`) turns a path a tool named into that URL, so a Read of a `.png` renders the
+  picture instead of the `image/webp image, 1531x889 px` line the harness returns, and the file
+  panel shows it through `FilePreviewFile.imageSrc`. A relative path is joined with the chat's
+  cwd (`localFileUrlFrom`).
+- What a turn *produced*, not just what it edited: `lib/turn-files.ts` widens the Files Changed
+  card past the mutation tools the vendored `fileChangesFromTools` sees. A chart a shell command
+  wrote leaves no edit behind, so the extras come from the rest of the turn — images a tool
+  opened, images the answer embeds, and artifact-typed files the answer merely names in a
+  `wykres.png` chip (that list is deliberately narrow: an answer cites source files constantly,
+  and those are not output). Rows are deduped across relative and absolute spellings, and the
+  helper returns undefined when it has nothing to add, which leaves the card to the component
+  and the message object untouched — the memoized row must not re-render for this.
+- The sidebar is grouped, not one flat list: `lib/session-groups.ts` splits the index into the
+  pinned chats and one section per working folder (`SessionMeta.cwd`), with the folderless ones
+  last. The folder is the section header — its last segment, widened to two when two checkouts
+  share a basename, plus the branch of the group's newest chat — so a row is free to say what
+  answered in it, and a closed section keeps a live dot while a chat inside it streams. Groups
+  and their rows are ordered by `updatedAt`; hand-made order (`order`, drag-to-reorder) survives
+  only in the pinned group, because `order` is one global sequence with nothing per-folder to
+  write back to. Closed sections are remembered under `agent-ui:folder-sections` — closed ones
+  only, so a folder seen for the first time opens.
 - The file panel: every file a turn touched opens beside the conversation. The components are
   vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/page.tsx` owns the state
   — which file is open, the split width under `agent-ui:preview-size`, closing on a chat switch —

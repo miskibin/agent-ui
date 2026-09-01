@@ -53,6 +53,7 @@ import {
   SidebarCollapsibleSection,
   SidebarEmptyState,
   SidebarItemBadge,
+  SidebarItemStatusDot,
   type ChatSidebarItemData,
 } from "@/components/ui/chat-sidebar"
 import {
@@ -67,6 +68,7 @@ import type {
   MessageToolCallData,
 } from "@/components/ui/message"
 import { MessageList } from "@/components/ui/message-list"
+import { isImagePath } from "@/components/ui/message-parts"
 import {
   DEFAULT_MODEL_EFFORTS,
   ModelPicker,
@@ -101,6 +103,7 @@ import type {
   AgentStreamEvent,
 } from "@/lib/cursor-agent-types"
 import { runLayoutTransition } from "@/lib/layout-transition"
+import { localFileUrlFrom } from "@/lib/local-media"
 import {
   applyStreamEvent,
   deriveSessionTitle,
@@ -109,6 +112,13 @@ import {
   toolsFromParts,
 } from "@/lib/message-stream"
 import { joinModelId } from "@/lib/model-providers/ids"
+import {
+  PINNED_GROUP_ID,
+  groupIdForSession,
+  groupSessions,
+  type SessionGroup,
+} from "@/lib/session-groups"
+import { turnFiles } from "@/lib/turn-files"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
@@ -129,6 +139,13 @@ const MAX_CACHED_THREADS = 4
 
 /** Where the dragged file-panel width is remembered, as a percentage. */
 const CACHE_SPLIT_KEY = "agent-ui:preview-size"
+
+/**
+ * Which sidebar folder sections the user closed, keyed by group id. Only the
+ * closed ones are worth remembering: a folder seen for the first time — a chat
+ * that just picked one — should open, not hide.
+ */
+const CACHE_SECTIONS_KEY = "agent-ui:folder-sections"
 
 /** The conversation and the file panel are the two panes of one split. */
 const WORKSPACE_GROUP_ID = "chat-workspace"
@@ -222,6 +239,9 @@ function statusStage(stage: AgentStatusStage | undefined): GenerationStage {
   return stage === "searching" || stage === "responding" ? stage : "thinking"
 }
 
+/** The empty-state section has nothing to fold, so its trigger does nothing. */
+function noop() {}
+
 /** Wall clock read, hoisted out of the component so render stays pure. */
 function nowMs() {
   return Date.now()
@@ -313,7 +333,10 @@ export default function ChatPage() {
   const isDesktop = useIsDesktop()
   const [collapsed, setCollapsed] = React.useState(false)
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
-  const [chatsOpen, setChatsOpen] = React.useState(true)
+  /** Sections the user closed. Absent id = open, so a new folder shows up. */
+  const [closedSections, setClosedSections] = React.useState<
+    Record<string, boolean>
+  >({})
   const [paletteOpen, setPaletteOpen] = React.useState(false)
   /** Bumped to open the sidebar's inline rename for one chat. */
   const [renameRequest, setRenameRequest] = React.useState({
@@ -503,6 +526,22 @@ export default function ChatPage() {
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
   const isGenerating = !!activeRun
+  /**
+   * The transcript as the list sees it: same objects, except where a turn's
+   * file card needs the media it produced folded in (`lib/turn-files`). The
+   * live turn is left alone — its card is only rendered once it settles, so
+   * rebuilding it per token would be pure waste.
+   */
+  const listMessages = React.useMemo(() => {
+    const live = isGenerating ? visibleMessages.length - 1 : -1
+    let patched = false
+    const next = visibleMessages.map((message, index) => {
+      const withFiles = index === live ? message : withTurnFiles(message)
+      if (withFiles !== message) patched = true
+      return withFiles
+    })
+    return patched ? next : visibleMessages
+  }, [isGenerating, visibleMessages])
   const threadLoading =
     !!activeId &&
     threads[activeId] === undefined &&
@@ -782,6 +821,47 @@ export default function ChatPage() {
   React.useEffect(() => {
     if (activeId) writeCache(CACHE_ACTIVE_KEY, activeId)
   }, [activeId])
+
+  // Same microtask trick as the sidebar seed: read the closed sections after
+  // mount without a setState in the effect body.
+  React.useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      const cached = readCache<Record<string, boolean>>(CACHE_SECTIONS_KEY)
+      if (cached) setClosedSections(cached)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const sectionsDirtyRef = React.useRef(false)
+  React.useEffect(() => {
+    // The seed itself must not write back — only a real toggle does.
+    if (!sectionsDirtyRef.current) return
+    writeCache(CACHE_SECTIONS_KEY, closedSections)
+  }, [closedSections])
+
+  const toggleSection = React.useCallback((id: string) => {
+    sectionsDirtyRef.current = true
+    setClosedSections((prev) => {
+      const next = { ...prev }
+      if (next[id]) delete next[id]
+      else next[id] = true
+      return next
+    })
+  }, [])
+
+  const openSection = React.useCallback((id: string) => {
+    setClosedSections((prev) => {
+      if (!prev[id]) return prev
+      sectionsDirtyRef.current = true
+      const next = { ...prev }
+      delete next[id]
+      return next
+    })
+  }, [])
 
   /** Closing the drawer hands focus back to the button that opened it. */
   const closeDrawer = React.useCallback(() => {
@@ -1712,11 +1792,20 @@ export default function ChatPage() {
    * partial read carries a `startLine` the whole file would not line up with.
    */
   const openPreview = React.useCallback((file: FilePreviewFile) => {
-    setPreview(file)
-    if (file.content !== undefined) return
     const session = sessionsRef.current.find(
       (item) => item.id === activeIdRef.current
     )
+    // An image has no text to read: the panel takes a URL on the app's own
+    // origin instead, and `/api/files` streams the bytes.
+    const opened: FilePreviewFile = isImagePath(file.path)
+      ? {
+          ...file,
+          imageSrc:
+            file.imageSrc ?? localFileUrlFrom(file.path, session?.cwd),
+        }
+      : file
+    setPreview(opened)
+    if (opened.imageSrc || opened.content !== undefined) return
     const provider = session?.providerId || providerIdRef.current
     if (!provider) return
     void api
@@ -1731,6 +1820,21 @@ export default function ChatPage() {
       .catch(() => {
         /* the panel degrades to the diff on its own */
       })
+  }, [])
+
+  /**
+   * A path a tool named → a URL this page can load it from. Images only: the
+   * tool row and the panel show the picture, and `/api/files` serves the bytes
+   * on the app's own origin because a browser will not fetch `file://` from an
+   * http page. Stable, so the memoized rows keep their render while a turn
+   * streams.
+   */
+  const resolveFileUrl = React.useCallback((path: string) => {
+    if (!isImagePath(path)) return undefined
+    const session = sessionsRef.current.find(
+      (item) => item.id === activeIdRef.current
+    )
+    return localFileUrlFrom(path, session?.cwd)
   }, [])
 
   /**
@@ -1823,24 +1927,19 @@ export default function ChatPage() {
         const subtitle = run
           ? (run.status ??
             STAGE_SUBTITLES[run.stage === "idle" ? "thinking" : run.stage])
-          : session.cwd
-            ? // A chat pinned to a folder says where it works — that places it
-              // faster than the model it happens to be using.
-              <SidebarItemBadge
-                folder={session.cwd}
-                branch={session.gitBranch}
-              />
-            : session.messageCount === 0
-              ? "New chat"
-              : [
-                  providerName(session.providerId),
-                  session.providerId === providerId
-                    ? (models.find((m) => m.id === session.model)?.name ??
-                      session.model)
-                    : session.model,
-                ]
-                  .filter(Boolean)
-                  .join(" · ")
+          : // The folder is the section header now, so the row is free to say
+            // what answered in it.
+            session.messageCount === 0
+            ? "New chat"
+            : [
+                providerName(session.providerId),
+                session.providerId === providerId
+                  ? (models.find((m) => m.id === session.model)?.name ??
+                    session.model)
+                  : session.model,
+              ]
+                .filter(Boolean)
+                .join(" · ")
         return {
           id: session.id,
           title: session.title,
@@ -1857,6 +1956,12 @@ export default function ChatPage() {
         }
       }),
     [activeId, failures, models, providerId, providerName, runs, sessions]
+  )
+
+  /** Pinned chats, then one section per working folder. */
+  const { pinned: pinnedItems, folders: folderGroups } = React.useMemo(
+    () => groupSessions(sessions, sessionItems),
+    [sessionItems, sessions]
   )
 
   const paletteSessions = React.useMemo<CommandPaletteSession[]>(
@@ -1876,10 +1981,12 @@ export default function ChatPage() {
     (id: string) => {
       if (isDesktop) setCollapsed(false)
       else setMobileNavOpen(true)
-      setChatsOpen(true)
+      const session = sessionsRef.current.find((item) => item.id === id)
+      // The rename input has to be on screen: open the section holding it.
+      if (session) openSection(groupIdForSession(session))
       setRenameRequest((prev) => ({ id, token: prev.token + 1 }))
     },
-    [isDesktop]
+    [isDesktop, openSection]
   )
 
   const showEfforts =
@@ -2000,15 +2107,22 @@ export default function ChatPage() {
       <ChatSidebarDnd
         onDrop={(drop) => {
           if (drop.kind === "reorder") {
-            setSessions((prev) => arrayMove(prev, drop.from, drop.to))
-            const moved = sessions[drop.from]
-            if (moved) {
-              void api
-                .patchSession(moved.id, { order: drop.to })
-                .catch((err: unknown) =>
-                  toast.error(errorMessage(err, "Could not reorder chats"))
-                )
-            }
+            // Only the pinned list reorders by hand: a folder section is
+            // ordered by activity, and `order` is one global sequence with
+            // nothing per-folder to write back to. `from`/`to` are indices
+            // inside their own list, so the ids are what map onto `sessions`.
+            if (drop.listId !== PINNED_GROUP_ID) return
+            if (drop.fromListId !== drop.listId) return
+            const list = sessionsRef.current
+            const from = list.findIndex((item) => item.id === drop.itemId)
+            const to = list.findIndex((item) => item.id === drop.overId)
+            if (from < 0 || to < 0 || from === to) return
+            setSessions((prev) => arrayMove(prev, from, to))
+            void api
+              .patchSession(drop.itemId, { order: to })
+              .catch((err: unknown) =>
+                toast.error(errorMessage(err, "Could not reorder chats"))
+              )
           } else if (drop.action === "pin") {
             togglePin(drop.itemId, true)
           } else if (drop.action === "delete") {
@@ -2092,37 +2206,69 @@ export default function ChatPage() {
             )
           }
         >
-          <SidebarSessionSection
-            open={chatsOpen}
-            onToggle={() => setChatsOpen((value) => !value)}
-            sessions={sessionItems}
-            loading={!sessionsLoaded && sessionItems.length === 0}
-            activeId={activeId}
-            renameRequest={renameRequest}
-            onSelect={selectSession}
-            onRename={renameSession}
-            onTogglePin={togglePin}
-            onDelete={removeSession}
-            onDeleteMany={removeSessions}
-          />
+          {sessionItems.length === 0 ? (
+            <SidebarCollapsibleSection title="Chats" open onToggle={noop}>
+              {!sessionsLoaded ? (
+                <SidebarLoading />
+              ) : (
+                <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
+              )}
+            </SidebarCollapsibleSection>
+          ) : null}
+
+          {pinnedItems.length > 0 ? (
+            <SidebarSessionSection
+              id={PINNED_GROUP_ID}
+              title="Pinned"
+              sortable
+              open={!closedSections[PINNED_GROUP_ID]}
+              onToggle={toggleSection}
+              sessions={pinnedItems}
+              activeId={activeId}
+              renameRequest={renameRequest}
+              onSelect={selectSession}
+              onRename={renameSession}
+              onTogglePin={togglePin}
+              onDelete={removeSession}
+              onDeleteMany={removeSessions}
+            />
+          ) : null}
+
+          {folderGroups.map((group) => (
+            <SidebarFolderSection
+              key={group.id}
+              group={group}
+              open={!closedSections[group.id]}
+              onToggle={toggleSection}
+              activeId={activeId}
+              renameRequest={renameRequest}
+              onSelect={selectSession}
+              onRename={renameSession}
+              onTogglePin={togglePin}
+              onDelete={removeSession}
+              onDeleteMany={removeSessions}
+            />
+          ))}
         </ChatSidebar>
       </ChatSidebarDnd>
     ),
     [
       activeId,
-      chatsOpen,
+      closedSections,
       collapsed,
+      folderGroups,
       handleNewChat,
       isDesktop,
       closeDrawer,
+      pinnedItems,
       removeSession,
       removeSessions,
       renameRequest,
       renameSession,
       selectSession,
       sessionItems,
-      sessions,
       sessionsLoaded,
+      toggleSection,
       togglePin,
       router,
     ]
@@ -2219,7 +2365,7 @@ export default function ChatPage() {
                   </div>
                 ) : (
                   <MessageList
-                    messages={visibleMessages}
+                    messages={listMessages}
                     isGenerating={isGenerating}
                     generationStage={activeRun?.stage ?? "idle"}
                     generationLabel={activeRun?.status}
@@ -2229,6 +2375,7 @@ export default function ChatPage() {
                     onChangeFileClick={handleChangeFileClick}
                     onFileReferenceClick={handleFileReferenceClick}
                     onReviewChanges={handleReviewChanges}
+                    resolveFileUrl={resolveFileUrl}
                     renderActions={(message) =>
                       message.sender === "assistant" ? (
                         <MessageActions
@@ -2421,24 +2568,10 @@ const ThreadLoading = React.memo(function ThreadLoading() {
   )
 })
 
-const SidebarSessionSection = React.memo(function SidebarSessionSection({
-  open,
-  onToggle,
-  sessions,
-  loading,
-  activeId,
-  renameRequest,
-  onSelect,
-  onRename,
-  onTogglePin,
-  onDelete,
-  onDeleteMany,
-}: {
+type SidebarSectionProps = {
   open: boolean
-  onToggle: () => void
-  sessions: ChatSidebarItemData[]
-  /** First fetch still in flight — "New chats appear here" would be a lie. */
-  loading: boolean
+  /** Takes the section id, so the row of sections shares one stable callback. */
+  onToggle: (id: string) => void
   activeId: string
   renameRequest: { id: string; token: number }
   onSelect: (id: string) => void
@@ -2446,34 +2579,80 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   onTogglePin: (id: string, pinned: boolean) => void
   onDelete: (id: string) => void
   onDeleteMany: (ids: string[]) => void
+}
+
+const SidebarSessionSection = React.memo(function SidebarSessionSection({
+  id,
+  title,
+  action,
+  sortable = false,
+  open,
+  onToggle,
+  sessions,
+  ...rest
+}: SidebarSectionProps & {
+  id: string
+  title: React.ReactNode
+  /** Rendered at the right edge of the header, before the count. */
+  action?: React.ReactNode
+  /** Hand-made order — only the pinned group has one to keep. */
+  sortable?: boolean
+  sessions: ChatSidebarItemData[]
 }) {
+  const toggle = React.useCallback(() => onToggle(id), [id, onToggle])
   return (
     <SidebarCollapsibleSection
-      title="Recent chats"
+      title={title}
       open={open}
-      onToggle={onToggle}
+      onToggle={toggle}
+      action={action}
       count={sessions.length}
     >
       <ChatSidebarItemList
         items={sessions}
-        activeId={activeId}
-        listId="recent"
-        renameRequest={renameRequest}
-        sortable
-        emptyState={
-          loading ? (
-            <SidebarLoading />
-          ) : (
-            <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
-          )
-        }
-        onSelect={onSelect}
-        onRename={onRename}
-        onTogglePin={onTogglePin}
-        onDelete={onDelete}
-        onDeleteMany={onDeleteMany}
+        activeId={rest.activeId}
+        listId={id}
+        renameRequest={rest.renameRequest}
+        sortable={sortable}
+        draggable
+        onSelect={rest.onSelect}
+        onRename={rest.onRename}
+        onTogglePin={rest.onTogglePin}
+        onDelete={rest.onDelete}
+        onDeleteMany={rest.onDeleteMany}
       />
     </SidebarCollapsibleSection>
+  )
+})
+
+/**
+ * One working folder's chats. The header carries what the rows used to repeat —
+ * the folder and its branch — and keeps a live dot while the section is closed,
+ * so a turn running inside it is never hidden by the fold.
+ */
+const SidebarFolderSection = React.memo(function SidebarFolderSection({
+  group,
+  open,
+  ...rest
+}: SidebarSectionProps & { group: SessionGroup }) {
+  return (
+    <SidebarSessionSection
+      {...rest}
+      id={group.id}
+      open={open}
+      title={<span title={group.cwd || undefined}>{group.label}</span>}
+      action={
+        <span className="flex min-w-0 items-center gap-1.5 normal-case">
+          {group.branch ? (
+            <SidebarItemBadge branch={group.branch} className="min-w-0" />
+          ) : null}
+          {group.running && !open ? (
+            <SidebarItemStatusDot status="streaming" />
+          ) : null}
+        </span>
+      }
+      sessions={group.items}
+    />
   )
 })
 
@@ -2532,6 +2711,23 @@ function isInternalMessage(message: StoredMessage) {
  * and picking it up here would rewrite a stored transcript the user closed
  * long ago.
  */
+/**
+ * A turn's file card, cached against the stored message so it is built once
+ * per turn rather than once per render. `turnFiles` answers undefined when it
+ * has nothing to add, and the message object is then handed on untouched —
+ * which is what keeps the memoized row from re-rendering.
+ */
+const turnFilesCache = new WeakMap<StoredMessage, StoredMessage>()
+
+function withTurnFiles(message: StoredMessage): StoredMessage {
+  const cached = turnFilesCache.get(message)
+  if (cached) return cached
+  const changes = message.changes ?? turnFiles(message)
+  const next = changes === message.changes ? message : { ...message, changes }
+  turnFilesCache.set(message, next)
+  return next
+}
+
 function findPendingAsk(messages: StoredMessage[]) {
   const message = messages.at(-1)
   if (!message) return null

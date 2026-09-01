@@ -51,7 +51,15 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <AppearanceProvider>{children}</AppearanceProvider>
+          {/* The UI scale lives here, not on <html>: Radix portals render into
+              <body>, so keeping this wrapper the only zoomed box leaves menus
+              and popovers in the same coordinate space as the anchors Floating
+              UI measures. They read --ui-scale (set on <html> by
+              lib/theme/apply.ts, and pre-paint by the bootstrap script) to
+              scale their own content. */}
+          <div className="h-full [zoom:var(--ui-scale,1)]">
+            <AppearanceProvider>{children}</AppearanceProvider>
+          </div>
         </ThemeProvider>
         {/* Toasts wear the app's own theme, not sonner's stock palette: the
             vendored Toaster maps the neutral slots to the popover tokens, and

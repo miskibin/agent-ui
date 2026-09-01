@@ -121,14 +121,17 @@ export function createAcpProvider(
    *
    * `mode` is the turn's permission override, which for dsh has to be decided
    * here rather than at the ACP layer: its sandbox is set by an environment
-   * variable read when the process starts.
+   * variable read when the process starts. `cwd` is the chat's own folder when
+   * it has one — it beats the single workspace from settings, and because the
+   * sandbox is scoped to the process cwd it moves the writable root with it.
    */
-  const spawnSpec = async (mode?: PermissionMode) => {
+  const spawnSpec = async (mode?: PermissionMode, cwd?: string) => {
+    const root = cwd || workspace
     if (!isDsh) {
       return {
         command,
         args: agent.args,
-        cwd: workspace,
+        cwd: root,
         env: agent.env,
       }
     }
@@ -137,7 +140,7 @@ export function createAcpProvider(
     return {
       command,
       args: [...DSH_ACP_ARGS, ...(patch ? ["--patch", patch] : []), ...agent.args],
-      cwd: workspace,
+      cwd: root,
       env: {
         ...dshEnv(configDir, sandbox ? { ...agent.dsh, sandbox } : agent.dsh),
         ...agent.env,
@@ -158,10 +161,11 @@ export function createAcpProvider(
           // ACP `session/resume` restores context across process restarts, so
           // the chat route never replays history for these.
           resume: true,
-          // dsh's own route publishes a `reasoning_effort` config option;
-          // OpenAI-compatible routes declare no efforts and the option
-          // disappears, so the control would be dead.
-          effort: isDsh && !baseUrl,
+          // `reasoning_effort` is a session config option, and setting one an
+          // agent does not publish is already swallowed by `setConfigOption`
+          // rather than failing the turn — so the control is offered to every
+          // ACP agent and simply does nothing on the ones that ignore it.
+          effort: true,
           vision: false,
           permissionModes: modes,
           defaultPermissionMode: configuredMode(agent, isDsh, modes),
@@ -209,7 +213,12 @@ export function createAcpProvider(
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
-      const spec = await spawnSpec(options.permissionMode).catch(
+      // A per-chat folder beats the one workspace from settings — for the
+      // spawn cwd and for the root `fs/*` requests are confined to alike.
+      const root = options.cwd?.trim()
+        ? path.resolve(/*turbopackIgnore: true*/ options.cwd.trim())
+        : workspace
+      const spec = await spawnSpec(options.permissionMode, root).catch(
         (err: unknown) => err as Error
       )
       if (spec instanceof Error) {
@@ -231,14 +240,14 @@ export function createAcpProvider(
         signal: options.signal,
         handlers: {
           async readTextFile({ path: requested, line, limit }) {
-            const target = scopedPath(workspace, requested)
+            const target = scopedPath(root, requested)
             const content = await readFile(/*turbopackIgnore: true*/ target, "utf8").catch(() => {
               throw new AcpRpcError(ACP_ERROR.resourceNotFound, `Cannot read ${requested}`)
             })
             return sliceLines(content, line, limit)
           },
           async writeTextFile({ path: requested, content }) {
-            const target = scopedPath(workspace, requested)
+            const target = scopedPath(root, requested)
             // ACP requires the client to create the file if it is absent.
             await mkdir(path.dirname(target), { recursive: true })
             await writeFile(target, content, "utf8")

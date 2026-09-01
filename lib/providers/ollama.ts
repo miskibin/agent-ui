@@ -53,7 +53,10 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         // No tool protocol here — plain completions with optional thinking.
         tools: false,
         resume: false,
-        effort: false,
+        // `/api/chat` takes a `think` level on servers new enough to have one
+        // and a plain boolean on the rest; `post` below walks that ladder down,
+        // so offering the control costs a model that ignores it nothing.
+        effort: true,
         // Transport-level: /api/chat always accepts an `images` field. Which
         // *models* actually look at it is a per-model question, answered by
         // `visionModels()` below rather than here.
@@ -130,22 +133,20 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
 
       let res: Response
       try {
-        res = await post(baseUrl, options.model, messages, true, options.signal)
-        // Models without a reasoning head reject `think`; retry plainly.
-        if (res.status === 400) {
+        // Three things can be true of a server/model pair and only a 400 tells
+        // them apart: it takes a graded `think` level, it takes the boolean, or
+        // it has no reasoning head at all. Each rung is tried once, and only
+        // when the complaint actually names `think` — an unrelated 400 is the
+        // server's own answer and is shown as-is rather than retried blind.
+        const ladder = thinkLadder(options.effort)
+        res = await post(baseUrl, options.model, messages, ladder[0], options.signal)
+        for (let rung = 1; rung < ladder.length && res.status === 400; rung++) {
           const detail = await res.text().catch(() => "")
-          if (/think/i.test(detail)) {
-            res = await post(
-              baseUrl,
-              options.model,
-              messages,
-              false,
-              options.signal
-            )
-          } else {
+          if (!/think/i.test(detail)) {
             yield { type: "error", message: detail || "Ollama rejected the request" }
             return
           }
+          res = await post(baseUrl, options.model, messages, ladder[rung], options.signal)
         }
       } catch (err) {
         if (options.signal.aborted) return
@@ -279,11 +280,33 @@ function usageFrom(chunk: ChatChunk) {
   }
 }
 
+/**
+ * Ollama's `think` levels, which only gpt-oss-style models publish. The app's
+ * four-step scale collapses onto the three they accept — there is no budget
+ * above `high` to ask for.
+ */
+const THINK_LEVELS: Record<string, string> = {
+  low: "low",
+  medium: "medium",
+  high: "high",
+  xhigh: "high",
+}
+
+/**
+ * What to send as `think`, most specific first. A graded level is only worth
+ * asking for when the composer actually chose one; everything else starts at
+ * the boolean the provider has always sent.
+ */
+function thinkLadder(effort: string | undefined): Array<string | boolean> {
+  const level = THINK_LEVELS[effort?.trim().toLowerCase() ?? ""]
+  return level ? [level, true, false] : [true, false]
+}
+
 function post(
   baseUrl: string,
   model: string,
   messages: Array<{ role: string; content: string; images?: string[] }>,
-  think: boolean,
+  think: string | boolean,
   signal: AbortSignal
 ) {
   return fetch(`${baseUrl}/api/chat`, {
