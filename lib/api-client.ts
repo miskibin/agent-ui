@@ -250,10 +250,10 @@ export type MemoryStore = {
   dir: string
   files: MemoryFile[]
   bytes: number
-  budget: number
-  /** False when nothing would happen on an update — `reason` says why. */
-  ready: boolean
-  reason?: string
+  /** Ollama's state, which the settings page cannot know without asking. */
+  ollamaEnabled: boolean
+  ollamaBaseUrl: string
+  ollamaReachable: boolean
 }
 
 export function fetchMemory(): Promise<MemoryStore> {

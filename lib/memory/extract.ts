@@ -63,24 +63,35 @@ const ALWAYS_BLOCKED = [
   /\b(?:credit card|iban|swift|routing number|account number|cvv)\b/i,
   /\b(?:password|api[- ]?key|secret key|access token|private key|seed phrase)\b/i,
   /\b(?:criminal record|conviction|arrest|immigration status|visa status|deportation)\b/i,
-  /\b[A-Za-z0-9_-]{0,8}(?:sk|pk)-[A-Za-z0-9_-]{16,}\b/,
+  /(?<![A-Za-z0-9_-])(?:sk|pk)-[A-Za-z0-9]{20,}(?![A-Za-z0-9])/,
   /\b\d{3}-\d{2}-\d{4}\b/,
   /\b(?:\d[ -]?){13,19}\b/,
 ]
 
 /**
  * Categories excluded by default and included only when the user turns them
- * on — the same line Anthropic's own memory draws, and for the same reason:
+ * on.
+ *
+ * These patterns are deliberately narrow. Because the extractor rewrites whole
+ * categories, a false positive does not merely decline to store a fact — it
+ * *deletes* one that is already there on the next pass. So terms that double as
+ * ordinary technical vocabulary stay out: bare `race` (race conditions),
+ * `conservative`/`liberal` (dependency ranges, timeouts), `therapy` (therapy
+ * as in `retry`), `surgery`. What is left needs the sensitive reading to match
+ * at all.
+ *
+ * The original intent — the same line Anthropic's own memory draws, and for the same reason:
  * these are the facts whose leaking into an unrelated conversation does real
  * harm, so remembering them has to be a deliberate choice rather than a
  * side effect of having mentioned them once.
  */
 const SENSITIVE = [
-  /\b(?:diagnos|symptom|illness|disease|medication|prescription|therapy|therapist|depress|anxiety|adhd|autis|disabilit|pregnan|surgery|cancer)\w*/i,
-  /\b(?:race|racial|ethnic|ethnicity|nationality|immigrant|refugee)\b/i,
+  /\b(?:diagnos|symptom|illness|disease|medication|prescription|therapist|depress|anxiety|adhd|autis|disabilit|pregnan|cancer)\w*/i,
+  /\b(?:racial|ethnicity|ethnic (?:origin|background|group)|nationality|immigrant|refugee)\b/i,
   /\b(?:religio|christian|catholic|muslim|islam|jewish|judaism|hindu|buddhis|atheist|agnostic)\w*/i,
-  /\b(?:politic|conservative|liberal|left-wing|right-wing|voted?|party membership|union member)\w*/i,
-  /\b(?:gender identity|transgender|trans man|trans woman|non-?binary|gay|lesbian|bisexual|queer|sexual orientation)\b/i,
+  /\b(?:politically|political (?:views?|beliefs?|party|affiliation)|left-wing|right-wing|party membership|union member)\b/i,
+  /\bvot(?:es?|ed|ing) for\b/i,
+  /\b(?:gender identity|transgender|trans man|trans woman|non-?binary|lesbian|bisexual|sexual orientation)\b/i,
 ]
 
 /** Which of a category's lines are safe to keep, under the current settings. */

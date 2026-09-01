@@ -10,14 +10,14 @@ export type MemoryStoreApi = {
   files: MemoryFile[]
   dir: string
   bytes: number
-  budget: number
-  ready: boolean
-  reason?: string
+  ollamaEnabled: boolean
+  ollamaBaseUrl: string
+  ollamaReachable: boolean
   loading: boolean
   /** Category currently being written, so its row can disable itself. */
   saving: string | null
   save: (category: string, content: string) => Promise<boolean>
-  remove: (category: string) => Promise<void>
+  remove: (category: string) => Promise<boolean>
   clear: () => Promise<void>
   reload: () => void
 }
@@ -28,8 +28,14 @@ export type MemoryStoreApi = {
  * Reads and writes go straight to `/api/memory` rather than through the
  * settings blob: the files are the store, and a user editing one is editing
  * the thing the agent will actually be handed, not a copy of it.
+ *
+ * It reads once and then only on an explicit `reload()`. Re-reading whenever a
+ * memory setting changes would be worse than useless: settings are saved on a
+ * debounce, so the response would describe the state from before the change
+ * that triggered it. Whether the feature is on and which model it uses is the
+ * caller's own live state — only Ollama's reachability comes from here.
  */
-export function useMemoryStore(enabled: boolean): MemoryStoreApi {
+export function useMemoryStore(): MemoryStoreApi {
   const [store, setStore] = React.useState<api.MemoryStore | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState<string | null>(null)
@@ -52,9 +58,7 @@ export function useMemoryStore(enabled: boolean): MemoryStoreApi {
     return () => {
       cancelled = true
     }
-    // `enabled` is in the deps so flipping the switch re-reads `ready`/`reason`,
-    // which is what turns the "why is nothing happening" line on and off.
-  }, [nonce, enabled])
+  }, [nonce])
 
   const reload = React.useCallback(() => setNonce((value) => value + 1), [])
 
@@ -79,8 +83,10 @@ export function useMemoryStore(enabled: boolean): MemoryStoreApi {
     try {
       const next = await api.deleteMemoryFile(category)
       setStore((current) => (current ? { ...current, ...next } : current))
+      return true
     } catch {
       toast.error("Couldn't delete that category.")
+      return false
     } finally {
       setSaving(null)
     }
@@ -100,9 +106,9 @@ export function useMemoryStore(enabled: boolean): MemoryStoreApi {
     files: store?.files ?? [],
     dir: store?.dir ?? "",
     bytes: store?.bytes ?? 0,
-    budget: store?.budget ?? 0,
-    ready: store?.ready ?? false,
-    reason: store?.reason,
+    ollamaEnabled: store?.ollamaEnabled ?? false,
+    ollamaBaseUrl: store?.ollamaBaseUrl ?? "",
+    ollamaReachable: store?.ollamaReachable ?? false,
     loading,
     saving,
     save,

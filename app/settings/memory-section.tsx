@@ -21,7 +21,9 @@ import {
   DEFAULT_MEMORY_CATEGORIES,
   isValidMemoryCategory,
   memoryFactLines,
+  memoryTitleFrom,
   toMemoryCategoryId,
+  withMemoryHeading,
   type MemoryFile,
 } from "@/lib/memory/types"
 import { MEMORY_BUDGET_RANGE, type AppSettings } from "@/lib/settings/schema"
@@ -31,8 +33,6 @@ import { SettingsRow, SettingsSection } from "./section"
 import type { AppSettingsApi } from "./use-app-settings"
 import { useMemoryStore } from "./use-memory-store"
 
-/** Placeholder shown in a brand-new category, so the format is obvious. */
-const NEW_CATEGORY_TEMPLATE = "- "
 
 function factCount(file: MemoryFile) {
   return memoryFactLines(file.content).filter((line) => !line.startsWith("#"))
@@ -126,9 +126,11 @@ function MemoryFileRow({
             <Input
               id={`memory-category-${file.category}`}
               value={category}
-              onChange={(event) =>
-                setCategory(toMemoryCategoryId(event.target.value))
-              }
+              /* Lower-cased as you type, but not slugged: `toMemoryCategoryId`
+                 strips trailing dashes, which makes `my-notes` untypable. The
+                 slug is applied on blur, once the name is finished. */
+              onChange={(event) => setCategory(event.target.value.toLowerCase())}
+              onBlur={() => setCategory(toMemoryCategoryId(category))}
               aria-invalid={!idValid}
               className="h-8 w-56 font-mono text-[12px]"
             />
@@ -190,7 +192,7 @@ function MemoryFileRow({
 
 export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
   const memory = settings.memory
-  const store = useMemoryStore(memory.enabled)
+  const store = useMemoryStore()
   const [models, setModels] = React.useState<
     { id: string; name: string }[] | null
   >(null)
@@ -236,7 +238,7 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
       .split("-")
       .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
       .join(" ")
-    const ok = await store.save(id, `# ${title}\n\n${NEW_CATEGORY_TEMPLATE}`)
+    const ok = await store.save(id, `# ${title}\n`)
     if (ok) setNewCategory("")
   }, [newCategory, store])
 
@@ -246,14 +248,37 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
         toast.error(`"${to}" already exists — merge them by hand instead.`)
         return false
       }
-      const ok = await store.save(to, content)
-      if (ok) await store.remove(from)
-      return ok
+      /* The heading is the category's display name, so it has to move with it;
+         left alone, `stack.md` renamed to `tooling` still reads "Stack" here
+         and in every prompt. */
+      const retitled = withMemoryHeading(content, memoryTitleFrom(to, ""))
+      if (!(await store.save(to, retitled))) return false
+      /* Write first, then drop the original — and only if the drop succeeds,
+         because a failed delete would leave the same facts under both names. */
+      if (!(await store.remove(from))) {
+        toast.error(`Renamed, but "${from}" is still there — delete it by hand.`)
+      }
+      return true
     },
     [store]
   )
 
   const overBudget = store.bytes > memory.maxChars
+
+  /**
+   * Why the extraction step would do nothing, said in the page's own terms.
+   * Composed from the settings this component holds — which are current — plus
+   * the one fact only the server knows, whether Ollama answers.
+   */
+  const blocker = !memory.enabled
+    ? undefined
+    : !memory.model
+      ? "No extraction model chosen."
+      : !store.ollamaEnabled
+        ? "Ollama is disabled in Providers."
+        : !store.ollamaReachable && !store.loading
+          ? `No Ollama server at ${store.ollamaBaseUrl || "an unset URL"}.`
+          : undefined
 
   return (
     <SettingsSection
@@ -372,10 +397,10 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
             : "One markdown file per category, editable here."
         }
       >
-        {memory.enabled && store.reason ? (
+        {blocker ? (
           <p className="rounded-md border border-dashed px-3 py-2 text-[12px] text-muted-foreground">
-            {store.reason} Nothing will be extracted until that&apos;s fixed —
-            the notes below are still used in every chat.
+            {blocker} Nothing will be extracted until that&apos;s fixed — the
+            notes below are still used in every chat.
           </p>
         ) : null}
       </SettingsRow>

@@ -16,31 +16,27 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * The memory store as the settings page sees it: the files themselves, plus
- * why the feature is or is not doing anything. The reason matters more than
- * the usual availability flag here — memory that silently never updates
- * because Ollama is down looks identical to memory that has nothing to learn.
+ * The memory store as the settings page sees it: the files, and the state of
+ * the Ollama server behind the extraction step.
+ *
+ * Deliberately no "is this feature working" verdict. Whether it is enabled and
+ * which model it uses are settings the page holds live and saves on a debounce,
+ * so a verdict computed here from settings.json would describe the state from
+ * before the user's last click. The page composes the reason itself; the only
+ * thing it cannot know without asking is whether Ollama answers.
  */
 export async function GET() {
   const settings = await readSettings()
   const files = await readMemoryFiles()
   const baseUrl = normalizeBaseUrl(settings.providers.ollama.baseUrl)
 
-  let reason: string | undefined
-  if (!settings.memory.enabled) reason = "Memory is off."
-  else if (!settings.memory.model) reason = "No extraction model chosen."
-  else if (!settings.providers.ollama.enabled) reason = "Ollama is disabled."
-  else if (!baseUrl || !(await probeOllama(baseUrl))) {
-    reason = `No Ollama server at ${baseUrl || "an unset URL"}.`
-  }
-
   return NextResponse.json({
     dir: memoryDir(),
     files,
     bytes: memoryBytes(files),
-    budget: settings.memory.maxChars,
-    ready: reason === undefined,
-    reason,
+    ollamaEnabled: settings.providers.ollama.enabled,
+    ollamaBaseUrl: baseUrl,
+    ollamaReachable: Boolean(baseUrl) && (await probeOllama(baseUrl)),
   })
 }
 

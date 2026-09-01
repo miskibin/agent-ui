@@ -871,7 +871,9 @@ export default function ChatPage() {
         })
       }
 
+      let failed = false
       const markFailed = () => {
+        failed = true
         setFailures((prev) => ({ ...prev, [sessionId]: true }))
       }
 
@@ -1034,9 +1036,10 @@ export default function ChatPage() {
           prev[sessionId]?.startedAt === startedAt ? omit(prev, sessionId) : prev
         )
         patchLocal(sessionId, { updatedAt: nowMs() })
-        /* A stopped turn is usually about to be re-sent; extracting from it
-           would burn a model call on a thread that is about to change. */
-        if (!controller.signal.aborted) void runMemoryUpdate(sessionId)
+        /* Only a turn that actually landed is worth learning from. A stopped
+           one is usually about to be re-sent, and a failed one would spend a
+           model call to stack a second toast under the failure's own. */
+        if (!controller.signal.aborted && !failed) void runMemoryUpdate(sessionId)
       }
     },
     [patchLocal, runMemoryUpdate]

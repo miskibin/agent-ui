@@ -105,14 +105,27 @@ export function memoryTitleFrom(category: string, content: string) {
 
 /**
  * The lines of a category that carry facts — bullets and prose, minus the
- * heading and blank lines. Both the prompt budget and the change diff count
- * in these, so they agree on what a "fact" is.
+ * heading, blank lines and empty list markers. Both the prompt budget and the
+ * change diff count in these, so they agree on what a "fact" is; an empty `- `
+ * left behind by the editor is not one, and must not be counted, diffed or
+ * pasted into a prompt.
  */
 export function memoryFactLines(content: string): string[] {
   return content
     .split("\n")
     .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith("#"))
+    .filter(
+      (line) =>
+        line.length > 0 &&
+        !line.startsWith("#") &&
+        !/^[-*+]\s*$/.test(line)
+    )
+}
+
+/** Retitles a category's `# ` heading — what a rename has to do to the body. */
+export function withMemoryHeading(content: string, title: string): string {
+  const body = content.replace(/^#\s+.*(?:\n|$)/, "").replace(/^\s+/, "")
+  return body ? `# ${title}\n\n${body}` : `# ${title}\n`
 }
 
 /** Added / removed fact lines between two versions of one category. */

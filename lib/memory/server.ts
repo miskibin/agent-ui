@@ -102,10 +102,18 @@ export async function readMemoryFile(category: string): Promise<string> {
   }
 }
 
-/** Writing empty content deletes the file — an empty category is not a category. */
+/**
+ * Writes a category. Blank content deletes it, so clearing the editor (or an
+ * extraction pass that emptied a category) removes the file rather than
+ * leaving an empty one behind.
+ *
+ * A file with only a heading and no facts is kept: that is a category the user
+ * has just created and is about to fill, and `memoryPromptBlock` skips it, so
+ * it costs a turn nothing.
+ */
 export async function writeMemoryFile(category: string, content: string) {
   const trimmed = content.trim()
-  if (memoryFactLines(trimmed).length === 0) {
+  if (!trimmed) {
     await deleteMemoryFile(category)
     return
   }
