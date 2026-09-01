@@ -127,22 +127,18 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
       try {
         res = await post(source, model, messages, true, options.signal)
         // Not every compat server knows `stream_options`, and the ones that do
-        // not reject the whole request rather than ignoring it — so a 400 is
-        // worth one more attempt, giving up the usage report instead of the
-        // turn. A 400 that meant something else fails again, and it is that
-        // second answer the user is shown.
+        // not reject the whole request rather than ignoring it — so when the
+        // complaint names it, the usage report is what gets given up rather
+        // than the turn. Any other 400 is the endpoint's own answer and is
+        // shown as-is instead of being sent twice.
         if (res.status === 400) {
           const detail = await res.text().catch(() => "")
-          const retry = await post(source, model, messages, false, options.signal)
-          if (!retry.ok) {
-            const retryDetail = await retry.text().catch(() => "")
-            yield {
-              type: "error",
-              message: failureMessage(source, retry.status, retryDetail || detail),
-            }
+          if (/stream_options/i.test(detail)) {
+            res = await post(source, model, messages, false, options.signal)
+          } else {
+            yield { type: "error", message: failureMessage(source, 400, detail) }
             return
           }
-          res = retry
         }
       } catch (err) {
         if (options.signal.aborted) return

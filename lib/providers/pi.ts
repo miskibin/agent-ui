@@ -105,8 +105,12 @@ export function createPiProvider(
     },
 
     async listModels(): Promise<ModelOption[]> {
-      const models = await fetchOllamaModels(baseUrl)
-      const remote = await collectSourceModels(sources)
+      // Independent catalogs: a slow hosted source must not queue behind
+      // Ollama, nor Ollama behind it.
+      const [models, remote] = await Promise.all([
+        fetchOllamaModels(baseUrl),
+        collectSourceModels(sources),
+      ])
       await writeModelsConfig(configDir, baseUrl, models, remote)
       return [
         ...models.map((model) => ({
@@ -132,6 +136,21 @@ export function createPiProvider(
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
+      const selected = splitModelId(options.model)
+      // A model whose source has since been switched off or deleted would
+      // otherwise reach pi as an unresolvable `--model` and come back as the
+      // CLI's own wording.
+      if (
+        selected.source !== OLLAMA_SOURCE &&
+        !sources.some((source) => source.slug === selected.source)
+      ) {
+        yield {
+          type: "error",
+          message: `Model provider "${selected.source}" is disabled or missing — pick another model.`,
+        }
+        return
+      }
+
       // Writing the catalog and spawning the CLI both happen before a single
       // token exists, and both can be slow enough to look like a hang.
       yield {
@@ -141,10 +160,13 @@ export function createPiProvider(
       }
       // pi resolves `--model` against its own catalog, so the config has to
       // know about the tag before the process starts.
-      const selected = splitModelId(options.model)
       try {
-        const models = await fetchOllamaModels(baseUrl)
-        const remote = await collectSourceModels(sources)
+        // Listed together: one unreachable source must not add its whole
+        // timeout to the wait before the first token.
+        const [models, remote] = await Promise.all([
+          fetchOllamaModels(baseUrl),
+          collectSourceModels(sources),
+        ])
         await writeModelsConfig(
           configDir,
           baseUrl,

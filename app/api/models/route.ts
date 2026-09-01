@@ -49,7 +49,7 @@ export async function GET(req: Request) {
       models,
       capabilities: info.capabilities,
       ...(visionModels ? { visionModels } : null),
-      ...(groups ? { groups } : null),
+      ...(groups?.length ? { groups } : null),
     })
   } catch (err) {
     return NextResponse.json({
