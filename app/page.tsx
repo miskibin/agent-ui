@@ -224,14 +224,28 @@ export default function ChatPage() {
   const abortsRef = React.useRef(new Map<string, AbortController>())
   const threadsRef = React.useRef(threads)
   const activeIdRef = React.useRef(activeId)
+  const sessionsRef = React.useRef(sessions)
+  const providersRef = React.useRef(providers)
+  const providerIdRef = React.useRef(providerId)
+  const modelRef = React.useRef(model)
   const inflightRef = React.useRef(new Set<string>())
   const bootstrappedRef = React.useRef(false)
+  /**
+   * The provider the user just picked, until its model list lands. Only that
+   * pick may rewrite the chat's stored model — the same resolution running for
+   * a chat that was merely opened must leave the chat's own agent alone.
+   */
+  const providerPickRef = React.useRef("")
 
   // Mirrors for the stable callbacks below — they run after paint, so a click
   // handler always reads the state the user is looking at.
   React.useEffect(() => {
     threadsRef.current = threads
     activeIdRef.current = activeId
+    sessionsRef.current = sessions
+    providersRef.current = providers
+    providerIdRef.current = providerId
+    modelRef.current = model
   })
 
   const messages = threads[activeId] ?? EMPTY_MESSAGES
@@ -271,6 +285,70 @@ export default function ChatPage() {
     }
   }, [])
 
+  const patchLocal = React.useCallback(
+    (id: string, patch: Partial<SessionMeta>) => {
+      setSessions((prev) =>
+        prev.map((session) =>
+          session.id === id ? { ...session, ...patch } : session
+        )
+      )
+    },
+    []
+  )
+
+  /**
+   * Points the pickers at the agent a chat was last run with. The chat's own
+   * provider wins over the settings default; an agent that is gone (or off)
+   * falls back to whatever `fallback` resolved to, without rewriting what the
+   * chat remembers.
+   */
+  const adoptAgent = React.useCallback(
+    (session: SessionMeta | undefined, list: ProviderInfo[], fallback = "") => {
+      const stored = session?.providerId ?? ""
+      const usable = list.find((item) => item.id === stored)?.available
+        ? stored
+        : list.length === 0 && stored
+          ? stored
+          : fallback
+      if (usable) setProviderId(usable)
+      if (usable === stored && session?.model) setModel(session.model)
+    },
+    []
+  )
+
+  /** Writes the picked agent onto the open chat, so reopening it restores it. */
+  const persistAgent = React.useCallback(
+    (patch: { providerId?: string; model?: string }) => {
+      const sessionId = activeIdRef.current
+      if (!sessionId) return
+      patchLocal(sessionId, patch)
+      void api
+        .patchSession(sessionId, patch)
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not save the chat's agent"))
+        )
+    },
+    [patchLocal]
+  )
+
+  const chooseProvider = React.useCallback(
+    (id: string) => {
+      setProviderId(id)
+      // The model this provider resolves to is persisted once its list lands.
+      providerPickRef.current = id
+      persistAgent({ providerId: id })
+    },
+    [persistAgent]
+  )
+
+  const chooseModel = React.useCallback(
+    (id: string) => {
+      setModel(id)
+      persistAgent({ model: id })
+    },
+    [persistAgent]
+  )
+
   React.useEffect(() => {
     let cancelled = false
 
@@ -288,6 +366,10 @@ export default function ChatPage() {
           ? cachedActive
           : cachedSessions[0].id
       setActiveId(restored)
+      adoptAgent(
+        cachedSessions.find((s) => s.id === restored),
+        []
+      )
     })
 
     void (async () => {
@@ -304,14 +386,17 @@ export default function ChatPage() {
         setEffort(settingsResult.value.chat.defaultEffort)
       }
 
+      let providerList: ProviderInfo[] = []
+      let fallbackProvider = ""
       if (providersResult.status === "fulfilled") {
-        const list = providersResult.value
-        setProviders(list)
+        providerList = providersResult.value
+        setProviders(providerList)
         const preferred =
           settingsResult.status === "fulfilled"
             ? settingsResult.value.providers.active
             : ""
-        setProviderId(pickProvider(list, preferred))
+        fallbackProvider = pickProvider(providerList, preferred)
+        setProviderId(fallbackProvider)
       } else {
         toast.error("Could not load providers")
       }
@@ -326,6 +411,12 @@ export default function ChatPage() {
             ? cachedActive
             : (list[0]?.id ?? "")
         setActiveId(restored)
+        // Last, so the reopened chat's own agent wins over the settings default.
+        adoptAgent(
+          list.find((session) => session.id === restored),
+          providerList,
+          fallbackProvider
+        )
         if (restored) void loadThread(restored)
       } else {
         toast.error("Could not load your chats")
@@ -335,7 +426,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true
     }
-  }, [loadThread])
+  }, [adoptAgent, loadThread])
 
   // Models follow the active provider; the current pick survives when it can.
   const defaultModel = settings?.chat.defaultModel ?? ""
@@ -348,13 +439,20 @@ export default function ChatPage() {
         if (cancelled) return
         setModels(data.models)
         setCapabilities(data.capabilities ?? null)
-        setModel((current) => {
-          if (current && data.models.some((m) => m.id === current)) return current
-          if (defaultModel && data.models.some((m) => m.id === defaultModel)) {
-            return defaultModel
-          }
-          return data.models[0]?.id ?? ""
-        })
+        const current = modelRef.current
+        const next =
+          current && data.models.some((m) => m.id === current)
+            ? current
+            : defaultModel && data.models.some((m) => m.id === defaultModel)
+              ? defaultModel
+              : (data.models[0]?.id ?? "")
+        setModel(next)
+        // Only a provider the user just picked writes back: opening a chat
+        // resolves models too, and that must not overwrite its stored agent.
+        if (providerPickRef.current === providerId) {
+          providerPickRef.current = ""
+          if (next) persistAgent({ model: next })
+        }
         if (data.error) toast.error(data.error)
       })
       .catch((err: unknown) => {
@@ -363,7 +461,7 @@ export default function ChatPage() {
     return () => {
       cancelled = true
     }
-  }, [providerId, defaultModel])
+  }, [providerId, defaultModel, persistAgent])
 
   React.useEffect(() => {
     if (!bootstrappedRef.current) return
@@ -408,17 +506,6 @@ export default function ChatPage() {
   /* Session mutations                                                       */
   /* ---------------------------------------------------------------------- */
 
-  const patchLocal = React.useCallback(
-    (id: string, patch: Partial<SessionMeta>) => {
-      setSessions((prev) =>
-        prev.map((session) =>
-          session.id === id ? { ...session, ...patch } : session
-        )
-      )
-    },
-    []
-  )
-
   const selectSession = React.useCallback(
     (id: string) => {
       // Background chats keep streaming — selecting never aborts a run.
@@ -433,10 +520,16 @@ export default function ChatPage() {
         } else {
           setActiveId(id)
         }
+        // Each chat keeps the agent it was last run with.
+        adoptAgent(
+          sessionsRef.current.find((session) => session.id === id),
+          providersRef.current,
+          providerIdRef.current
+        )
       }
       void loadThread(id)
     },
-    [loadThread]
+    [adoptAgent, loadThread]
   )
 
   const renameSession = React.useCallback(
@@ -1071,11 +1164,11 @@ export default function ChatPage() {
             <ProviderPicker
               providers={providers}
               value={providerId}
-              onChange={setProviderId}
+              onChange={chooseProvider}
             />
             <ModelPicker
               value={model}
-              onChange={setModel}
+              onChange={chooseModel}
               options={models}
               efforts={showEfforts ? DEFAULT_MODEL_EFFORTS : false}
               effort={effort}
@@ -1089,6 +1182,8 @@ export default function ChatPage() {
     ),
     [
       activeProviderName,
+      chooseModel,
+      chooseProvider,
       effort,
       handleSend,
       handleStop,
