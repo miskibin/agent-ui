@@ -148,10 +148,30 @@ fn start_app_server(
         .ok_or("bundled server.js has no parent directory")?
         .to_path_buf();
 
+    // Opened before the spawn so a startup failure reports the path that was
+    // actually resolved, rather than only what Node made of it.
+    let log = LogTail::default();
+    log.push(&format!("server entry: {}", server.display()));
+    if !server.is_file() {
+        log.push(&format!(
+            "no file at that path — expected the bundle to carry {SERVER_ENTRY}"
+        ));
+    }
+
+    // Node is given the bare file name resolved against `current_dir`, never
+    // the absolute path. An absolute Windows path carries a drive prefix, and
+    // as the main-module argument it can end up read as drive-relative — Node
+    // then resolves the root alone (`C:`) and dies in `realpathSync` before it
+    // ever reaches server.js.
+    let entry = server
+        .file_name()
+        .ok_or("bundled server.js has no file name")?
+        .to_os_string();
+
     let (mut events, child) = app
         .shell()
         .sidecar("node")?
-        .arg(&server)
+        .arg(&entry)
         .current_dir(&app_dir)
         .env("PORT", port.to_string())
         .env("HOSTNAME", "127.0.0.1")
@@ -163,7 +183,6 @@ fn start_app_server(
 
     // The sidecar event channel is bounded: leaving it unread would stall the
     // child once its stdout pipe fills. Drain it and keep the tail for errors.
-    let log = LogTail::default();
     std::thread::spawn({
         let log = log.clone();
         move || {
