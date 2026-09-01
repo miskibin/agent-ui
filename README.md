@@ -60,6 +60,36 @@ npm run desktop:build                          # installer for your platform
 
 A production bundle ships the Next standalone server as a Node sidecar: the shell picks a free port, boots the server (~0.6 s), and only then shows the window — no white flash, dark splash if startup is slow. Releases build a Windows (x64) installer via GitHub Actions — push a `v*` tag, or run the Release workflow from the Actions tab with the tag to cut. `npm run desktop:build` still produces an installer for whichever platform you are on.
 
+### Updater
+
+The desktop app updates itself. A few seconds after startup — off the critical path, in an idle callback — it asks the [`latest.json`](https://github.com/miskibin/agent-ui/releases/latest/download/latest.json) published with the newest release whether there is anything newer, and if so shows one toast: **Update** downloads and verifies the signed bundle, then offers **Restart**. **Later** dismisses it, and ⌘K → *Check for updates* asks again on demand. Offline, the check fails silently; in a browser tab there is no updater at all (`lib/desktop.ts` no-ops without the Tauri global).
+
+Updates are signed, so releases only work once the repository owner has created a key **once**:
+
+```bash
+npx tauri signer generate -w ~/.tauri/agent-ui.key
+```
+
+That prints a public key and writes the private key next to it. Then:
+
+1. Paste the **public** key into `src-tauri/tauri.conf.json` → `plugins.updater.pubkey`, replacing the `REPLACE_WITH_TAURI_UPDATER_PUBLIC_KEY` placeholder, and commit it — the public key is meant to ship.
+2. Add two **GitHub Actions secrets** (Settings → Secrets and variables → Actions):
+   - `TAURI_SIGNING_PRIVATE_KEY` — the contents of `~/.tauri/agent-ui.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` — the password you chose (empty string if none)
+3. Keep the private key and its password out of the repo. Losing them means shipping a new public key, which older installs will refuse — they will need a manual reinstall.
+
+Until the real public key replaces the placeholder, an update that an installed build downloads fails signature validation — the check itself still runs and reports the failure as a toast, and nothing crashes.
+
+`bundle.createUpdaterArtifacts` is on, so **any** bundling run (CI or `npm run desktop:build`) needs the private key in the environment; without `TAURI_SIGNING_PRIVATE_KEY` the bundler stops at the updater artifact rather than shipping something no one can verify:
+
+```bash
+export TAURI_SIGNING_PRIVATE_KEY="$(cat ~/.tauri/agent-ui.key)"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="…"
+npm run desktop:build
+```
+
+`npm run desktop:dev` needs none of this.
+
 ### Web / server
 
 Production without the shell is the same self-contained standalone server — fast cold start, no `node_modules` on the target machine:

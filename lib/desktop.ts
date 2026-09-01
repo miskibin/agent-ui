@@ -13,9 +13,28 @@ type TauriWindow = {
   onResized(cb: () => void): Promise<() => void>
 }
 
+/** Shape of `Update` as the updater plugin's IIFE bundle exposes it. */
+type TauriUpdate = {
+  version: string
+  currentVersion: string
+  body?: string
+  date?: string
+  downloadAndInstall(
+    onEvent?: (event: TauriDownloadEvent) => void
+  ): Promise<void>
+  close(): Promise<void>
+}
+
+type TauriDownloadEvent =
+  | { event: "Started"; data: { contentLength?: number } }
+  | { event: "Progress"; data: { chunkLength: number } }
+  | { event: "Finished" }
+
 type TauriGlobal = {
   window?: { getCurrentWindow(): TauriWindow }
   os?: { platform(): string }
+  updater?: { check(): Promise<TauriUpdate | null> }
+  process?: { relaunch(): Promise<void> }
 }
 
 function tauri(): TauriGlobal | null {
@@ -65,4 +84,92 @@ export async function onMaximizedChange(
   return current.onResized(() => {
     void current.isMaximized().then(cb)
   })
+}
+
+/* -------------------------------------------------------------------------- */
+/* Updater                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/** A release newer than the running one, as reported by the update endpoint. */
+export type DesktopUpdate = {
+  /** Version being offered, e.g. `0.2.0`. */
+  version: string
+  /** Version currently running. */
+  currentVersion: string
+  /** Release notes, when the endpoint published any. */
+  notes?: string
+  /** Publication date, verbatim from the endpoint. */
+  date?: string
+  /**
+   * Downloads and installs the update. Resolves once the app is staged and
+   * ready for {@link relaunch}; rejects on a network or signature failure.
+   */
+  install(onProgress?: (fraction: number | null) => void): Promise<void>
+  /** Releases the update handle when the offer is dismissed. */
+  dismiss(): Promise<void>
+}
+
+/**
+ * Asks the update endpoint whether a newer release exists. Resolves to `null`
+ * outside the desktop shell and when the app is already current; rejects only
+ * on a real failure (offline, malformed manifest), which callers are expected
+ * to swallow or surface as a toast.
+ */
+export async function checkForUpdate(): Promise<DesktopUpdate | null> {
+  const updater = tauri()?.updater
+  if (!updater) return null
+
+  const update = await updater.check()
+  if (!update) return null
+
+  return {
+    version: update.version,
+    currentVersion: update.currentVersion,
+    notes: update.body || undefined,
+    date: update.date || undefined,
+    install: (onProgress) => {
+      const fraction = downloadProgress()
+      return update.downloadAndInstall((event) => {
+        onProgress?.(fraction(event))
+      })
+    },
+    dismiss: async () => {
+      try {
+        await update.close()
+      } catch {
+        /* the handle is gone already — nothing to release */
+      }
+    },
+  }
+}
+
+/**
+ * Restarts the app so a staged update takes effect. A no-op in a browser tab.
+ */
+export async function relaunch(): Promise<void> {
+  const process = tauri()?.process
+  if (!process) return
+  await process.relaunch()
+}
+
+/**
+ * Accumulator turning the plugin's byte-chunk events into a 0–1 fraction.
+ * `null` while the total size is unknown — some endpoints omit
+ * `Content-Length`. One instance per download.
+ */
+function downloadProgress(): (event: TauriDownloadEvent) => number | null {
+  let total = 0
+  let received = 0
+  return (event) => {
+    if (event.event === "Started") {
+      total = event.data.contentLength ?? 0
+      received = 0
+    } else if (event.event === "Progress") {
+      received += event.data.chunkLength
+    } else {
+      received = total
+    }
+    if (total <= 0) return null
+    return Math.min(1, received / total)
+  }
 }
