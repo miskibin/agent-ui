@@ -68,6 +68,9 @@ export function createCursorProvider(
   return {
     async info(): Promise<ProviderInfo> {
       const { available, reason } = detect()
+      const binaryMissing = binPath
+        ? !existsSync(binPath)
+        : !isMockForced() && !hasCursorAgentBinary()
       return {
         id: CURSOR_PROVIDER_ID,
         name: "Cursor Agent",
@@ -81,6 +84,8 @@ export function createCursorProvider(
         },
         available,
         unavailableReason: reason,
+        configureBinary:
+          process.platform === "win32" && settings.enabled && binaryMissing,
       }
     },
 

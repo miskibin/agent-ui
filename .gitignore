@@ -44,3 +44,7 @@ next-env.d.ts
 /src-tauri/target
 /src-tauri/binaries
 /src-tauri/resources/app
+
+# local pnpm store / scratch dirs from test runs
+/.pnpm-store/
+/.tmp-*/

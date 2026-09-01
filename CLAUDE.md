@@ -103,8 +103,7 @@ npm run lint         # eslint (CI)
 npm run typecheck    # tsc --noEmit (CI)
 npm run build        # next build, standalone output (CI)
 
-node scripts/prepare-desktop.mjs --skip-next   # once after cloning, before desktop work
-npm run desktop:dev                            # Tauri shell against localhost:3000
+npm run desktop:dev                            # Tauri shell; stages the Node sidecar if missing
 npm run desktop:build                          # platform installer
 ```
 

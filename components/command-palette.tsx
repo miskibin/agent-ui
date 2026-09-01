@@ -6,8 +6,11 @@ import {
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Settings as SettingsIcon,
   Sun,
+  ZoomIn,
+  ZoomOut,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { useTheme } from "next-themes"
@@ -25,6 +28,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
+import { adjustZoom } from "@/lib/theme/theme-client"
 import { cn } from "@/lib/utils"
 
 /**
@@ -187,6 +191,30 @@ export function CommandPalette({
               >
                 <SettingsIcon />
                 <span>Open settings</span>
+              </CommandItem>
+              <CommandItem
+                value="Zoom in UI size"
+                onSelect={() => run(() => adjustZoom(1))}
+              >
+                <ZoomIn />
+                <span>Zoom in</span>
+                <CommandShortcut>⌘+</CommandShortcut>
+              </CommandItem>
+              <CommandItem
+                value="Zoom out UI size"
+                onSelect={() => run(() => adjustZoom(-1))}
+              >
+                <ZoomOut />
+                <span>Zoom out</span>
+                <CommandShortcut>⌘−</CommandShortcut>
+              </CommandItem>
+              <CommandItem
+                value="Reset zoom UI size"
+                onSelect={() => run(() => adjustZoom(0))}
+              >
+                <RotateCcw />
+                <span>Reset zoom</span>
+                <CommandShortcut>⌘0</CommandShortcut>
               </CommandItem>
               <CommandItem
                 value="Toggle theme dark light"

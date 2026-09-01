@@ -4,6 +4,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
+import { LineBuffer } from "@/lib/stream-framing"
 
 /**
  * Spawns the `pi` CLI in `--mode json` and translates its event stream into
@@ -126,32 +127,39 @@ export async function* runPiAgent(
     // pi's JSONL framing is LF-only: a generic line reader (Node's `readline`
     // included) also splits on U+2028/U+2029, which are legal inside JSON
     // strings and would tear records apart.
-    let buffer = ""
+    const lines = new LineBuffer()
     let emittedSession = false
+
+    const mapLine = (line: string): AgentStreamEvent[] => {
+      const trimmed = line.replace(/\r$/, "").trim()
+      if (!trimmed.startsWith("{")) return []
+      let event: PiEvent
+      try {
+        event = JSON.parse(trimmed) as PiEvent
+      } catch {
+        return []
+      }
+      if (event.type === "session" && !emittedSession && event.id) {
+        emittedSession = true
+        return [{ type: "session", sessionId: event.id }]
+      }
+      return mapEvent(event)
+    }
 
     for await (const chunk of readStdout(child.stdout)) {
       if (options.signal?.aborted) break
-      buffer += String(chunk)
-      const lines = buffer.split("\n")
-      buffer = lines.pop() ?? ""
-      for (const line of lines) {
-        const trimmed = line.replace(/\r$/, "").trim()
-        if (!trimmed.startsWith("{")) continue
-        let event: PiEvent
-        try {
-          event = JSON.parse(trimmed) as PiEvent
-        } catch {
-          continue
-        }
-        if (event.type === "session" && !emittedSession && event.id) {
-          emittedSession = true
-          yield { type: "session", sessionId: event.id }
-          continue
-        }
-        for (const mapped of mapEvent(event)) {
+      for (const line of lines.push(String(chunk))) {
+        for (const mapped of mapLine(line)) {
           if (mapped.type === "error") sawError = true
           yield mapped
         }
+      }
+    }
+    const tail = lines.finish()
+    if (tail !== null) {
+      for (const mapped of mapLine(tail)) {
+        if (mapped.type === "error") sawError = true
+        yield mapped
       }
     }
 

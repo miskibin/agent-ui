@@ -20,17 +20,16 @@ import { cn } from "@/lib/utils"
  * on empty space toggles maximize, and — off macOS, where the traffic lights
  * are drawn by the system — it carries its own minimize / maximize / close.
  *
- * The bar is deliberately quiet: the mark alone (no wordmark — the window
- * already says what app this is), a hairline that only separates, and one line
- * of 13px text for the open chat. It carries no state of its own — a run's
- * progress belongs above the turn it describes, a chat's working folder above
- * the composer that will use it — so anything a page does want beside the
- * title (a back link) goes in `AppHeaderTitle`'s children, the row's one
- * flexible slot.
+ * The bar is deliberately quiet: no mark, no wordmark, no chat title — those
+ * live in the sidebar and the document title. It carries no state of its own
+ * — a run's progress belongs above the turn it describes, a chat's working
+ * folder above the composer that will use it. Pages put left-side extras
+ * (a back link) in as children; `AppHeaderActions` holds the right-side
+ * controls.
  *
- * Everything is slot-based (`AppHeaderBrand`, `AppHeaderTitle`,
- * `AppHeaderActions`, `AppHeaderButton`) so the chat page and the settings page
- * share one implementation instead of two near-copies.
+ * Everything is slot-based (`AppHeaderActions`, `AppHeaderButton`) so the
+ * chat page and the settings page share one implementation instead of two
+ * near-copies.
  */
 
 /* -------------------------------------------------------------------------- */
@@ -70,121 +69,8 @@ export function useDesktopChrome(): DesktopChrome {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Brand mark                                                                  */
-/* -------------------------------------------------------------------------- */
-
-/** The app icon, simplified for 24px: dark tile, speech bubble, blue caret. */
-export function AppMark({ className, ...props }: React.ComponentProps<"svg">) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      role="img"
-      aria-label="Agent UI"
-      data-slot="app-mark"
-      className={cn("size-6 shrink-0 text-foreground", className)}
-      {...props}
-    >
-      <rect width="24" height="24" rx="6.5" fill="currentColor" />
-      <path
-        d="M8.5 5.5H15.5A3.5 3.5 0 0 1 19 9V13.5A3.5 3.5 0 0 1 15.5 17H11.6L8.2 20.1V16.9A3.5 3.5 0 0 1 5 13.5V9A3.5 3.5 0 0 1 8.5 5.5Z"
-        fill="none"
-        stroke="var(--background)"
-        strokeWidth="1.7"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-      <path
-        d="M9.9 9.1 12.5 11.3 9.9 13.5"
-        fill="none"
-        stroke="var(--primary)"
-        strokeWidth="2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-      />
-    </svg>
-  )
-}
-
-/* -------------------------------------------------------------------------- */
 /* Slots                                                                       */
 /* -------------------------------------------------------------------------- */
-
-export type AppHeaderBrandProps = React.ComponentProps<"span"> & {
-  /** Wordmark next to the mark. Off by default — the mark carries it. */
-  label?: React.ReactNode
-}
-
-export function AppHeaderBrand({
-  label = null,
-  className,
-  children,
-  ...props
-}: AppHeaderBrandProps) {
-  return (
-    <span
-      data-slot="app-header-brand"
-      data-tauri-drag-region
-      className={cn("flex shrink-0 items-center gap-2", className)}
-      {...props}
-    >
-      <AppMark className="size-5" />
-      {label != null ? (
-        <span
-          data-tauri-drag-region
-          className="text-[13px] font-semibold tracking-tight text-foreground"
-        >
-          {label}
-        </span>
-      ) : null}
-      {children}
-    </span>
-  )
-}
-
-export type AppHeaderTitleProps = Omit<
-  React.ComponentProps<"div">,
-  "title"
-> & {
-  title?: React.ReactNode
-  /** Hairline before the title, separating it from the brand. */
-  divider?: boolean
-}
-
-export function AppHeaderTitle({
-  title,
-  divider = true,
-  className,
-  children,
-  ...props
-}: AppHeaderTitleProps) {
-  return (
-    <div
-      data-slot="app-header-title"
-      data-tauri-drag-region
-      className={cn("flex min-w-0 flex-1 items-center gap-2", className)}
-      {...props}
-    >
-      {divider ? (
-        <span
-          aria-hidden
-          data-tauri-drag-region
-          className="hidden h-3.5 w-px shrink-0 bg-border/60 sm:block"
-        />
-      ) : null}
-      {title != null ? (
-        <span
-          data-slot="app-header-title-text"
-          data-tauri-drag-region
-          title={typeof title === "string" ? title : undefined}
-          className="min-w-0 truncate text-[13px] tracking-tight text-foreground/80"
-        >
-          {title}
-        </span>
-      ) : null}
-      {children}
-    </div>
-  )
-}
 
 export function AppHeaderActions({
   className,

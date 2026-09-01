@@ -1,4 +1,3 @@
-import { AppMark } from "@/components/app-header"
 import { Skeleton } from "@/components/ui/skeleton"
 
 /**
@@ -6,10 +5,10 @@ import { Skeleton } from "@/components/ui/skeleton"
  *
  * The chat page is a pure client component, so until its JavaScript arrives
  * there is nothing to paint. This is the same shell in static markup — sidebar
- * column, 12px-tall header with the mark where the real one sits, empty
- * transcript — so the first frame is the app's own furniture rather than a
- * blank page, and the swap to the real header moves nothing. The window-control
- * strip is reserved on the same `data-desktop` flag the real header uses.
+ * column, 12px-tall header, empty transcript — so the first frame is the app's
+ * own furniture rather than a blank page, and the swap to the real header
+ * moves nothing. The window-control strip is reserved on the same
+ * `data-desktop` flag the real header uses.
  */
 export default function Loading() {
   return (
@@ -30,12 +29,6 @@ export default function Loading() {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <header className="flex h-12 w-full shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 sm:gap-3 sm:px-4">
-          <AppMark className="size-5" />
-          <span
-            aria-hidden
-            className="hidden h-3.5 w-px shrink-0 bg-border/60 sm:block"
-          />
-          <Skeleton className="h-3.5 w-40 opacity-50" />
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <Skeleton className="size-8 opacity-40" />
             <Skeleton className="size-8 opacity-40" />

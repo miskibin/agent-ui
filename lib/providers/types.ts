@@ -24,6 +24,12 @@ export type ProviderInfo = {
   available: boolean
   /** Why unavailable, for the UI. */
   unavailableReason?: string
+  /**
+   * Windows-only: the CLI binary is missing and the picker can open a native
+   * file dialog to locate it. Other unavailability reasons (disabled, no
+   * server) do not set this.
+   */
+  configureBinary?: boolean
 }
 
 export type ChatTurn = {

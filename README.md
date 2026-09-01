@@ -31,7 +31,7 @@ The stretch before a local model's first token is the one that looks broken, and
 | *any ACP agent* | ✅ | ✅ | Add a command in settings; no code change needed |
 | **Mock** | ✅ | — | Scripted runs that exercise every UI part; no binary, no network |
 
-Providers are detected at runtime and surfaced in the picker with availability badges. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
+Providers are detected at runtime and surfaced in the picker with availability badges. On Windows, a missing harness binary (pi, Cursor Agent, DeepSeek Harness, or any ACP agent) offers **Configure** in that row — a native file dialog that writes the picked path into settings. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
 
 ### One folder per chat
 
@@ -95,8 +95,7 @@ npm run dev        # http://localhost:3000 in the browser
 The Tauri shell is frameless — the header you see **is** the window chrome: drag region, double-click to maximize, min/max/close controls (native traffic lights on macOS), the ⌘K palette, settings and theme toggle.
 
 ```bash
-node scripts/prepare-desktop.mjs --skip-next   # once after cloning (stages sidecar deps)
-npm run desktop:dev                            # dev shell against localhost:3000
+npm run desktop:dev                            # first run fetches the Node sidecar
 npm run desktop:build                          # installer for your platform
 ```
 
@@ -160,13 +159,13 @@ The agent backends keep their own conversation context (Cursor, pi and ACP sessi
 
 `/settings` applies everything instantly and persists to `settings.json`:
 
-- **Appearance** — nine complete shadcn themes vendored from the [tweakcn](https://tweakcn.com) registry (Modern Minimal, Graphite, T3 Chat, Catppuccin, Mocha Mousse, Cosmic Night, Amethyst Haze, Perpetuity, Notebook). A theme is not just a palette: it brings its own typeface, corner radius, shadows and letter-spacing, in separate light and dark sets, and the app's own surfaces (code blocks, tool cards, message bubbles) are mixed from those tokens so a warm theme warms the whole window. Plus light/dark/system mode and an optional radius override.
+- **Appearance** — nine complete shadcn themes vendored from the [tweakcn](https://tweakcn.com) registry (Modern Minimal, Graphite, T3 Chat, Catppuccin, Mocha Mousse, Cosmic Night, Amethyst Haze, Perpetuity, Notebook). A theme is not just a palette: it brings its own typeface, corner radius, shadows and letter-spacing, in separate light and dark sets, and the app's own surfaces (code blocks, tool cards, message bubbles) are mixed from those tokens so a warm theme warms the whole window. Plus light/dark/system mode, UI size (⌘/Ctrl + and −, persisted), and an optional radius override.
 
   **Typeface** is the one token you can pin across every theme: an interface font and a code font, each defaulting to a stack led by the face ChatGPT renders with, each option drawn in its own face in the list. The override is written straight onto `<html>`, which outranks the theme's own value; picking *Theme default* hands the decision back. A tiny inline bootstrap script applies the stored theme *and* the stored fonts before first paint — no flash, no reflow.
 
   Adding a theme is one entry in `scripts/import-tweakcn.mjs` and `node scripts/import-tweakcn.mjs`, which refreshes the checked-in `lib/theme/themes/generated.ts`; if it names a typeface the app does not load yet, the script says so.
 - **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, the list of ACP agents (command, workspace, permission policy, plus dsh's endpoint and sandbox), default provider, with live reachability badges.
-- **Chat** — default reasoning effort, prompt suggestions, auto-titling.
+- **Chat** — default reasoning effort, prompt suggestions, auto-titling, and notification sounds for completed runs and questions that need attention.
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
 
 ## Architecture

@@ -13,26 +13,25 @@ import type { StoredMessage } from "@/lib/store/types"
  */
 
 export function textFromParts(parts: MessagePart[]) {
-  return parts
-    .filter(
-      (part): part is Extract<MessagePart, { type: "text" }> =>
-        part.type === "text"
-    )
-    .map((part) => part.text)
-    .join("")
+  let text = ""
+  for (const part of parts) {
+    if (part.type === "text") text += part.text
+  }
+  return text
 }
 
 export function toolsFromParts(parts: MessagePart[]) {
-  return parts
-    .filter(
-      (part): part is Extract<MessagePart, { type: "tool" }> =>
-        part.type === "tool"
-    )
-    .map((part) => part.tool)
+  const tools: MessageToolCallData[] = []
+  for (const part of parts) {
+    if (part.type === "tool") tools.push(part.tool)
+  }
+  return tools
 }
 
 /**
- * Appends to the tail text part when there is one — keeps streaming O(1).
+ * Appends to the tail text part when there is one. Local-image detection only
+ * runs when a chunk can actually close a markdown target; ordinary token
+ * deltas avoid rescanning the accumulated answer.
  *
  * The rewrite of local image paths happens here, on the accumulated tail
  * rather than the delta, because a path arrives in pieces: `![](C:\Users\m`
@@ -46,9 +45,14 @@ export function appendTextPart(
 ): MessagePart[] {
   const last = parts.at(-1)
   if (last?.type === "text") {
+    const combined = last.text + text
+    const nextText =
+      text.includes(")") && combined.includes("![")
+        ? linkLocalImages(combined)
+        : combined
     return [
       ...parts.slice(0, -1),
-      { ...last, text: linkLocalImages(last.text + text) },
+      { ...last, text: nextText },
     ]
   }
   return [...parts, { type: "text", id: newId(), text: linkLocalImages(text) }]
@@ -92,16 +96,6 @@ export function upsertToolPart(
   return next
 }
 
-/** Rebuilds the flattened `content` / `tools` mirrors after a parts change. */
-function withParts(message: StoredMessage, parts: MessagePart[]): StoredMessage {
-  return {
-    ...message,
-    parts,
-    content: textFromParts(parts),
-    tools: toolsFromParts(parts),
-  }
-}
-
 /**
  * Folds one stream event into an assistant message. `session`, `done` and
  * `error` carry run-level information and are handled by the caller.
@@ -112,22 +106,29 @@ export function applyStreamEvent(
 ): StoredMessage {
   const parts = message.parts ?? []
   if (event.type === "thinking") {
-    return withParts(message, appendThinkingPart(parts, event.text))
+    return { ...message, parts: appendThinkingPart(parts, event.text) }
   }
   if (event.type === "text") {
-    return withParts(message, appendTextPart(parts, event.text))
+    const previousTail = parts.at(-1)
+    const nextParts = appendTextPart(parts, event.text)
+    const nextTail = nextParts.at(-1)
+    const content =
+      previousTail?.type === "text" && nextTail?.type === "text"
+        ? nextTail.text.startsWith(previousTail.text)
+          ? message.content + nextTail.text.slice(previousTail.text.length)
+          : textFromParts(nextParts)
+        : message.content + (nextTail?.type === "text" ? nextTail.text : event.text)
+    return { ...message, parts: nextParts, content }
   }
   if (event.type === "tool") {
-    return withParts(
-      message,
-      upsertToolPart(parts, {
+    const nextParts = upsertToolPart(parts, {
         id: event.id,
         name: event.name,
         status: event.status,
         input: event.input,
         output: event.output,
       })
-    )
+    return { ...message, parts: nextParts, tools: toolsFromParts(nextParts) }
   }
   return message
 }

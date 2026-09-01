@@ -83,6 +83,21 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
           />
         }
       />
+
+      <SettingsRow
+        title="Notification sounds"
+        htmlFor="chat-notification-sounds"
+        description="Play a sound when an agent finishes or asks a question."
+        control={
+          <Switch
+            id="chat-notification-sounds"
+            checked={chat.notificationSounds}
+            onCheckedChange={(notificationSounds) =>
+              setChat({ notificationSounds })
+            }
+          />
+        }
+      />
     </SettingsSection>
   )
 }

@@ -77,7 +77,13 @@ export function createPiProvider(
         available: false,
       }
       const { available, reason } = detect()
-      if (!available) return { ...base, unavailableReason: reason }
+      const configureBinary =
+        process.platform === "win32" &&
+        settings.enabled &&
+        !hasPiBinary(binPath)
+      if (!available) {
+        return { ...base, unavailableReason: reason, configureBinary }
+      }
       const reachable = await probeOllama(baseUrl)
       return reachable
         ? { ...base, available: true }

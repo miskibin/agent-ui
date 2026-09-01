@@ -69,6 +69,7 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
 /* -------------------------------------------------------------------------- */
 
 let queue: Promise<unknown> = Promise.resolve()
+let indexCache: SessionMeta[] | null = null
 
 /** Serializes index read-modify-writes within this process. */
 function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
@@ -134,16 +135,22 @@ function reindex(sessions: SessionMeta[]): SessionMeta[] {
 }
 
 async function readIndex(): Promise<SessionMeta[]> {
+  if (indexCache) return indexCache
   const raw = await readJson<unknown[]>(indexPath(), [])
-  if (!Array.isArray(raw)) return []
-  return raw
+  if (!Array.isArray(raw)) {
+    indexCache = []
+    return indexCache
+  }
+  indexCache = raw
     .map((entry, index) => normalizeMeta(entry, index))
     .filter((entry): entry is SessionMeta => entry !== null)
     .sort((a, b) => a.order - b.order)
+  return indexCache
 }
 
 async function writeIndex(sessions: SessionMeta[]) {
   await writeJsonAtomic(indexPath(), sessions)
+  indexCache = sessions
 }
 
 export function listSessions(): Promise<SessionMeta[]> {

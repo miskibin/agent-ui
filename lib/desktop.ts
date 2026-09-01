@@ -69,8 +69,7 @@ export function hasNativeWindowControls(): boolean {
 /**
  * True when the shell can show the OS folder chooser (the `dialog` plugin is
  * registered in `src-tauri`). Feature-detected rather than assumed: a browser
- * tab has no such thing, and the picker falls back to its own directory
- * browser, which is the only option there anyway.
+ * tab has no native dialog capable of returning an absolute local path.
  */
 export function hasNativeFolderPicker(): boolean {
   return typeof tauri()?.dialog?.open === "function"
@@ -88,7 +87,7 @@ export async function pickFolderNative(
   const picked = await dialog.open({
     directory: true,
     multiple: false,
-    title: "Choose a working folder",
+    title: "Open Folder",
     ...(defaultPath ? { defaultPath } : null),
   })
   // `multiple: false` answers with a string, but the plugin's signature does

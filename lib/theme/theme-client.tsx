@@ -24,9 +24,13 @@ import {
 
 import {
   applyAppearance,
+  clampZoom,
+  DEFAULT_ZOOM,
   normalizeRadiusOverride,
+  normalizeZoom,
   readAppearanceMirror,
   writeAppearanceMirror,
+  ZOOM_STEP,
 } from "./apply"
 import { findFont } from "./font-options"
 import { findPreset } from "./presets"
@@ -52,6 +56,7 @@ function normalizeAppearance(
       value.fontMono === undefined
         ? DEFAULT_SETTINGS.appearance.fontMono
         : findFont("mono", value.fontMono).id,
+    zoom: normalizeZoom(value.zoom),
   }
 }
 
@@ -61,7 +66,8 @@ function isSame(a: AppearanceSettings, b: AppearanceSettings) {
     a.mode === b.mode &&
     a.radiusOverride === b.radiusOverride &&
     a.fontSans === b.fontSans &&
-    a.fontMono === b.fontMono
+    a.fontMono === b.fontMono &&
+    a.zoom === b.zoom
   )
 }
 
@@ -138,6 +144,39 @@ function setAppearance(patch: Partial<AppearanceSettings>) {
   if (!commit(next)) return
   if (modeChanged) applyMode?.(next.mode)
   schedulePersist()
+}
+
+function zoomShortcut(event: KeyboardEvent): 1 | -1 | 0 | null {
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.isComposing) {
+    return null
+  }
+  if (
+    event.key === "+" ||
+    event.key === "=" ||
+    event.code === "Equal" ||
+    event.code === "NumpadAdd"
+  ) {
+    return 1
+  }
+  if (
+    event.key === "-" ||
+    event.key === "−" ||
+    event.code === "Minus" ||
+    event.code === "NumpadSubtract"
+  ) {
+    return -1
+  }
+  if (event.key === "0" || event.code === "Digit0" || event.code === "Numpad0") {
+    return 0
+  }
+  return null
+}
+
+/** Zoom in (+1), out (−1), or reset to 100% (0). */
+export function adjustZoom(direction: 1 | -1 | 0) {
+  const zoom =
+    direction === 0 ? DEFAULT_ZOOM : clampZoom(snapshot.zoom + direction * ZOOM_STEP)
+  setAppearance({ zoom })
 }
 
 export type AppearanceApi = {
@@ -225,6 +264,31 @@ function AppearanceSync() {
     if (!mode || mode === appearance.mode) return
     setAppearance({ mode })
   }, [theme, appearance.mode])
+
+  React.useEffect(() => {
+    let wheelAcc = 0
+    const onKeyDown = (event: KeyboardEvent) => {
+      const direction = zoomShortcut(event)
+      if (direction === null) return
+      event.preventDefault()
+      adjustZoom(direction)
+    }
+    const onWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.altKey) return
+      event.preventDefault()
+      wheelAcc += event.deltaY
+      if (Math.abs(wheelAcc) < 40) return
+      const direction: 1 | -1 = wheelAcc > 0 ? -1 : 1
+      wheelAcc = 0
+      adjustZoom(direction)
+    }
+    window.addEventListener("keydown", onKeyDown, { capture: true })
+    window.addEventListener("wheel", onWheel, { capture: true, passive: false })
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, { capture: true })
+      window.removeEventListener("wheel", onWheel, { capture: true })
+    }
+  }, [])
 
   return null
 }

@@ -43,9 +43,9 @@ jobs:
         with:
           node-version: 22
 
-      # tauri-build resolves `externalBin` and `bundle.resources` at compile
-      # time, so the Node sidecar has to exist even for a type check. This
-      # skips the (slow) web build and only fetches the runtime.
+      # tauri-build resolves `externalBin` / `bundle.resources` at compile
+      # time. `build.rs` will fetch these if they are missing; doing it here
+      # keeps the download off the cargo check step so logs stay readable.
       - name: Stage the Node sidecar
         run: node scripts/prepare-desktop.mjs --skip-next
 

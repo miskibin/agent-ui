@@ -12,15 +12,14 @@ import {
   Sparkles,
   Waves,
 } from "lucide-react"
+import { useRouter } from "next/navigation"
 import * as React from "react"
 import { toast } from "sonner"
 
 import {
   AppHeader,
   AppHeaderActions,
-  AppHeaderBrand,
   AppHeaderButton,
-  AppHeaderTitle,
 } from "@/components/app-header"
 import {
   CommandPalette,
@@ -82,6 +81,7 @@ import {
   seedAssistantMessage,
   toolsFromParts,
 } from "@/lib/message-stream"
+import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import type { AppSettings } from "@/lib/settings/schema"
 import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
@@ -91,8 +91,14 @@ const DESKTOP_QUERY = "(min-width: 768px)"
 /** Last known sidebar index + open thread, so a reload paints before the fetch. */
 const CACHE_INDEX_KEY = "agent-ui:sessions"
 const CACHE_ACTIVE_KEY = "agent-ui:active-session"
+/** Active/running transcripts plus this many recently opened bodies stay hot. */
+const MAX_CACHED_THREADS = 4
 
 const EMPTY_MESSAGES: StoredMessage[] = []
+
+/** How an answered Ask Question block is handed back to the model. */
+const ASK_ANSWER_PREFIX = "AskQuestion result: "
+const ASK_ANSWER_SKIPPED = `${ASK_ANSWER_PREFIX}skipped`
 
 const SUGGESTIONS: PromptSuggestion[] = [
   { id: "streaming", label: "How does streaming work?", icon: <Waves /> },
@@ -214,7 +220,12 @@ function writeCache(key: string, value: unknown) {
  * localStorage snapshot so the sidebar paints immediately), and nothing on the
  * critical path waits on the server.
  */
+/** The vendored toggle, dressed as a sidebar icon button. */
+const SIDEBAR_THEME_TOGGLE =
+  "size-8 rounded-md border-0 bg-transparent text-muted-foreground shadow-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+
 export default function ChatPage() {
+  const router = useRouter()
   const isDesktop = useIsDesktop()
   const [collapsed, setCollapsed] = React.useState(false)
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
@@ -257,6 +268,7 @@ export default function ChatPage() {
   const providerIdRef = React.useRef(providerId)
   const modelRef = React.useRef(model)
   const inflightRef = React.useRef(new Set<string>())
+  const threadAccessRef = React.useRef<string[]>([])
   const bootstrappedRef = React.useRef(false)
   /**
    * The provider the user just picked, until its model list lands. Only that
@@ -276,7 +288,55 @@ export default function ChatPage() {
     modelRef.current = model
   })
 
+  /**
+   * Opening chats must not retain every transcript for the lifetime of the
+   * WebView. Keep a tiny LRU, while active and streaming threads are protected.
+   */
+  const cacheThread = React.useCallback(
+    (
+      current: Record<string, StoredMessage[]>,
+      id: string,
+      body: StoredMessage[]
+    ) => {
+      const access = threadAccessRef.current.filter((entry) => entry !== id)
+      access.push(id)
+      threadAccessRef.current = access
+
+      const next = { ...current, [id]: body }
+      let count = Object.keys(next).length
+      if (count <= MAX_CACHED_THREADS) return next
+
+      const protectedIds = new Set([
+        id,
+        activeIdRef.current,
+        ...abortsRef.current.keys(),
+      ])
+      for (const candidate of access) {
+        if (count <= MAX_CACHED_THREADS) break
+        if (protectedIds.has(candidate) || next[candidate] === undefined) continue
+        delete next[candidate]
+        count--
+      }
+      threadAccessRef.current = access.filter((entry) => next[entry] !== undefined)
+      return next
+    },
+    []
+  )
+
   const messages = threads[activeId] ?? EMPTY_MESSAGES
+  /**
+   * Ask Question answers are replayed to the model as a user turn, but the
+   * tool row above already shows them — rendering the raw prompt as well is
+   * duplicate noise. Keeps the same array when there is nothing to drop, so
+   * the memoized rows never re-render for this.
+   */
+  const visibleMessages = React.useMemo(
+    () =>
+      messages.some(isInternalMessage)
+        ? messages.filter((message) => !isInternalMessage(message))
+        : messages,
+    [messages]
+  )
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
   const isGenerating = !!activeRun
@@ -304,14 +364,14 @@ export default function ChatPage() {
       const loaded = await api.fetchMessages(id)
       // A run may have seeded the thread while this was in flight.
       setThreads((prev) =>
-        prev[id] !== undefined ? prev : { ...prev, [id]: loaded }
+        prev[id] !== undefined ? prev : cacheThread(prev, id, loaded)
       )
     } catch (err) {
       toast.error(errorMessage(err, "Could not load this chat"))
     } finally {
       inflightRef.current.delete(id)
     }
-  }, [])
+  }, [cacheThread])
 
   const patchLocal = React.useCallback(
     (id: string, patch: Partial<SessionMeta>) => {
@@ -368,6 +428,27 @@ export default function ChatPage() {
     },
     [persistAgent]
   )
+
+  const configureProvider = React.useCallback(async (id: string) => {
+    try {
+      const result = await api.configureProviderBinary(id)
+      if ("cancelled" in result && result.cancelled) return
+      if (!("path" in result)) return
+      setProviders(result.providers)
+      const next = result.providers.find((provider) => provider.id === id)
+      if (next?.available) {
+        setProviderId(id)
+        providerPickRef.current = id
+        persistAgent({ providerId: id })
+        toast.success(`${next.name} is ready.`)
+        return
+      }
+      toast.success(`Saved ${result.path}`)
+      if (next?.unavailableReason) toast.message(next.unavailableReason)
+    } catch (err: unknown) {
+      toast.error(errorMessage(err, "Could not configure the harness"))
+    }
+  }, [persistAgent])
 
   const chooseModel = React.useCallback(
     (id: string) => {
@@ -556,9 +637,13 @@ export default function ChatPage() {
           providerIdRef.current
         )
       }
+      const cached = threadsRef.current[id]
+      if (cached !== undefined) {
+        setThreads((prev) => cacheThread(prev, id, cached))
+      }
       void loadThread(id)
     },
-    [adoptAgent, loadThread]
+    [adoptAgent, cacheThread, loadThread]
   )
 
   const renameSession = React.useCallback(
@@ -642,6 +727,52 @@ export default function ChatPage() {
       )
   }, [])
 
+  const removeSessions = React.useCallback((ids: string[]) => {
+    if (ids.length === 0) return
+    const idSet = new Set(ids)
+    for (const id of ids) {
+      abortsRef.current.get(id)?.abort()
+      abortsRef.current.delete(id)
+    }
+    setThreads((prev) => {
+      let changed = false
+      const next = { ...prev }
+      for (const id of ids) {
+        if (next[id] === undefined) continue
+        delete next[id]
+        changed = true
+      }
+      return changed ? next : prev
+    })
+    setRuns((prev) => {
+      let next = prev
+      for (const id of ids) next = omit(next, id)
+      return next
+    })
+    setFailures((prev) => {
+      let next = prev
+      for (const id of ids) next = omit(next, id)
+      return next
+    })
+    setSessions((prev) => {
+      const next = prev.filter((session) => !idSet.has(session.id))
+      setActiveId((current) =>
+        idSet.has(current) ? (next[0]?.id ?? "") : current
+      )
+      return next
+    })
+    for (const id of ids) {
+      void api
+        .deleteSession(id)
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not delete the chat"))
+        )
+    }
+    toast.message(
+      ids.length === 1 ? "Chat deleted" : `${ids.length} chats deleted`
+    )
+  }, [])
+
   const handleNewChat = React.useCallback(async () => {
     setMobileNavOpen(false)
     const empty = sessions.find(
@@ -681,6 +812,8 @@ export default function ChatPage() {
       attachments?: MessageAttachmentData[]
       animate?: boolean
       titleFrom?: string
+      /** The app wrote this prompt, not the user — keep it out of the list. */
+      internal?: boolean
     }) => {
       const { sessionId, prompt, prior } = args
       const startedAt = nowMs()
@@ -690,6 +823,7 @@ export default function ChatPage() {
         content: prompt,
         sender: "user",
         createdAt: startedAt,
+        ...(args.internal ? { internal: true } : null),
         ...(args.attachments?.length ? { attachments: args.attachments } : null),
       }
       const seeded = [...prior, userMessage, seedAssistantMessage(assistantId)]
@@ -725,11 +859,23 @@ export default function ChatPage() {
         setThreads((prev) => {
           const current = prev[sessionId]
           if (!current) return prev
+          const lastIndex = current.length - 1
+          if (current[lastIndex]?.id === assistantId) {
+            return {
+              ...prev,
+              [sessionId]: [
+                ...current.slice(0, lastIndex),
+                updater(current[lastIndex]),
+              ],
+            }
+          }
+          const index = current.findIndex((message) => message.id === assistantId)
+          if (index < 0) return prev
+          const next = [...current]
+          next[index] = updater(next[index])
           return {
             ...prev,
-            [sessionId]: current.map((message) =>
-              message.id === assistantId ? updater(message) : message
-            ),
+            [sessionId]: next,
           }
         })
       }
@@ -758,6 +904,10 @@ export default function ChatPage() {
         setFailures((prev) => ({ ...prev, [sessionId]: true }))
       }
 
+      let failed = false
+      let needsAttention = false
+      const notifiedAskTools = new Set<string>()
+
       /**
        * Say why the turn stopped, in the turn itself. A message that already
        * has parts renders those and never its flat `content`, so a run that
@@ -765,6 +915,7 @@ export default function ChatPage() {
        * bubble and nothing but a toast that fades.
        */
       const failAssistant = (reason: string) => {
+        failed = true
         drain()
         patchAssistant((message) =>
           message.content.trim()
@@ -785,8 +936,17 @@ export default function ChatPage() {
        */
       let queued: AgentStreamEvent[] = []
       let frame = 0
-      const flush = () => {
+      let fallbackTimer: ReturnType<typeof setTimeout> | undefined
+      const cancelFlush = () => {
+        if (frame && typeof cancelAnimationFrame === "function") {
+          cancelAnimationFrame(frame)
+        }
         frame = 0
+        if (fallbackTimer !== undefined) clearTimeout(fallbackTimer)
+        fallbackTimer = undefined
+      }
+      const flush = () => {
+        cancelFlush()
         const batch = queued
         queued = []
         /**
@@ -805,22 +965,33 @@ export default function ChatPage() {
         )
       }
       const enqueue = (event: AgentStreamEvent) => {
-        queued.push(event)
-        if (frame) return
+        const last = queued.at(-1)
+        if (
+          (event.type === "text" || event.type === "thinking") &&
+          last?.type === event.type
+        ) {
+          queued[queued.length - 1] = { ...last, text: last.text + event.text }
+        } else if (
+          event.type === "tool" &&
+          last?.type === "tool" &&
+          last.id === event.id
+        ) {
+          queued[queued.length - 1] = event
+        } else {
+          queued.push(event)
+        }
+        if (frame || fallbackTimer !== undefined) return
         frame =
           typeof requestAnimationFrame === "function"
             ? requestAnimationFrame(flush)
-            : (setTimeout(flush, 16) as unknown as number)
+            : 0
+        // Background WebViews can pause rAF indefinitely. The fallback keeps
+        // queued stream events bounded even while the window is hidden.
+        fallbackTimer = setTimeout(flush, document.hidden ? 50 : 100)
       }
       /** Run-level events must not overtake the text they follow. */
       const drain = () => {
-        if (frame) {
-          if (typeof cancelAnimationFrame === "function") {
-            cancelAnimationFrame(frame)
-          } else {
-            clearTimeout(frame)
-          }
-        }
+        cancelFlush()
         flush()
       }
 
@@ -875,6 +1046,13 @@ export default function ChatPage() {
           if (event.sessionId) {
             patchLocal(sessionId, { providerSessionId: event.sessionId })
           }
+          if (
+            (settings?.chat.notificationSounds ?? true) &&
+            !failed &&
+            !needsAttention
+          ) {
+            playAgentNotificationSound("completion")
+          }
           return
         }
         if (event.type === "status") {
@@ -884,7 +1062,19 @@ export default function ChatPage() {
         }
         if (event.type === "thinking") setStage("thinking")
         else if (event.type === "text") setStage("responding")
-        else if (event.type === "tool") setStage("searching")
+        else if (event.type === "tool") {
+          setStage("searching")
+          if (isOpenAskTool(event)) {
+            needsAttention = true
+            if (
+              (settings?.chat.notificationSounds ?? true) &&
+              !notifiedAskTools.has(event.id)
+            ) {
+              notifiedAskTools.add(event.id)
+              playAgentNotificationSound("question")
+            }
+          }
+        }
         enqueue(event)
       }
 
@@ -919,7 +1109,7 @@ export default function ChatPage() {
         patchLocal(sessionId, { updatedAt: nowMs() })
       }
     },
-    [patchLocal]
+    [patchLocal, settings?.chat.notificationSounds]
   )
 
   const send = React.useCallback(
@@ -1110,12 +1300,13 @@ export default function ChatPage() {
         await runPrompt({
           sessionId,
           prompt: result.skipped
-            ? "AskQuestion result: skipped"
-            : `AskQuestion result: ${JSON.stringify(result.answers)}`,
+            ? ASK_ANSWER_SKIPPED
+            : `${ASK_ANSWER_PREFIX}${JSON.stringify(result.answers)}`,
           prior: next,
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,
+          internal: true,
         })
       })()
     },
@@ -1287,6 +1478,7 @@ export default function ChatPage() {
               providers={providers}
               value={providerId}
               onChange={chooseProvider}
+              onConfigure={configureProvider}
             />
             <ModelPicker
               value={model}
@@ -1306,6 +1498,7 @@ export default function ChatPage() {
       activeProviderName,
       chooseModel,
       chooseProvider,
+      configureProvider,
       effort,
       handleSend,
       handleStop,
@@ -1395,6 +1588,31 @@ export default function ChatPage() {
               </SideIconBtn>
             </>
           }
+          footer={
+            (isDesktop ? collapsed : false) ? (
+              <>
+                <SideIconBtn
+                  label="Settings"
+                  onClick={() => router.push("/settings")}
+                >
+                  <SettingsIcon className="size-4" />
+                </SideIconBtn>
+                <ThemeToggle floating={false} className={SIDEBAR_THEME_TOGGLE} />
+              </>
+            ) : (
+              <div className="flex items-center gap-1">
+                <div className="min-w-0 flex-1">
+                  <SideRow
+                    icon={<SettingsIcon className="size-4" />}
+                    onClick={() => router.push("/settings")}
+                  >
+                    Settings
+                  </SideRow>
+                </div>
+                <ThemeToggle floating={false} className={SIDEBAR_THEME_TOGGLE} />
+              </div>
+            )
+          }
         >
           <SidebarSessionSection
             open={chatsOpen}
@@ -1407,6 +1625,7 @@ export default function ChatPage() {
             onRename={renameSession}
             onTogglePin={togglePin}
             onDelete={removeSession}
+            onDeleteMany={removeSessions}
           />
         </ChatSidebar>
       </ChatSidebarDnd>
@@ -1419,6 +1638,7 @@ export default function ChatPage() {
       isDesktop,
       closeDrawer,
       removeSession,
+      removeSessions,
       renameRequest,
       renameSession,
       selectSession,
@@ -1426,6 +1646,7 @@ export default function ChatPage() {
       sessions,
       sessionsLoaded,
       togglePin,
+      router,
     ]
   )
 
@@ -1464,12 +1685,6 @@ export default function ChatPage() {
           >
             <PanelLeft />
           </button>
-          <AppHeaderBrand />
-          {/* Just the title. The working folder lives above the composer and
-              on the sidebar row; the run's progress lives above the turn it
-              belongs to and on that row's own line. Neither needs a second
-              home in the window chrome. */}
-          <AppHeaderTitle title={activeSession?.title ?? "New chat"} />
           <AppHeaderActions>
             <AppHeaderButton
               label="Search chats and commands"
@@ -1478,13 +1693,6 @@ export default function ChatPage() {
             >
               <Search />
             </AppHeaderButton>
-            <AppHeaderButton label="Settings" href="/settings">
-              <SettingsIcon />
-            </AppHeaderButton>
-            <ThemeToggle
-              floating={false}
-              className="size-8 rounded-md border-0 bg-transparent text-muted-foreground shadow-none hover:bg-muted hover:text-foreground"
-            />
           </AppHeaderActions>
         </AppHeader>
 
@@ -1507,7 +1715,7 @@ export default function ChatPage() {
             </div>
           ) : (
             <MessageList
-              messages={messages}
+              messages={visibleMessages}
               isGenerating={isGenerating}
               generationStage={activeRun?.stage ?? "idle"}
               generationLabel={activeRun?.status}
@@ -1646,6 +1854,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   onRename,
   onTogglePin,
   onDelete,
+  onDeleteMany,
 }: {
   open: boolean
   onToggle: () => void
@@ -1658,6 +1867,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   onRename: (id: string, title: string) => void
   onTogglePin: (id: string, pinned: boolean) => void
   onDelete: (id: string) => void
+  onDeleteMany: (ids: string[]) => void
 }) {
   return (
     <SidebarCollapsibleSection
@@ -1683,6 +1893,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
         onRename={onRename}
         onTogglePin={onTogglePin}
         onDelete={onDelete}
+        onDeleteMany={onDeleteMany}
       />
     </SidebarCollapsibleSection>
   )
@@ -1721,6 +1932,20 @@ function omit<T>(record: Record<string, T>, key: string): Record<string, T> {
 
 function errorMessage(err: unknown, fallback: string) {
   return err instanceof Error && err.message ? err.message : fallback
+}
+
+/**
+ * A turn the app wrote for the model, not one the user typed. The flag is
+ * authoritative; the prefix match covers threads stored before it existed,
+ * and is narrow enough that a real prompt cannot trip it.
+ */
+function isInternalMessage(message: StoredMessage) {
+  if (message.internal) return true
+  return (
+    message.sender === "user" &&
+    (message.content === ASK_ANSWER_SKIPPED ||
+      message.content.startsWith(`${ASK_ANSWER_PREFIX}{`))
+  )
 }
 
 /**

@@ -14,7 +14,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import type { ThemeMode } from "@/lib/settings/schema"
-import { MAX_RADIUS, MIN_RADIUS } from "@/lib/theme/apply"
+import { MAX_RADIUS, MAX_ZOOM, MIN_RADIUS, MIN_ZOOM, ZOOM_STEP } from "@/lib/theme/apply"
 import {
   FOLLOW_THEME,
   MONO_FONTS,
@@ -323,6 +323,26 @@ export function AppearanceSection() {
           </div>
         }
       />
+
+      <SettingsRow
+        title="UI size"
+        description="Scales the whole interface. ⌘/Ctrl + and − to step, ⌘/Ctrl 0 to reset."
+        control={
+          <span className="font-mono text-[12px] tabular-nums text-muted-foreground">
+            {Math.round(appearance.zoom * 100)}%
+          </span>
+        }
+      >
+        <Slider
+          aria-label="UI size"
+          className="max-w-xs"
+          min={MIN_ZOOM}
+          max={MAX_ZOOM}
+          step={ZOOM_STEP}
+          value={[appearance.zoom]}
+          onValueChange={([next]) => setAppearance({ zoom: next })}
+        />
+      </SettingsRow>
 
       <SettingsRow
         title="Custom radius"

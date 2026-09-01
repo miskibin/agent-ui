@@ -6,15 +6,17 @@
  *   2. `.next/standalone` + `.next/static` + `public` -> src-tauri/resources/app
  *   3. the platform's Node runtime  -> src-tauri/binaries/node-<target-triple>
  *
- * Run automatically as `beforeBuildCommand`, or by hand:
+ * Run automatically as `beforeBuildCommand`, from `src-tauri/build.rs` when
+ * the sidecar is missing (`tauri dev` / `cargo check`), or by hand:
  *
  *   node scripts/prepare-desktop.mjs
  *   node scripts/prepare-desktop.mjs --target aarch64-apple-darwin
  *   node scripts/prepare-desktop.mjs --skip-next   # only the Node runtime
  *
- * `--skip-next` exists for CI `cargo check`: tauri-build refuses to build when
+ * `--skip-next` skips the (slow) web build: tauri-build refuses to compile when
  * `externalBin` / `bundle.resources` cannot be resolved, so it fetches the Node
- * binary and leaves a placeholder resource dir instead of doing a web build.
+ * binary and leaves a placeholder resource dir. `build.rs` calls this on a
+ * fresh checkout so `tauri dev` works without a manual prepare step.
  *
  * Set AGENT_UI_DESKTOP_PREPARED=1 to make an already-prepared tree a no-op
  * (release CI prepares explicitly, then lets `tauri build` skip the repeat).

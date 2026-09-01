@@ -1,6 +1,7 @@
 import "server-only"
 
 import type { OllamaSettings } from "@/lib/settings/schema"
+import { LineBuffer } from "@/lib/stream-framing"
 import {
   fetchLoadedOllamaModels,
   fetchOllamaModels,
@@ -156,7 +157,7 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
 
       const reader = res.body.getReader()
       const decoder = new TextDecoder()
-      let buffer = ""
+      const lines = new LineBuffer()
       let done = false
       /** Nothing has been shown yet, so the wait is still worth narrating. */
       let silent = true
@@ -188,10 +189,7 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
           pending = null
           const { done: streamDone, value } = next.chunk
           if (streamDone) break
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split("\n")
-          buffer = lines.pop() ?? ""
-          for (const line of lines) {
+          for (const line of lines.push(decoder.decode(value, { stream: true }))) {
             const trimmed = line.trim()
             if (!trimmed) continue
             let chunk: ChatChunk

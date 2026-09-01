@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
-    "desktop:dev": "tauri dev",
+    "desktop:dev": "node scripts/prepare-desktop.mjs --skip-next && tauri dev",
     "desktop:build": "tauri build"
   },
   "dependencies": {

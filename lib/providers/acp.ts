@@ -142,7 +142,13 @@ export function createAcpProvider(
         available: false,
       }
       const { available, reason } = detect()
-      if (!available) return { ...base, unavailableReason: reason }
+      const configureBinary =
+        process.platform === "win32" &&
+        agent.enabled &&
+        (!command || !hasAcpBinary(command))
+      if (!available) {
+        return { ...base, unavailableReason: reason, configureBinary }
+      }
       if (baseUrl && !(await probeOllama(baseUrl))) {
         return { ...base, unavailableReason: `No server at ${baseUrl}` }
       }

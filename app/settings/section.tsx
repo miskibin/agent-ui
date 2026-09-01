@@ -19,18 +19,20 @@ export function SettingsSection({
   children,
 }: SettingsSectionProps) {
   return (
-    <section id={id} data-slot="settings-section" className="scroll-mt-8">
-      <div className="mb-2.5 px-0.5">
-        <h2 className="text-[13.5px] font-medium text-foreground">{title}</h2>
+    <section id={id} data-slot="settings-section" className="scroll-mt-16">
+      <div className="mb-5 px-0.5">
+        <h1 className="text-[19px] font-semibold tracking-tight text-foreground">
+          {title}
+        </h1>
         {description ? (
-          <p className="mt-0.5 text-[12px] text-muted-foreground">
+          <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
             {description}
           </p>
         ) : null}
       </div>
       <Card
         data-slot="settings-panel"
-        className="gap-0 divide-y overflow-hidden py-0 shadow-xs"
+        className="gap-0 divide-y overflow-hidden border-border/80 py-0 shadow-xs"
       >
         {children}
       </Card>
@@ -63,9 +65,9 @@ export function SettingsRow({
   return (
     <div
       data-slot="settings-row"
-      className={cn("flex flex-col gap-2.5 px-4 py-3.5", className)}
+      className={cn("flex flex-col gap-3 px-4 py-4 sm:px-5", className)}
     >
-      <div className="flex items-center justify-between gap-6">
+      <div className="flex items-start justify-between gap-5 sm:items-center sm:gap-8">
         <div className="min-w-0">
           <Title
             {...(htmlFor ? { htmlFor } : {})}

@@ -46,6 +46,12 @@ export const DESKTOP_STORAGE_KEY = "agent-ui:desktop"
 export const MIN_RADIUS = 0
 export const MAX_RADIUS = 1.5
 
+/** UI zoom bounds — Ctrl/⌘ + and −, and the slider in Settings → Appearance. */
+export const MIN_ZOOM = 0.5
+export const MAX_ZOOM = 2
+export const ZOOM_STEP = 0.1
+export const DEFAULT_ZOOM = 1
+
 export function clampRadius(value: number): number {
   if (!Number.isFinite(value)) return 0.5
   return Math.min(MAX_RADIUS, Math.max(MIN_RADIUS, value))
@@ -56,6 +62,32 @@ export function normalizeRadiusOverride(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value)
     ? clampRadius(value)
     : null
+}
+
+export function clampZoom(value: number): number {
+  if (!Number.isFinite(value)) return DEFAULT_ZOOM
+  return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(value * 10) / 10))
+}
+
+export function normalizeZoom(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value)
+    ? clampZoom(value)
+    : DEFAULT_ZOOM
+}
+
+function applyZoom(root: HTMLElement, zoom: number) {
+  const next = clampZoom(zoom)
+  if (next === DEFAULT_ZOOM) {
+    root.style.removeProperty("zoom")
+    root.style.removeProperty("width")
+    root.style.removeProperty("height")
+    return
+  }
+  // CSS zoom multiplies used sizes; shrink the box so 100svh still fills the
+  // window instead of overflowing the overflow-hidden shell.
+  root.style.setProperty("zoom", String(next))
+  root.style.width = `${100 / next}vw`
+  root.style.height = `${100 / next}svh`
 }
 
 const FONT_KEYS = new Set(["font-sans", "font-mono", "font-serif"])
@@ -80,17 +112,17 @@ export function themePresetCss(): string {
 
 /**
  * Pre-paint guard. Reads the localStorage mirrors and stamps the preset (plus
- * the typeface overrides, an optional radius override and the desktop flag)
- * onto <html> before the first paint, so a reload never flashes the default
- * theme, the wrong font or a browser-shaped header. Dependency-free,
- * try/catch-wrapped, and mode-agnostic — next-themes' own inline script still
- * owns the `.dark` class.
+ * the typeface overrides, an optional radius override, UI zoom and the desktop
+ * flag) onto <html> before the first paint, so a reload never flashes the
+ * default theme, the wrong font, the wrong size or a browser-shaped header.
+ * Dependency-free, try/catch-wrapped, and mode-agnostic — next-themes' own
+ * inline script still owns the `.dark` class.
  */
 export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s=localStorage,v=JSON.parse(s.getItem(${JSON.stringify(
   APPEARANCE_STORAGE_KEY
 )})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
   DEFAULT_SETTINGS.appearance.theme
-)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");var f=${JSON.stringify(
+)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){var z=Math.round(v.zoom*10)/10;d.style.setProperty("zoom",String(z));d.style.width=100/z+"vw";d.style.height=100/z+"svh"}var f=${JSON.stringify(
   {
     "--font-sans": {
       stacks: fontStackMap("sans"),
@@ -128,7 +160,7 @@ function ensureStyleElement() {
 export function applyAppearance(
   appearance: Pick<
     AppearanceSettings,
-    "theme" | "radiusOverride" | "fontSans" | "fontMono"
+    "theme" | "radiusOverride" | "fontSans" | "fontMono" | "zoom"
   >
 ) {
   if (typeof document === "undefined") return
@@ -138,6 +170,7 @@ export function applyAppearance(
   const radius = normalizeRadiusOverride(appearance.radiusOverride)
   if (radius === null) root.style.removeProperty("--radius")
   else root.style.setProperty("--radius", `${radius}rem`)
+  applyZoom(root, appearance.zoom)
   // An inline custom property outranks the `[data-theme]` block, so clearing
   // it — rather than writing the preset's own stack back — is what hands the
   // typeface decision to the theme again.

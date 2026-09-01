@@ -17,6 +17,8 @@ export type ProviderPickerProps = {
   providers: ProviderInfo[]
   value: string
   onChange: (id: string) => void
+  /** Windows-only: locate a missing harness binary via a native file dialog. */
+  onConfigure?: (id: string) => void
   className?: string
 }
 
@@ -29,12 +31,14 @@ export const ProviderPicker = React.memo(function ProviderPicker({
   providers,
   value,
   onChange,
+  onConfigure,
   className,
 }: ProviderPickerProps) {
   const current = providers.find((provider) => provider.id === value)
+  const [open, setOpen] = React.useState(false)
 
   return (
-    <DropdownMenu>
+    <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -59,40 +63,66 @@ export const ProviderPicker = React.memo(function ProviderPicker({
         align="start"
         side="top"
         sideOffset={8}
-        className="w-[min(19rem,calc(100vw-1.5rem))]"
+        className="w-[min(22rem,calc(100vw-1.5rem))]"
       >
         <DropdownMenuLabel className="text-[11px] tracking-wide text-muted-foreground uppercase">
           Providers
         </DropdownMenuLabel>
-        {providers.map((provider) => (
-          <DropdownMenuItem
-            key={provider.id}
-            data-slot="provider-picker-item"
-            disabled={!provider.available}
-            onSelect={() => onChange(provider.id)}
-            className="items-start gap-2.5 py-2"
-          >
-            <span
-              className={cn(
-                "mt-1.5 size-1.5 shrink-0 rounded-full",
-                provider.available ? "bg-primary" : "bg-muted-foreground/40"
-              )}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-[13px] text-foreground">
-                {provider.name}
-              </span>
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                {provider.available
-                  ? provider.description
-                  : (provider.unavailableReason ?? "Unavailable")}
-              </span>
-            </span>
-            {provider.id === value ? (
-              <Check className="mt-0.5 size-3.5 shrink-0 !text-primary" />
-            ) : null}
-          </DropdownMenuItem>
-        ))}
+        {providers.map((provider) => {
+          const showConfigure =
+            Boolean(onConfigure) &&
+            !provider.available &&
+            Boolean(provider.configureBinary)
+
+          return (
+            <div
+              key={provider.id}
+              className="flex items-start gap-0.5"
+            >
+              <DropdownMenuItem
+                data-slot="provider-picker-item"
+                disabled={!provider.available}
+                onSelect={() => onChange(provider.id)}
+                className="min-w-0 flex-1 items-start gap-2.5 py-2"
+              >
+                <span
+                  className={cn(
+                    "mt-1.5 size-1.5 shrink-0 rounded-full",
+                    provider.available ? "bg-primary" : "bg-muted-foreground/40"
+                  )}
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-foreground">
+                    {provider.name}
+                  </span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">
+                    {provider.available
+                      ? provider.description
+                      : (provider.unavailableReason ?? "Unavailable")}
+                  </span>
+                </span>
+                {provider.id === value ? (
+                  <Check className="mt-0.5 size-3.5 shrink-0 !text-primary" />
+                ) : null}
+              </DropdownMenuItem>
+              {showConfigure ? (
+                <button
+                  type="button"
+                  data-slot="provider-configure"
+                  title={`Locate the ${provider.name} binary`}
+                  className="mt-1.5 mr-1 shrink-0 rounded-md px-1.5 py-1 text-[11px] font-medium text-primary outline-none hover:bg-muted focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                  onPointerDown={(event) => event.preventDefault()}
+                  onClick={() => {
+                    setOpen(false)
+                    onConfigure?.(provider.id)
+                  }}
+                >
+                  Configure
+                </button>
+              ) : null}
+            </div>
+          )
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   )

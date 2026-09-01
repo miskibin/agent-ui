@@ -4,6 +4,7 @@ import { spawn } from "node:child_process"
 
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import { resolveAcpCommand, type AcpCommand } from "@/lib/acp-runtime"
+import { LineBuffer } from "@/lib/stream-framing"
 import {
   ACP_ERROR,
   ACP_PROTOCOL_VERSION,
@@ -174,22 +175,24 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
   // Framing is newline-delimited JSON, split on "\n" only: a generic line
   // reader (Node's `readline` included) also splits on U+2028/U+2029, which are
   // legal inside JSON strings and would tear records apart.
-  let buffer = ""
-  child.stdout?.on("data", (chunk: Buffer | string) => {
-    buffer += String(chunk)
-    const lines = buffer.split("\n")
-    buffer = lines.pop() ?? ""
-    for (const line of lines) {
-      const trimmed = line.replace(/\r$/, "").trim()
-      if (!trimmed.startsWith("{")) continue
-      let message: JsonRpcMessage
-      try {
-        message = JSON.parse(trimmed) as JsonRpcMessage
-      } catch {
-        continue
-      }
-      dispatch(message)
+  const lines = new LineBuffer()
+  const processLine = (line: string) => {
+    const trimmed = line.replace(/\r$/, "").trim()
+    if (!trimmed.startsWith("{")) return
+    let message: JsonRpcMessage
+    try {
+      message = JSON.parse(trimmed) as JsonRpcMessage
+    } catch {
+      return
     }
+    dispatch(message)
+  }
+  child.stdout?.on("data", (chunk: Buffer | string) => {
+    for (const line of lines.push(String(chunk))) processLine(line)
+  })
+  child.stdout?.once("end", () => {
+    const tail = lines.finish()
+    if (tail !== null) processLine(tail)
   })
 
   function dispatch(message: JsonRpcMessage) {

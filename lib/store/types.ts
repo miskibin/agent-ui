@@ -32,6 +32,13 @@ export type MessageMetadata = {
 export type StoredMessage = ChatMessageData & {
   metadata?: MessageMetadata
   createdAt?: number
+  /**
+   * A turn the app wrote on the user's behalf — today, the answers submitted
+   * to an Ask Question block. It stays in the thread because the model (and a
+   * stateless provider replaying history) needs it, but the transcript already
+   * shows those answers in the tool row, so it is filtered out of the list.
+   */
+  internal?: boolean
 }
 
 export type SessionMeta = {

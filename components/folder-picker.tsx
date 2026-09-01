@@ -1,97 +1,26 @@
 "use client"
 
-import {
-  ArrowUpFromLine,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  Folder,
-  FolderOpen,
-  GitBranch,
-  Loader2,
-  Trash2,
-  X,
-} from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
 
-import { Input } from "@/components/ui/input"
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { SidebarItemBadge } from "@/components/ui/sidebar-item"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
+import { FolderPicker as RecentFolderPicker } from "@/components/ui/folder-picker"
 import * as api from "@/lib/api-client"
 import { hasNativeFolderPicker, pickFolderNative } from "@/lib/desktop"
-import {
-  folderName,
-  shortPath,
-  splitTypedPath,
-  type FolderInfo,
-  type FolderListing,
-} from "@/lib/folder"
-import { cn } from "@/lib/utils"
-
-/**
- * The chat's working folder: which directory the agent runs in, and on which
- * branch.
- *
- * Three ways in, the same three every editor and desktop agent offers, because
- * each covers a case the others do not:
- *
- *   - **Recents**, first, because the answer is almost always a folder you
- *     already used. Unlike Claude Desktop's list, an entry here can be
- *     forgotten — an MRU nobody can prune is a list that stops being useful.
- *   - **A browser**, so the answer can be found rather than remembered. It
- *     runs off `/api/fs/list` rather than the OS dialog, so it works the same
- *     in a browser tab as in the desktop shell, and it marks git repos, which
- *     is what "a project" usually means here.
- *   - **A typed path**, with `~` and completion as you type — the fastest
- *     route when you already know where you are going.
- *
- * Plus the OS chooser itself when the desktop shell can show one; that is the
- * "from Explorer" path, and it is feature-detected, never assumed.
- *
- * The path is validated on the server (`GET /api/fs/validate`) while the user
- * types — it is the only thing that knows whether the folder exists, and it is
- * where the branch list comes from. Nothing is written to the session until
- * the user picks a folder, so typing a half-finished path never re-points a
- * running agent.
- */
-
-const DEBOUNCE_MS = 250
-/** Sentinel for "no branch" — Radix Select forbids an empty item value. */
-const NO_BRANCH = " none"
-
-const subscribe = () => () => {}
-
-/** True only after hydration — `hasNativeFolderPicker` reads a window global. */
-function useHydrated() {
-  return React.useSyncExternalStore(
-    subscribe,
-    () => true,
-    () => false
-  )
-}
 
 export type FolderPickerProps = {
   cwd?: string
   gitBranch?: string
-  /** Empty `cwd` clears the folder (and the branch with it). */
   onChange: (next: { cwd: string; gitBranch: string }) => void
-  /**
-   * `chip` is the header's quiet inline control. `inline` is the one that sits
-   * above the composer on an empty chat, where choosing a folder is the next
-   * thing to do rather than a detail of an existing conversation.
-   */
+  /** The header uses a quiet chip; an empty chat uses the bordered inline form. */
   variant?: "chip" | "inline"
   className?: string
 }
 
+/**
+ * App adapter for the registry FolderPicker. The shared component owns the MRU
+ * menu; this layer supplies persisted settings, git metadata, and Tauri's
+ * native directory dialog.
+ */
 export function FolderPicker({
   cwd,
   gitBranch,
@@ -99,485 +28,83 @@ export function FolderPicker({
   variant = "chip",
   className,
 }: FolderPickerProps) {
-  const [open, setOpen] = React.useState(false)
-  const [draft, setDraft] = React.useState(cwd ?? "")
-  /**
-   * The answer *and* the path it answers for, so what the popover shows is
-   * derived rather than reset by an effect: anything the user has typed since
-   * is simply "still checking".
-   */
-  const [result, setResult] = React.useState<{
-    path: string
-    info: FolderInfo | null
-  } | null>(null)
-  const [branch, setBranch] = React.useState(gitBranch ?? "")
   const [recents, setRecents] = React.useState<string[]>([])
-  const [listing, setListing] = React.useState<FolderListing | null>(null)
-  const listRef = React.useRef<HTMLDivElement>(null)
-
-  const hydrated = useHydrated()
-  const nativePicker = hydrated && hasNativeFolderPicker()
 
   const loadRecents = React.useCallback(() => {
-    api
+    void api
       .fetchSettings()
       .then((settings) => setRecents(settings.recentFolders))
       .catch(() => setRecents([]))
   }, [])
 
-  // Opening re-seeds from the session: the chat may have changed underneath.
-  const onOpenChange = (next: boolean) => {
-    setOpen(next)
-    if (!next) return
-    setDraft(cwd ?? "")
-    setBranch(gitBranch ?? "")
-    setResult(null)
-    setListing(null)
-    loadRecents()
-  }
-
-  const trimmed = draft.trim()
-  const info = result?.path === trimmed ? result.info : null
-  const checking = trimmed !== "" && result?.path !== trimmed
-
-  React.useEffect(() => {
-    if (!open || !trimmed) return
-    let cancelled = false
-    const timer = setTimeout(() => {
-      api
-        .fetchFolderInfo(trimmed)
-        .then((next) => {
-          if (cancelled) return
-          setResult({ path: trimmed, info: next })
-          // Default to whatever the repo is on right now.
-          setBranch((current) =>
-            current && next.branches.includes(current)
-              ? current
-              : next.currentBranch
-          )
-        })
-        .catch(() => {
-          if (!cancelled) setResult({ path: trimmed, info: null })
-        })
-    }, DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [open, trimmed])
-
-  /**
-   * What the browser lists, and what the user has started typing inside it.
-   * `/home/me/ag` lists `/home/me` and filters to names starting with `ag`;
-   * the server resolves anything it cannot open to the nearest folder above.
-   */
-  const { dir: typedDir, filter } = React.useMemo(
-    () => splitTypedPath(trimmed),
-    [trimmed]
-  )
-
-  React.useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    const timer = setTimeout(() => {
-      api
-        .fetchFolderListing(typedDir)
-        .then((next) => {
-          if (!cancelled) setListing(next)
-        })
-        .catch(() => {
-          if (!cancelled) setListing(null)
-        })
-    }, DEBOUNCE_MS)
-    return () => {
-      cancelled = true
-      clearTimeout(timer)
-    }
-  }, [open, typedDir])
-
-  const entries = React.useMemo(() => {
-    const all = listing?.entries ?? []
-    const needle = filter.trim().toLowerCase()
-    if (!needle) return all
-    const prefix = all.filter((entry) =>
-      entry.name.toLowerCase().startsWith(needle)
-    )
-    // A prefix match is what completion means; falling back to "contains"
-    // only when nothing starts with it keeps the list from ever going blank
-    // on a folder the user can plainly see.
-    return prefix.length > 0
-      ? prefix
-      : all.filter((entry) => entry.name.toLowerCase().includes(needle))
-  }, [filter, listing])
-
-  const usable = info?.exists === true && info.isDir
-
-  const apply = (path: string, nextBranch: string) => {
-    onChange({ cwd: path, gitBranch: nextBranch })
-    setOpen(false)
-    if (path) void api.rememberFolder(path).catch(() => {})
-  }
-
-  /** Descending re-types the path, so the input stays the single source. */
-  const enter = (path: string) => setDraft(`${path}/`)
-
-  const forget = (path: string) => {
-    setRecents((prev) => prev.filter((entry) => entry !== path))
-    void api.forgetFolder(path).catch(() => {
-      toast.error("Couldn't update the recent folders.")
-      loadRecents()
-    })
-  }
-
-  const browseNatively = () => {
-    void pickFolderNative(trimmed || undefined)
-      .then((path) => {
-        if (path) setDraft(path)
-      })
-      .catch(() => toast.error("The system folder chooser didn't open."))
-  }
-
-  /** ↓ from the path field walks into the list, like every file dialog. */
-  const focusList = () => {
-    listRef.current?.querySelector<HTMLButtonElement>("button")?.focus()
-  }
-
-  return (
-    <Popover open={open} onOpenChange={onOpenChange}>
-      <PopoverTrigger
-        data-slot="folder-chip"
-        data-variant={variant}
-        data-empty={cwd ? undefined : ""}
-        title={
-          cwd
-            ? `${cwd}${gitBranch ? ` · ${gitBranch}` : ""}`
-            : "Pick a working folder for this chat"
+  const selectFolder = React.useCallback(
+    async (path: string) => {
+      try {
+        const info = await api.fetchFolderInfo(path)
+        if (!info.exists || !info.isDir) {
+          toast.error("That folder is no longer available.")
+          loadRecents()
+          return
         }
-        className={cn(
-          "inline-flex min-w-0 shrink items-center gap-1.5 rounded-md border border-border/70 text-muted-foreground outline-none transition-colors",
-          "hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50",
-          "data-[empty]:border-dashed",
-          variant === "chip"
-            ? "h-6 max-w-[46vw] px-1.5 text-[11.5px]"
-            : "h-7 max-w-full px-2 text-[12px]",
-          className
-        )}
-      >
-        {cwd ? (
-          /* The same folder · branch line the sidebar rows use, inheriting the
-             chip's own size and hover colour instead of the badge's muted one. */
-          <SidebarItemBadge
-            folder={cwd}
-            branch={gitBranch}
-            className={cn(
-              "text-inherit",
-              variant === "chip" ? "text-[11.5px]" : "text-[12px]"
-            )}
-          />
-        ) : (
-          <>
-            <Folder className={variant === "chip" ? "size-3" : "size-3.5"} />
-            <span className="min-w-0 truncate">
-              {variant === "chip" ? "Choose folder" : "Choose a working folder"}
-            </span>
-          </>
-        )}
-        <ChevronDown
-          className={cn(
-            "shrink-0 opacity-60",
-            variant === "chip" ? "size-3" : "size-3.5"
-          )}
-        />
-      </PopoverTrigger>
 
-      <PopoverContent
-        align="start"
-        side={variant === "inline" ? "top" : "bottom"}
-        className="w-[22rem] p-3"
-      >
-        <div className="flex flex-col gap-2.5">
-          <div className="flex flex-col gap-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <label
-                htmlFor="folder-picker-path"
-                className="text-[11px] font-medium text-muted-foreground"
-              >
-                Working folder
-              </label>
-              {nativePicker ? (
-                <button
-                  type="button"
-                  onClick={browseNatively}
-                  className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-                >
-                  <FolderOpen className="size-3" />
-                  Browse…
-                </button>
-              ) : null}
-            </div>
-            <Input
-              id="folder-picker-path"
-              value={draft}
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="~/code/my-project"
-              aria-invalid={trimmed !== "" && !checking && !usable}
-              onChange={(event) => setDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter" && usable && info) {
-                  event.preventDefault()
-                  apply(info.path, info.isGitRepo ? branch : "")
-                } else if (event.key === "ArrowDown") {
-                  event.preventDefault()
-                  focusList()
-                }
-              }}
-              className="h-8 font-mono text-[12px]"
-            />
-            <Status checking={checking} path={trimmed} info={info} />
-          </div>
+        const nextBranch = info.isGitRepo
+          ? gitBranch && info.branches.includes(gitBranch)
+            ? gitBranch
+            : info.currentBranch
+          : ""
 
-          {recents.length > 0 && trimmed === "" ? (
-            <Recents items={recents} onPick={setDraft} onForget={forget} />
-          ) : null}
-
-          <Browser
-            listing={listing}
-            entries={entries}
-            filtering={filter.trim() !== ""}
-            listRef={listRef}
-            onUp={() => listing?.parent && enter(listing.parent)}
-            onEnter={enter}
-          />
-
-          {usable && info?.isGitRepo && info.branches.length > 0 ? (
-            <div className="flex items-center gap-2">
-              <GitBranch className="size-3.5 shrink-0 text-muted-foreground" />
-              <Select
-                value={branch || NO_BRANCH}
-                onValueChange={(next) =>
-                  setBranch(next === NO_BRANCH ? "" : next)
-                }
-              >
-                <SelectTrigger size="sm" className="h-8 flex-1 text-[12px]">
-                  <SelectValue placeholder="No branch" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={NO_BRANCH}>No branch</SelectItem>
-                  {info.branches.map((item) => (
-                    <SelectItem key={item} value={item}>
-                      {item}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          ) : null}
-
-          <div className="flex items-center justify-between gap-2 border-t pt-2.5">
-            {cwd ? (
-              <button
-                type="button"
-                onClick={() => apply("", "")}
-                className="inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-[11.5px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              >
-                <X className="size-3" />
-                Clear
-              </button>
-            ) : (
-              <span />
-            )}
-            <button
-              type="button"
-              disabled={!usable}
-              onClick={() =>
-                info && apply(info.path, info.isGitRepo ? branch : "")
-              }
-              className="inline-flex items-center gap-1.5 rounded-md bg-primary px-2.5 py-1 text-[12px] font-medium text-primary-foreground outline-none transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50"
-            >
-              <Check className="size-3" />
-              Use folder
-            </button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
+        onChange({ cwd: info.path, gitBranch: nextBranch })
+        void api
+          .rememberFolder(info.path)
+          .then((settings) => setRecents(settings.recentFolders))
+          .catch(() => toast.error("Couldn't update the recent folders."))
+      } catch {
+        toast.error("That folder couldn't be opened.")
+      }
+    },
+    [gitBranch, loadRecents, onChange]
   )
-}
 
-/* -------------------------------------------------------------------------- */
-/* Pieces                                                                      */
-/* -------------------------------------------------------------------------- */
-
-/** Most-recently used folders, each removable — see the header comment. */
-function Recents({
-  items,
-  onPick,
-  onForget,
-}: {
-  items: string[]
-  onPick: (path: string) => void
-  onForget: (path: string) => void
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[11px] font-medium text-muted-foreground">
-        Recent
-      </span>
-      <div className="-mx-1 flex max-h-32 flex-col overflow-y-auto">
-        {items.map((path) => (
-          <div
-            key={path}
-            className="group/recent flex items-center rounded-md text-muted-foreground transition-colors hover:bg-muted has-[button:focus-visible]:bg-muted"
-          >
-            <button
-              type="button"
-              title={path}
-              onClick={() => onPick(path)}
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-1.5 py-1 text-left text-[12px] outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-            >
-              <FolderOpen className="size-3.5 shrink-0 opacity-70" />
-              <span className="min-w-0 flex-1 truncate">
-                {folderName(path)}
-              </span>
-              <span className="shrink-0 text-[10.5px] opacity-60">
-                {shortPath(path, 20)}
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label={`Forget ${path}`}
-              title="Forget this folder"
-              onClick={() => onForget(path)}
-              className="mr-0.5 inline-grid size-6 shrink-0 place-items-center rounded-md opacity-0 outline-none transition-opacity hover:text-foreground focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50 group-hover/recent:opacity-100 [&_svg]:size-3"
-            >
-              <Trash2 />
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
+  const pickRecent = React.useCallback(
+    (path: string) => {
+      void selectFolder(path)
+    },
+    [selectFolder]
   )
-}
 
-/** The in-app directory list — the half that works in a plain browser tab. */
-function Browser({
-  listing,
-  entries,
-  filtering,
-  listRef,
-  onUp,
-  onEnter,
-}: {
-  listing: FolderListing | null
-  entries: FolderListing["entries"]
-  filtering: boolean
-  listRef: React.RefObject<HTMLDivElement | null>
-  onUp: () => void
-  onEnter: (path: string) => void
-}) {
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2">
-        <span
-          title={listing?.path}
-          className="min-w-0 truncate text-[11px] font-medium text-muted-foreground"
-        >
-          {listing ? shortPath(listing.path, 32) : "Browse"}
-        </span>
-        <button
-          type="button"
-          disabled={!listing?.parent}
-          onClick={onUp}
-          title="Up one folder"
-          aria-label="Up one folder"
-          className="inline-grid size-6 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-40 [&_svg]:size-3"
-        >
-          <ArrowUpFromLine />
-        </button>
-      </div>
-      <div
-        ref={listRef}
-        className="-mx-1 flex h-40 flex-col overflow-y-auto rounded-md border border-border/60 p-0.5"
-      >
-        {listing === null ? (
-          <p className="flex items-center gap-1.5 px-1.5 py-1.5 text-[11px] text-muted-foreground">
-            <Loader2 className="size-3 animate-spin" />
-            Reading the folder…
-          </p>
-        ) : entries.length === 0 ? (
-          <p className="px-1.5 py-1.5 text-[11px] text-muted-foreground">
-            {filtering ? "Nothing matches." : "No sub-folders here."}
-          </p>
-        ) : (
-          entries.map((entry) => (
-            <button
-              key={entry.path}
-              type="button"
-              title={entry.path}
-              onClick={() => onEnter(entry.path)}
-              data-hidden={entry.hidden ? "" : undefined}
-              className="flex items-center gap-1.5 rounded-md px-1.5 py-1 text-left text-[12px] text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:bg-muted focus-visible:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[hidden]:opacity-60"
-            >
-              <Folder className="size-3.5 shrink-0 opacity-70" />
-              <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-              {entry.isGitRepo ? (
-                <GitBranch
-                  aria-label="Git repository"
-                  className="size-3 shrink-0 text-primary"
-                />
-              ) : null}
-              <ChevronRight className="size-3 shrink-0 opacity-40" />
-            </button>
-          ))
-        )}
-        {listing?.truncated ? (
-          <p className="px-1.5 py-1 text-[10.5px] text-muted-foreground/80">
-            Showing the first {entries.length} — type to narrow it down.
-          </p>
-        ) : null}
-      </div>
-    </div>
+  const openFolder = React.useCallback(async () => {
+    if (!hasNativeFolderPicker()) {
+      toast.error("Open Folder is available in the desktop app.")
+      return
+    }
+
+    try {
+      const path = await pickFolderNative(cwd)
+      if (path) await selectFolder(path)
+    } catch {
+      toast.error("The system folder chooser didn't open.")
+    }
+  }, [cwd, selectFolder])
+
+  const handleOpenChange = React.useCallback(
+    (open: boolean) => {
+      if (open) loadRecents()
+    },
+    [loadRecents]
   )
-}
 
-function Status({
-  checking,
-  path,
-  info,
-}: {
-  checking: boolean
-  path: string
-  info: FolderInfo | null
-}) {
-  if (!path) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        The agent runs here — files it reads and writes are relative to this
-        folder.
-      </p>
-    )
-  }
-  if (checking) {
-    return (
-      <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-        <Loader2 className="size-3 animate-spin" />
-        Checking…
-      </p>
-    )
-  }
-  if (!info || !info.exists) {
-    return <p className="text-[11px] text-destructive">No such folder.</p>
-  }
-  if (!info.isDir) {
-    return <p className="text-[11px] text-destructive">That is a file.</p>
-  }
   return (
-    <p className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-      <Check className="size-3 text-primary" />
-      {info.isGitRepo
-        ? `Git repo · ${info.branches.length} ${info.branches.length === 1 ? "branch" : "branches"}`
-        : "Folder found"}
-    </p>
+    <RecentFolderPicker
+      value={cwd}
+      recents={recents}
+      detail={gitBranch || undefined}
+      onChange={pickRecent}
+      onOpenFolder={openFolder}
+      onOpenChange={handleOpenChange}
+      placeholder={variant === "chip" ? "Choose folder" : "Choose a working folder"}
+      side={variant === "inline" ? "top" : "bottom"}
+      variant={variant}
+      className={className}
+    />
   )
 }

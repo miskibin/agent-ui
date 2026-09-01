@@ -30,6 +30,11 @@ export type AppearanceSettings = {
    */
   fontSans: string
   fontMono: string
+  /**
+   * Interface scale, 1 = 100%. Stepped with Ctrl/⌘ + and −, reset with
+   * Ctrl/⌘ 0, and exposed as a slider in Settings → Appearance.
+   */
+  zoom: number
 }
 
 export type OllamaSettings = {
@@ -124,6 +129,8 @@ export type ChatSettings = {
   showSuggestions: boolean
   /** Titles for new chats are derived from the first prompt when true. */
   autoTitle: boolean
+  /** Play a cue when a run finishes or pauses for an answer. */
+  notificationSounds: boolean
 }
 
 export type FileSettings = {
@@ -179,6 +186,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     // is the one people recognise, and every theme still keeps its palette.
     fontSans: "chatgpt",
     fontMono: FOLLOW_THEME,
+    zoom: 1,
   },
   providers: {
     active: "mock",
@@ -193,6 +201,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     defaultEffort: "high",
     showSuggestions: true,
     autoTitle: true,
+    notificationSounds: true,
   },
   files: {
     anyPath: true,
@@ -230,6 +239,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
         appearance.fontMono,
         DEFAULT_SETTINGS.appearance.fontMono
       ),
+      zoom: asZoom(appearance.zoom),
     },
     providers: {
       ...DEFAULT_SETTINGS.providers,
@@ -352,6 +362,13 @@ function asFontId(role: FontRole, value: unknown, fallback: string): string {
 
 function isMode(value: unknown): value is ThemeMode {
   return value === "light" || value === "dark" || value === "system"
+}
+
+function asZoom(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return DEFAULT_SETTINGS.appearance.zoom
+  }
+  return Math.min(2, Math.max(0.5, Math.round(value * 10) / 10))
 }
 
 /** Trimmed, de-duplicated, newest first, capped. */
