@@ -24,6 +24,7 @@ const TITLE = /^(.*?)\s+("[^"]*"|'[^']*')$/
 
 /** The route's own prefix — see the idempotence note on `linkLocalImages`. */
 const FILE_ROUTE = "/api/files?path="
+const FILE_ROUTE_PATTERN = /\/api\/files\?path=([^)\s"']+)/g
 
 export function localFileUrl(path: string) {
   return `${FILE_ROUTE}${encodeURIComponent(path)}`
@@ -74,16 +75,15 @@ export function localFileUrlFrom(path: string, cwd?: string) {
   const root = cwd?.trim()
   if (!root) return undefined
   const separator = root.includes("\\") ? "\\" : "/"
-  const base = root.replace(/[\/]+$/, "")
-  return localFileUrl(`${base}${separator}${target.replace(/^[\/]+/, "")}`)
+  const base = root.replace(/[\\/]+$/, "")
+  return localFileUrl(`${base}${separator}${target.replace(/^[\\/]+/, "")}`)
 }
 
 /** Every local file an answer's markdown already points at through the route. */
 export function localFilesInMarkdown(markdown: string): string[] {
   if (!markdown.includes(FILE_ROUTE)) return []
   const found: string[] = []
-  const pattern = new RegExp(`${FILE_ROUTE.replace("?", "\?")}([^)\s"']+)`, "g")
-  for (const match of markdown.matchAll(pattern)) {
+  for (const match of markdown.matchAll(FILE_ROUTE_PATTERN)) {
     try {
       found.push(decodeURIComponent(match[1]))
     } catch {

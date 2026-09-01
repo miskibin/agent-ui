@@ -56,11 +56,11 @@ function resolveWindowsTarget(target: string): WindowsTarget | null {
     return entry ? { entry } : null
   }
   for (const dir of pathDirs()) {
-    const exe = path.join(dir, `${target}.exe`)
-    if (existsSync(exe)) return { exe }
+    const exe = path.join(/*turbopackIgnore: true*/ dir, `${target}.exe`)
+    if (existsSync(/*turbopackIgnore: true*/ exe)) return { exe }
     for (const ext of [".cmd", ".bat"]) {
-      const shim = path.join(dir, `${target}${ext}`)
-      if (!existsSync(shim)) continue
+      const shim = path.join(/*turbopackIgnore: true*/ dir, `${target}${ext}`)
+      if (!existsSync(/*turbopackIgnore: true*/ shim)) continue
       const entry = shimEntry(shim)
       if (entry) return { entry }
     }
@@ -78,11 +78,14 @@ const SHIM_EXT = /\.(cmd|bat)$/i
 function shimEntry(shim: string): string | null {
   try {
     const match = /%dp0%[\\/]*([^"%\r\n]+?\.[cm]?js)/i.exec(
-      readFileSync(shim, "utf8")
+      readFileSync(/*turbopackIgnore: true*/ shim, "utf8")
     )
     if (!match) return null
-    const entry = path.join(path.dirname(shim), match[1].replace(/\//g, "\\"))
-    return existsSync(entry) ? entry : null
+    const entry = path.join(
+      /*turbopackIgnore: true*/ path.dirname(shim),
+      match[1].replace(/\//g, "\\")
+    )
+    return existsSync(/*turbopackIgnore: true*/ entry) ? entry : null
   } catch {
     return null
   }
@@ -99,14 +102,21 @@ export function hasAcpBinary(command: string): boolean {
   if (!target) return false
   try {
     if (target.includes("/") || target.includes("\\") || path.isAbsolute(target)) {
-      return existsSync(target)
+      return existsSync(/*turbopackIgnore: true*/ target)
     }
     const names =
       process.platform === "win32"
         ? [target, `${target}.exe`, `${target}.cmd`, `${target}.bat`]
         : [target]
     return pathDirs().some((dir) =>
-      names.some((name) => existsSync(path.join(dir, name)))
+      names.some((name) =>
+        existsSync(
+          /*turbopackIgnore: true*/ path.join(
+            /*turbopackIgnore: true*/ dir,
+            name
+          )
+        )
+      )
     )
   } catch {
     return false
