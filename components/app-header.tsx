@@ -189,6 +189,8 @@ export function AppHeaderTitle({
         </span>
       ) : null}
       {generating ? (
+        /* `size` is the indicator's box, not the type: 13px box, 6.5px dot,
+           which sits right against the 12px label beside it. */
         <GenerationStatus
           stage={stage}
           size={13}

@@ -3,8 +3,6 @@
 import { arrayMove } from "@dnd-kit/sortable"
 import {
   Copy,
-  Folder,
-  GitBranch,
   HelpCircle,
   Palette,
   PanelLeft,
@@ -48,6 +46,7 @@ import {
   SideRow,
   SidebarCollapsibleSection,
   SidebarEmptyState,
+  SidebarItemBadge,
   type ChatSidebarItemData,
 } from "@/components/ui/chat-sidebar"
 import type { GenerationStage } from "@/components/ui/generation-status"
@@ -66,7 +65,6 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
-import { folderName } from "@/lib/folder"
 import { runLayoutTransition } from "@/lib/layout-transition"
 import {
   applyStreamEvent,
@@ -705,7 +703,13 @@ export default function ChatPage() {
         }
         if (event.type === "done") {
           drain()
-          const elapsed = (nowMs() - startedAt) / 1000
+          /**
+           * Labels the turn's "Worked for 12s" row. The provider's own
+           * `durationMs` wins over the wall clock for the same reason the
+           * chat route prefers it when persisting: otherwise the number the
+           * turn shows live would shift the moment the thread is reloaded.
+           */
+          const elapsed = (event.durationMs ?? nowMs() - startedAt) / 1000
           patchAssistant((message) => ({
             ...message,
             workedFor: elapsed,
@@ -976,7 +980,10 @@ export default function ChatPage() {
           : session.cwd
             ? // A chat pinned to a folder says where it works — that places it
               // faster than the model it happens to be using.
-              <FolderSubtitle cwd={session.cwd} branch={session.gitBranch} />
+              <SidebarItemBadge
+                folder={session.cwd}
+                branch={session.gitBranch}
+              />
             : session.messageCount === 0
               ? "New chat"
               : [
@@ -1053,9 +1060,11 @@ export default function ChatPage() {
               ? `Ask ${activeProviderName}…`
               : "Ask anything"
         }
+        /* The composer already measures like the message column; the empty
+           chat only closes the gap under it, since the suggestions land there. */
         className={cn(
-          "transition-[max-width,padding] duration-300 ease-out",
-          isEmptyChat && "max-w-3xl pb-0 sm:pb-0"
+          "transition-[padding] duration-300 ease-out",
+          isEmptyChat && "pb-0 sm:pb-0"
         )}
         tools={
           <>
@@ -1311,7 +1320,6 @@ export default function ChatPage() {
               <PromptSuggestions
                 items={SUGGESTIONS}
                 onSelect={(item) => void send(item.label, [], [])}
-                className="max-w-3xl px-3 pt-2 sm:px-4"
               />
             ) : null}
           </div>
@@ -1367,22 +1375,6 @@ const RelativeTime = React.memo(function RelativeTime({ from }: { from: number }
   useTick(30_000)
   return <>{relativeTime(from, nowMs())}</>
 })
-
-/** Sidebar subtitle for a chat with a working folder: `agent-ui · main`. */
-function FolderSubtitle({ cwd, branch }: { cwd: string; branch?: string }) {
-  return (
-    <span className="inline-flex min-w-0 items-center gap-1">
-      <Folder className="size-3 shrink-0 opacity-70" />
-      <span className="min-w-0 truncate">{folderName(cwd)}</span>
-      {branch ? (
-        <>
-          <GitBranch className="size-3 shrink-0 opacity-70" />
-          <span className="min-w-0 truncate opacity-90">{branch}</span>
-        </>
-      ) : null}
-    </span>
-  )
-}
 
 /** Cold start: the chat list is still in flight, so show rows, not "empty". */
 const SidebarLoading = React.memo(function SidebarLoading() {
