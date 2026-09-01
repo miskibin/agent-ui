@@ -588,6 +588,25 @@ export default function ChatPage() {
       }
 
       /**
+       * Say why the turn stopped, in the turn itself. A message that already
+       * has parts renders those and never its flat `content`, so a run that
+       * died after some reasoning or a tool call used to leave a truncated
+       * bubble and nothing but a toast that fades.
+       */
+      const failAssistant = (reason: string) => {
+        drain()
+        patchAssistant((message) =>
+          message.content.trim()
+            ? message
+            : applyStreamEvent(message, {
+                type: "text",
+                text: `Agent error: ${reason}`,
+              })
+        )
+        markFailed()
+      }
+
+      /**
        * Stream events land far faster than the browser can paint. Folding a
        * burst into one queued frame keeps the message list at one render per
        * frame instead of one per token, and the fold itself stays the shared
@@ -599,7 +618,14 @@ export default function ChatPage() {
         frame = 0
         const batch = queued
         queued = []
-        if (batch.length === 0 || controller.signal.aborted) return
+        /**
+         * Aborting is not a reason to drop what already arrived: Stop leaves
+         * the turn in place and the server persists every event it produced,
+         * so swallowing the last frame would make a reload grow the answer.
+         * A run that was superseded is safe on its own — `patchAssistant` is
+         * keyed on `assistantId`, which the re-seeded thread no longer holds.
+         */
+        if (batch.length === 0) return
         patchAssistant((message) =>
           batch.reduce(
             (current, event) => applyStreamEvent(current, event),
@@ -634,13 +660,8 @@ export default function ChatPage() {
           return
         }
         if (event.type === "error") {
-          drain()
           toast.error(event.message)
-          patchAssistant((message) => ({
-            ...message,
-            content: message.content.trim() || `Agent error: ${event.message}`,
-          }))
-          markFailed()
+          failAssistant(event.message)
           return
         }
         if (event.type === "done") {
@@ -683,11 +704,7 @@ export default function ChatPage() {
         if (!controller.signal.aborted) {
           const message = errorMessage(err, "The agent run failed")
           toast.error(message)
-          patchAssistant((item) => ({
-            ...item,
-            content: item.content.trim() || `Agent error: ${message}`,
-          }))
-          markFailed()
+          failAssistant(message)
         }
       } finally {
         drain()
@@ -1411,16 +1428,20 @@ function errorMessage(err: unknown, fallback: string) {
   return err instanceof Error && err.message ? err.message : fallback
 }
 
+/**
+ * Only the latest turn can still be waiting on an answer — matching the row
+ * `MessageList` offers a form for. An unanswered ask further back is history,
+ * and picking it up here would rewrite a stored transcript the user closed
+ * long ago.
+ */
 function findPendingAsk(messages: StoredMessage[]) {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i]
-    const tools = message.tools?.length
-      ? message.tools
-      : toolsFromParts(message.parts ?? [])
-    const tool = tools.find(isOpenAskTool)
-    if (tool) return { messageId: message.id, toolId: tool.id }
-  }
-  return null
+  const message = messages.at(-1)
+  if (!message) return null
+  const tools = message.tools?.length
+    ? message.tools
+    : toolsFromParts(message.parts ?? [])
+  const tool = tools.find(isOpenAskTool)
+  return tool ? { messageId: message.id, toolId: tool.id } : null
 }
 
 function completeAsk(
