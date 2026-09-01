@@ -35,9 +35,16 @@ The stretch before a local model's first token is the one that looks broken, and
 | **pi (Ollama)** | ✅ | ✅ | Spawns the [`pi`](https://pi.dev) CLI in `--mode json` — read/write/edit/bash over your local models, sessions on disk |
 | **DeepSeek Harness** | ✅ | ✅ | Spawns `dsh --profile acp` and speaks [ACP](https://agentclientprotocol.com) over stdio — 25 tools, DeepSeek's own models or any OpenAI-compatible endpoint |
 | *any ACP agent* | ✅ | ✅ | Add a command in settings; no code change needed |
+| **Chat (direct)** | — | replayed | Tool-less streaming chat against any configured model provider's `/chat/completions` — no CLI, no sandbox |
 | **Mock** | ✅ | — | Scripted runs that exercise every UI part; no binary, no network |
 
 Providers are detected at runtime and surfaced in the picker with availability badges. On Windows, a missing harness binary (pi, Cursor Agent, DeepSeek Harness, or any ACP agent) offers **Configure** in that row — a native file dialog that writes the picked path into settings. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
+
+Picking a model is three choices, not one: a harness (Cursor, pi, Chat, dsh, …), then a **model provider** — Ollama, or one of the OpenAI-compatible sources configured in **Settings → Model providers** — then a model from that provider's catalog. Ten presets ship built in (OpenAI, Anthropic, xAI, Google, DeepSeek, Groq, Mistral, OpenRouter, Together AI, Fireworks); add your own with a name, base URL and optional API key, and **Probe** checks it against the provider's `/models` before you rely on it. A model's id everywhere in the app is `<provider>/<model>` — `openai/gpt-4o`, `ollama/qwen3:8b` — so the picker can group every source under its own heading instead of one flat list, with a brand mark next to each.
+
+Every harness that isn't tied to one model source draws from this same list: `pi` unions it with Ollama's own catalog when it writes `models.json`, and **Chat (direct)** streams straight against whichever source the model id names.
+
+Permission is one concept across every harness that supports it: **read-only**, **edits**, or **full access**. A provider that can enforce a mode advertises which ones, and only then does the composer show a per-chat picker next to the model — ACP's generic client offers read-only/full, the DeepSeek Harness maps all three onto its own sandbox setting. The choice is remembered per session.
 
 ### One folder per chat
 
@@ -172,6 +179,7 @@ The agent backends keep their own conversation context (Cursor, pi and ACP sessi
 
   Adding a theme is one entry in `scripts/import-tweakcn.mjs` and `node scripts/import-tweakcn.mjs`, which refreshes the checked-in `lib/theme/themes/generated.ts`; if it names a typeface the app does not load yet, the script says so.
 - **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, the list of ACP agents (command, workspace, permission policy, plus dsh's endpoint and sandbox), default provider, with live reachability badges.
+- **Model providers** — the ten built-in presets plus any custom OpenAI-compatible endpoint: enable one, paste in an API key if it needs one, add manual model ids for an endpoint whose `/models` is missing or gated, and **Probe** it before trusting it. Every enabled source shows up as a group in the model picker everywhere in the app.
 - **Memory** — off by default. A small local model reads *your* messages after each turn and keeps a handful of durable preferences — how you want answers written, your stack, how you work — in `~/.agent-ui/memory/<category>.md`. Those facts are handed to every backend you chat with afterwards, so it is opt-in and everything about it is visible: the files are plain markdown you can read and edit right in settings (rename a category to move its facts), a toast says when an update is running, and a marker in the thread says what changed.
 
   The whole store is capped (2000 characters by default), which is the design: at that size every fact fits in the prompt, so there is no retrieval step, no embeddings and no vector store — and going over the cap makes the extractor merge and shorten what it already has instead of piling on more. It rewrites whole categories rather than appending lines, so contradictions get replaced rather than accumulated.
@@ -188,7 +196,8 @@ app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
                               │                 ├── mock      (scripted)
                  persists     ▼                 ├── cursor    (spawns CLI)
                         lib/store/*.json        ├── ollama    (HTTP stream)
-                                                ├── pi        (spawns CLI → Ollama)
+                                                ├── pi        (spawns CLI → Ollama + model providers)
+                                                ├── chat      (HTTP stream → a model provider)
                                                 └── acp:*     (spawns an ACP agent, JSON-RPC both ways)
 ```
 
