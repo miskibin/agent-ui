@@ -5,6 +5,7 @@ import {
   Moon,
   Pencil,
   Plus,
+  RefreshCw,
   Settings as SettingsIcon,
   Sun,
 } from "lucide-react"
@@ -12,6 +13,8 @@ import { useRouter } from "next/navigation"
 import { useTheme } from "next-themes"
 import * as React from "react"
 
+import { useDesktopChrome } from "@/components/app-header"
+import { checkForUpdates } from "@/components/desktop-updater"
 import {
   Command,
   CommandEmpty,
@@ -61,6 +64,8 @@ export function CommandPalette({
 }: CommandPaletteProps) {
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
+  // Only the Tauri shell can install anything; the web build has no updater.
+  const { desktop } = useDesktopChrome()
 
   // One global listener: ⌘K/Ctrl+K toggles, Escape closes.
   React.useEffect(() => {
@@ -193,6 +198,17 @@ export function CommandPalette({
                   {isDark ? "Light" : "Dark"}
                 </CommandShortcut>
               </CommandItem>
+              {desktop ? (
+                <CommandItem
+                  value="Check for updates"
+                  onSelect={() =>
+                    run(() => void checkForUpdates({ manual: true }))
+                  }
+                >
+                  <RefreshCw />
+                  <span>Check for updates</span>
+                </CommandItem>
+              ) : null}
             </CommandGroup>
           </CommandList>
         </Command>

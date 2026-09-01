@@ -1,7 +1,12 @@
 import "server-only"
 
-import { readSettings } from "@/lib/settings/server"
+import { dataDir, readSettings } from "@/lib/settings/server"
 import type { AppSettings } from "@/lib/settings/schema"
+import {
+  acpAgentKey,
+  acpProviderId,
+  createAcpProvider,
+} from "@/lib/providers/acp"
 import { CURSOR_PROVIDER_ID, createCursorProvider } from "@/lib/providers/cursor"
 import { MOCK_PROVIDER_ID, createMockProvider } from "@/lib/providers/mock"
 import { OLLAMA_PROVIDER_ID, createOllamaProvider } from "@/lib/providers/ollama"
@@ -24,8 +29,22 @@ export const PROVIDER_IDS = [
 
 export type ProviderId = (typeof PROVIDER_IDS)[number]
 
+/**
+ * ACP agents are configured, not coded, so their ids only exist once settings
+ * are read — `PROVIDER_IDS` stays the list of built-in *kinds* and the full id
+ * space is that list plus this tail.
+ */
+function acpProviderIds(settings: AppSettings): string[] {
+  return Object.keys(settings.providers.acp.agents).map(acpProviderId)
+}
+
 function build(id: string, settings: AppSettings): AgentProvider | null {
   const providers = settings.providers
+  const acpKey = acpAgentKey(id)
+  if (acpKey) {
+    const agent = providers.acp.agents[acpKey]
+    return agent ? createAcpProvider(acpKey, agent, dataDir()) : null
+  }
   if (id === MOCK_PROVIDER_ID) return createMockProvider(providers.mock.enabled)
   if (id === CURSOR_PROVIDER_ID) return createCursorProvider(providers.cursorAgent)
   if (id === OLLAMA_PROVIDER_ID) return createOllamaProvider(providers.ollama)
@@ -39,6 +58,8 @@ function build(id: string, settings: AppSettings): AgentProvider | null {
 
 function isEnabled(id: string, settings: AppSettings) {
   const providers = settings.providers
+  const acpKey = acpAgentKey(id)
+  if (acpKey) return providers.acp.agents[acpKey]?.enabled ?? false
   if (id === MOCK_PROVIDER_ID) return providers.mock.enabled
   if (id === CURSOR_PROVIDER_ID) return providers.cursorAgent.enabled
   if (id === OLLAMA_PROVIDER_ID) return providers.ollama.enabled
@@ -64,8 +85,9 @@ export async function getProvider(id: string): Promise<AgentProvider | null> {
  */
 export async function listProviders(): Promise<ProviderInfo[]> {
   const settings = await readSettings()
+  const ids = [...PROVIDER_IDS, ...acpProviderIds(settings)]
   return Promise.all(
-    PROVIDER_IDS.map(async (id) => {
+    ids.map(async (id) => {
       const provider = build(id, settings)
       if (!provider) throw new Error(`Unknown provider ${id}`)
       return provider.info()

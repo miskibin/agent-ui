@@ -32,9 +32,21 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/miskibin/agent-ui/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      },
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDM3RjYzQzAyQzlBNUJCMjQKUldRa3U2WEpBanoyTnpmWXZUS0tBT2gxYVl4eFVxNFJWSjh4ckJIckwvVFBPTGFNU2JTMVFpcnAK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "Local-first chat UI for coding agents",
     "longDescription": "Agent UI is a local-first desktop chat client for coding agents. It bundles its own Node.js runtime and runs the app server on 127.0.0.1.",

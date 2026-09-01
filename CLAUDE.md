@@ -60,7 +60,11 @@ one interface:
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.
   Production spawns the Next standalone server as a Node sidecar on a free port and shows the
-  window only when it's ready.
+  window only when it's ready. Auto-update rides the same bridge: `tauri-plugin-updater` +
+  `tauri-plugin-process` are registered in `src-tauri`, `lib/desktop.ts` wraps
+  `check / downloadAndInstall / relaunch`, and `components/desktop-updater.tsx` (mounted in
+  `app/layout.tsx`) schedules the startup check off the critical path and owns the toasts.
+  The updater public key in `tauri.conf.json` is a placeholder — see "Updater" in README.md.
 
 ## Non-negotiable conventions
 
