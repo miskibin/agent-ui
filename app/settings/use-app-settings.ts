@@ -20,7 +20,8 @@ export type AppSettingsApi = {
 }
 
 /**
- * Reads and writes the `providers`, `chat` and `files` parts of settings.json.
+ * Reads and writes the `providers`, `chat`, `files` and `memory` parts of
+ * settings.json.
  *
  * Appearance deliberately stays out of the write path — it is owned by
  * `lib/theme/theme-client` — and every save re-reads the file first, so the two
@@ -52,6 +53,7 @@ export function useAppSettings(): AppSettingsApi {
           providers: next.providers,
           chat: next.chat,
           files: next.files,
+          memory: next.memory,
         }),
       })
       if (!put.ok) throw new Error(`PUT /api/settings ${put.status}`)

@@ -20,6 +20,8 @@ The stretch before a local model's first token is the one that looks broken, and
 
 ![Settings](.github/screenshots/settings.png)
 
+![Memory settings](.github/screenshots/settings-memory.png)
+
 ## Providers
 
 | Provider | Tools | Resume | How it connects |
@@ -148,6 +150,7 @@ Everything is local JSON under `~/.agent-ui` (override with `AGENT_UI_DIR`):
 - `settings.json` — appearance, providers, chat behavior
 - `sessions/index.json` — sidebar metadata (titles, pins, order, provider/model, working folder, timestamps)
 - `sessions/<id>.json` — full transcripts (reasoning, tool calls, markdown)
+- `memory/<category>.md` — one markdown file per memory category, only if you turn memory on
 
 - `pi/models.json` — generated: points pi at your Ollama server's OpenAI-compatible endpoint
 - `pi/sessions/*.jsonl` — pi's own transcripts, kept out of your personal `~/.pi/agent`
@@ -166,6 +169,11 @@ The agent backends keep their own conversation context (Cursor, pi and ACP sessi
 
   Adding a theme is one entry in `scripts/import-tweakcn.mjs` and `node scripts/import-tweakcn.mjs`, which refreshes the checked-in `lib/theme/themes/generated.ts`; if it names a typeface the app does not load yet, the script says so.
 - **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, the list of ACP agents (command, workspace, permission policy, plus dsh's endpoint and sandbox), default provider, with live reachability badges.
+- **Memory** — off by default. A small local model reads *your* messages after each turn and keeps a handful of durable preferences — how you want answers written, your stack, how you work — in `~/.agent-ui/memory/<category>.md`. Those facts are handed to every backend you chat with afterwards, so it is opt-in and everything about it is visible: the files are plain markdown you can read and edit right in settings (rename a category to move its facts), a toast says when an update is running, and a marker in the thread says what changed.
+
+  The whole store is capped (2000 characters by default), which is the design: at that size every fact fits in the prompt, so there is no retrieval step, no embeddings and no vector store — and going over the cap makes the extractor merge and shorten what it already has instead of piling on more. It rewrites whole categories rather than appending lines, so contradictions get replaced rather than accumulated.
+
+  The extractor only ever sees what you typed — never the agent's replies, its tool calls, or any file it read — so nothing in a repository you point the agent at can write itself into a file that goes into all your later conversations. Health, ethnicity, religion, politics and gender identity are skipped unless you opt in; identity numbers, payment details and credentials are never stored either way. Needs Ollama; without it the notes are still used, just never updated automatically.
 - **Chat** — default reasoning effort, prompt suggestions, auto-titling.
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
 

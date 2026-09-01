@@ -140,11 +140,35 @@ export type FileSettings = {
   anyPath: boolean
 }
 
+/**
+ * The optional user memory layer (`lib/memory`). Off by default and on its own
+ * switch: it is the one feature here that carries something learned in one
+ * conversation into every later one, including conversations with a different
+ * backend, so it is never something a user ends up with by accident.
+ */
+export type MemorySettings = {
+  enabled: boolean
+  /** Ollama model id that runs the extraction; empty = the feature is inert. */
+  model: string
+  /** Run an extraction pass after every turn, rather than only on demand. */
+  autoUpdate: boolean
+  /**
+   * Whether health, ethnicity, religion, politics and gender identity may be
+   * remembered. Off by default, and the extractor is told to skip them as well
+   * as filtered afterwards — a fact this specific about a person should take a
+   * deliberate act to store, not a passing mention.
+   */
+  includeSensitive: boolean
+  /** Character budget for the whole store; going over triggers a merge pass. */
+  maxChars: number
+}
+
 export type AppSettings = {
   appearance: AppearanceSettings
   providers: ProviderSettings
   chat: ChatSettings
   files: FileSettings
+  memory: MemorySettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
   recentFolders: string[]
 }
@@ -169,6 +193,15 @@ export const DEFAULT_DSH_AGENT: AcpAgentSettings = {
 
 /** How many folders the picker remembers. */
 export const MAX_RECENT_FOLDERS = 8
+
+/**
+ * Characters of memory handed to a turn. Small on purpose: at this size every
+ * fact fits in the prompt, so the feature needs no retrieval step, no
+ * embeddings and no ranking — and the budget is what forces the extractor to
+ * merge rather than accrete.
+ */
+export const DEFAULT_MEMORY_BUDGET = 2_000
+export const MEMORY_BUDGET_RANGE = { min: 500, max: 8_000 } as const
 
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: {
@@ -196,6 +229,13 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   files: {
     anyPath: true,
+  },
+  memory: {
+    enabled: false,
+    model: "",
+    autoUpdate: true,
+    includeSensitive: false,
+    maxChars: DEFAULT_MEMORY_BUDGET,
   },
   recentFolders: [],
 }
@@ -258,6 +298,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     files: {
       anyPath: asObject(value.files).anyPath !== false,
     },
+    memory: normalizeMemory(value.memory),
     recentFolders: asFolderList(value.recentFolders),
   }
 }
@@ -319,6 +360,30 @@ function normalizeAcpAgent(
         ? (dsh.sandbox as DshSandboxMode)
         : fallback.dsh.sandbox,
     },
+  }
+}
+
+/**
+ * Every field falls back to the default, and `enabled` must be exactly `true`
+ * — a settings file predating this feature, or one with a garbled value, ends
+ * up with memory off rather than quietly on.
+ */
+function normalizeMemory(raw: unknown): MemorySettings {
+  const fallback = DEFAULT_SETTINGS.memory
+  const value = asObject(raw)
+  const budget =
+    typeof value.maxChars === "number" && Number.isFinite(value.maxChars)
+      ? Math.min(
+          MEMORY_BUDGET_RANGE.max,
+          Math.max(MEMORY_BUDGET_RANGE.min, Math.round(value.maxChars))
+        )
+      : fallback.maxChars
+  return {
+    enabled: value.enabled === true,
+    model: asString(value.model)?.trim() ?? fallback.model,
+    autoUpdate: value.autoUpdate !== false,
+    includeSensitive: value.includeSensitive === true,
+    maxChars: budget,
   }
 }
 

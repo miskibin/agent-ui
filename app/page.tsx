@@ -27,6 +27,7 @@ import {
   type CommandPaletteSession,
 } from "@/components/command-palette"
 import { FolderPicker } from "@/components/folder-picker"
+import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
@@ -82,6 +83,7 @@ import {
   seedAssistantMessage,
   toolsFromParts,
 } from "@/lib/message-stream"
+import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
 import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
@@ -227,6 +229,14 @@ export default function ChatPage() {
   })
 
   const [settings, setSettings] = React.useState<AppSettings | null>(null)
+  /**
+   * The last memory update per chat, shown as a marker in the thread. Keyed by
+   * session so switching chats mid-extraction cannot show one chat's changes
+   * under another's last turn.
+   */
+  const [memoryNotices, setMemoryNotices] = React.useState<
+    Record<string, { changes: MemoryChange[]; compacted?: boolean }>
+  >({})
   const [providers, setProviders] = React.useState<ProviderInfo[]>([])
   const [providerId, setProviderId] = React.useState("")
   const [models, setModels] = React.useState<ModelOption[]>([])
@@ -264,6 +274,10 @@ export default function ChatPage() {
    * a chat that was merely opened must leave the chat's own agent alone.
    */
   const providerPickRef = React.useRef("")
+  /** Read by `runPrompt`, which must not re-create itself when settings land. */
+  const settingsRef = React.useRef<AppSettings | null>(null)
+  /** Chats with an extraction pass in flight, so a fast reply cannot start two. */
+  const memoryRunsRef = React.useRef(new Set<string>())
 
   // Mirrors for the stable callbacks below — they run after paint, so a click
   // handler always reads the state the user is looking at.
@@ -274,6 +288,7 @@ export default function ChatPage() {
     providersRef.current = providers
     providerIdRef.current = providerId
     modelRef.current = model
+    settingsRef.current = settings
   })
 
   const messages = threads[activeId] ?? EMPTY_MESSAGES
@@ -670,6 +685,57 @@ export default function ChatPage() {
   /* Running a turn                                                          */
   /* ---------------------------------------------------------------------- */
 
+  /**
+   * Updates the user memory after a turn settles.
+   *
+   * Fire-and-forget on purpose: the answer is already delivered and persisted,
+   * so this owns nothing the chat needs. It reports itself in two places for
+   * two different reasons — a toast at the bottom while it runs, because a
+   * local model can take a few seconds and silence would read as a hang, and a
+   * marker in the thread afterwards, because "a file that goes into every
+   * future conversation just changed" deserves something the user can scroll
+   * back to rather than something that fades.
+   */
+  const runMemoryUpdate = React.useCallback(async (sessionId: string) => {
+    const memory = settingsRef.current?.memory
+    if (!memory?.enabled || !memory.autoUpdate || !memory.model) return
+    if (memoryRunsRef.current.has(sessionId)) return
+    memoryRunsRef.current.add(sessionId)
+
+    const toastId = `memory-${sessionId}`
+    const at = { id: toastId, position: "bottom-center" } as const
+    toast.loading("Updating memory\u2026", at)
+    try {
+      const result = await api.updateMemory(sessionId)
+      if (result.changes.length > 0) {
+        setMemoryNotices((prev) => ({
+          ...prev,
+          [sessionId]: {
+            changes: result.changes,
+            compacted: result.compacted,
+          },
+        }))
+        toast.dismiss(toastId)
+      } else if (result.skipped === "unreachable") {
+        toast.error("Memory: no Ollama server to extract with.", at)
+      } else if (result.skipped === "failed") {
+        toast.error("Couldn't update memory.", at)
+      } else {
+        // Nothing durable was said. That is the common case, and it is not
+        // worth a line of UI.
+        toast.dismiss(toastId)
+      }
+    } catch {
+      toast.error("Couldn't update memory.", at)
+    } finally {
+      memoryRunsRef.current.delete(sessionId)
+    }
+  }, [])
+
+  const dismissMemoryNotice = React.useCallback((sessionId: string) => {
+    setMemoryNotices((prev) => omit(prev, sessionId))
+  }, [])
+
   const runPrompt = React.useCallback(
     async (args: {
       sessionId: string
@@ -705,6 +771,10 @@ export default function ChatPage() {
           [sessionId]: { startedAt, stage: "thinking" },
         }))
         setFailures((prev) => omit(prev, sessionId))
+        // Last turn's marker belongs to last turn.
+        setMemoryNotices((prev) =>
+          sessionId in prev ? omit(prev, sessionId) : prev
+        )
       }
       if (args.animate) runLayoutTransition(paint)
       else paint()
@@ -917,9 +987,12 @@ export default function ChatPage() {
           prev[sessionId]?.startedAt === startedAt ? omit(prev, sessionId) : prev
         )
         patchLocal(sessionId, { updatedAt: nowMs() })
+        /* A stopped turn is usually about to be re-sent; extracting from it
+           would burn a model call on a thread that is about to change. */
+        if (!controller.signal.aborted) void runMemoryUpdate(sessionId)
       }
     },
-    [patchLocal]
+    [patchLocal, runMemoryUpdate]
   )
 
   const send = React.useCallback(
@@ -1525,7 +1598,18 @@ export default function ChatPage() {
                   />
                 ) : null
               }
-            />
+            >
+              {/* Composed in through the list's own `children` slot: the
+                  marker belongs after the last turn, inside the conversation
+                  column, and `MessageList` stays untouched. */}
+              {memoryNotices[activeId] && !isGenerating ? (
+                <MemoryNotice
+                  changes={memoryNotices[activeId].changes}
+                  compacted={memoryNotices[activeId].compacted}
+                  onDismiss={() => dismissMemoryNotice(activeId)}
+                />
+              ) : null}
+            </MessageList>
           )}
 
           <div data-slot="chat-composer" className="w-full shrink-0">

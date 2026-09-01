@@ -3,6 +3,7 @@ import { NextResponse } from "next/server"
 import type { MessageAttachmentData } from "@/components/ui/message"
 import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
 import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
+import { buildMemoryContext } from "@/lib/memory/context"
 import { getProvider } from "@/lib/providers/registry"
 import type { AgentStreamEvent, ChatTurn } from "@/lib/providers/types"
 import {
@@ -141,6 +142,23 @@ export async function POST(req: Request) {
   let usage: AgentTokenUsage | undefined
   const cwd = body.cwd?.trim() || session.cwd
 
+  /**
+   * Standing user memory for this turn, when the feature is on.
+   *
+   * Backends that resume server-side get it only on the first turn of their
+   * conversation: they already hold everything sent before, so re-sending the
+   * block every turn would stack copies of it in their own transcript. The
+   * stateless ones have their history replayed anyway, so they get it each
+   * time. Either way it never touches `userMessage` — what the user typed is
+   * what gets stored and shown.
+   */
+  const memoryContext =
+    info.capabilities.resume && providerSessionId
+      ? undefined
+      : await buildMemoryContext(settings, {
+          toolCapable: info.capabilities.tools,
+        })
+
   const abort = new AbortController()
   const onClientGone = () => abort.abort()
   req.signal.addEventListener("abort", onClientGone)
@@ -164,6 +182,7 @@ export async function POST(req: Request) {
         for await (const event of provider.run({
           prompt,
           model,
+          system: memoryContext,
           sessionId: providerSessionId,
           effort: info.capabilities.effort ? body.effort : undefined,
           cwd,
