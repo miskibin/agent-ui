@@ -3,7 +3,7 @@ import "server-only"
 import { spawn, type ChildProcess } from "node:child_process"
 
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
-import { resolvePiCommand } from "@/lib/pi-runtime"
+import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
 
 /**
  * Spawns the `pi` CLI in `--mode json` and translates its event stream into
@@ -56,7 +56,8 @@ export async function* runPiAgent(
   options: PiRunOptions
 ): AsyncGenerator<AgentStreamEvent> {
   const startedAt = Date.now()
-  const { cmd, args: prefix } = resolvePiCommand(options.binPath)
+  const command = resolvePiCommand(options.binPath)
+  const { cmd, args: prefix } = command
   const args = [
     ...prefix,
     "--mode",
@@ -90,6 +91,22 @@ export async function* runPiAgent(
     stdio: ["ignore", "pipe", "pipe"],
   })
 
+  // A process that never starts emits `error`, not `exit` — and an unhandled
+  // one would surface as a bare errno ("spawn EINVAL") with no hint at what
+  // was being spawned. The holder keeps it out of narrowing's way.
+  const failure: { error?: NodeJS.ErrnoException } = {}
+  child.once("error", (err: NodeJS.ErrnoException) => {
+    failure.error = err
+  })
+
+  // Registered now, not after the read loop: a process that fails to start has
+  // already emitted both events by then, and a listener added late would wait
+  // forever for one that will not come again.
+  const exited = new Promise<number>((resolve) => {
+    child.once("close", (code) => resolve(code ?? 1))
+    child.once("error", () => resolve(1))
+  })
+
   const stderrChunks: string[] = []
   child.stderr?.on("data", (chunk: Buffer | string) => {
     stderrChunks.push(String(chunk))
@@ -112,7 +129,7 @@ export async function* runPiAgent(
     let buffer = ""
     let emittedSession = false
 
-    for await (const chunk of child.stdout) {
+    for await (const chunk of readStdout(child.stdout)) {
       if (options.signal?.aborted) break
       buffer += String(chunk)
       const lines = buffer.split("\n")
@@ -138,15 +155,14 @@ export async function* runPiAgent(
       }
     }
 
-    const exitCode: number = await new Promise((resolve) => {
-      if (child.exitCode != null) {
-        resolve(child.exitCode)
-        return
-      }
-      child.once("close", (code) => resolve(code ?? 1))
-    })
+    const exitCode = await exited
 
     if (options.signal?.aborted) return
+
+    if (failure.error) {
+      yield { type: "error", message: describeSpawnFailure(failure.error, command) }
+      return
+    }
 
     if (exitCode !== 0) {
       yield {
@@ -163,6 +179,37 @@ export async function* runPiAgent(
     options.signal?.removeEventListener("abort", onAbort)
     killPi(child)
   }
+}
+
+/**
+ * A stream torn down by a failed spawn rejects; the `error` event carries the
+ * real reason, so swallow the tear-down and let the caller report that.
+ */
+async function* readStdout(stdout: NodeJS.ReadableStream) {
+  try {
+    yield* stdout
+  } catch {
+    /* reported from the child's `error` event instead */
+  }
+}
+
+/** Turns an errno into something the user can act on. */
+function describeSpawnFailure(
+  err: NodeJS.ErrnoException,
+  command: PiCommand
+): string {
+  const target = [command.cmd, ...command.args].join(" ")
+  const settings = "Settings → Providers → pi"
+  if (err.code === "EINVAL" && process.platform === "win32") {
+    return `Could not start pi: Node refuses to spawn a .cmd shim directly. Point ${settings} at pi's own entry point (…\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\bundle\\cli.js) or at a pi.exe.`
+  }
+  if (err.code === "ENOENT") {
+    return `pi not found — tried ${target}. Install it with \`npm i -g @earendil-works/pi-coding-agent\` or set its path in ${settings}.`
+  }
+  if (err.code === "EACCES") {
+    return `${target} is not executable. Check its permissions or set another path in ${settings}.`
+  }
+  return `Could not start pi (${err.code ?? "spawn failed"}): ${err.message} — tried ${target}`
 }
 
 /** One pi event in, zero or more stream events out. */
