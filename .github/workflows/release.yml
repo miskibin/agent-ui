@@ -153,12 +153,17 @@ jobs:
 
     steps:
       - uses: actions/github-script@v8
+        # Passed as an environment variable rather than interpolated into the
+        # script body: `${{ }}` inside a script is the Actions code-injection
+        # pattern, and it is what a static analyser will flag here.
+        env:
+          RELEASE_ID: ${{ needs.create-release.outputs.release_id }}
         with:
           script: |
             await github.rest.repos.updateRelease({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              release_id: Number("${{ needs.create-release.outputs.release_id }}"),
+              release_id: Number(process.env.RELEASE_ID),
               draft: false,
             })
             core.info(`Published ${process.env.RELEASE_TAG}`)
