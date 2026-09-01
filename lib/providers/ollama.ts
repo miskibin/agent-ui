@@ -3,6 +3,7 @@ import "server-only"
 import type { OllamaSettings } from "@/lib/settings/schema"
 import {
   fetchOllamaModels,
+  fetchVisionCapableModelIds,
   normalizeBaseUrl,
   ollamaReachErrorMessage,
   probeOllama,
@@ -39,7 +40,10 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         tools: false,
         resume: false,
         effort: false,
-        vision: false,
+        // Transport-level: /api/chat always accepts an `images` field. Which
+        // *models* actually look at it is a per-model question, answered by
+        // `visionModels()` below rather than here.
+        vision: true,
       }
       const base: ProviderInfo = {
         id: OLLAMA_PROVIDER_ID,
@@ -63,14 +67,24 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
       return models.map(toModelOption)
     },
 
+    async visionModels() {
+      const models = await fetchOllamaModels(baseUrl)
+      return fetchVisionCapableModelIds(baseUrl, models)
+    },
+
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       const startedAt = Date.now()
       const messages = [
         ...(options.history ?? []).map((turn) => ({
           role: turn.role,
           content: turn.content,
+          ...(turn.images?.length ? { images: turn.images } : null),
         })),
-        { role: "user" as const, content: options.prompt },
+        {
+          role: "user" as const,
+          content: options.prompt,
+          ...(options.images?.length ? { images: options.images } : null),
+        },
       ]
 
       let res: Response
@@ -169,7 +183,7 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
 function post(
   baseUrl: string,
   model: string,
-  messages: Array<{ role: string; content: string }>,
+  messages: Array<{ role: string; content: string; images?: string[] }>,
   think: boolean,
   signal: AbortSignal
 ) {
