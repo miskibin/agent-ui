@@ -2,7 +2,10 @@ import "server-only"
 
 import { spawn, type ChildProcess } from "node:child_process"
 
-import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
+import type {
+  AgentStreamEvent,
+  AgentTokenUsage,
+} from "@/lib/cursor-agent-types"
 import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
 import { LineBuffer } from "@/lib/stream-framing"
 
@@ -50,7 +53,19 @@ type PiEvent = {
   result?: unknown
   isError?: boolean
   error?: unknown
-  message?: unknown
+  message?: PiMessage | unknown
+}
+
+type PiMessage = {
+  role?: string
+  stopReason?: string
+  errorMessage?: string
+  usage?: PiUsage
+}
+
+type PiUsage = {
+  input?: number
+  output?: number
 }
 
 export async function* runPiAgent(
@@ -117,6 +132,22 @@ export async function* runPiAgent(
   options.signal?.addEventListener("abort", onAbort)
 
   let sawError = false
+  let sawText = false
+  /**
+   * A model call that fails is reported *inside* pi's message — the process
+   * still exits 0 — so an unreported one ends the turn on `done` with an empty
+   * answer and nothing to explain it. It is held rather than yielded because
+   * pi auto-retries: a failed attempt that a later one recovers from must not
+   * surface as an error, so this is only used when the turn produced no text.
+   */
+  let lastMessageError: string | undefined
+  /**
+   * pi counts tokens per assistant message, and one call here is a whole agent
+   * loop. The last message is the one whose prompt carried everything the loop
+   * accumulated — the system prompt, the tool schemas, every file it read — so
+   * it, not the first, is what the next turn has to fit beside.
+   */
+  let lastUsage: AgentTokenUsage | undefined
 
   try {
     if (!child.stdout) {
@@ -143,6 +174,17 @@ export async function* runPiAgent(
         emittedSession = true
         return [{ type: "session", sessionId: event.id }]
       }
+      // `message_start` and `turn_end` repeat the same `stopReason`, so the
+      // message's end is the one place this is read.
+      if (event.type === "message_end") {
+        const message = asMessage(event.message)
+        if (message?.stopReason === "error") {
+          lastMessageError = describeMessageError(message)
+        }
+        const usage = toUsage(message?.usage)
+        if (usage) lastUsage = usage
+        return []
+      }
       return mapEvent(event)
     }
 
@@ -151,6 +193,7 @@ export async function* runPiAgent(
       for (const line of lines.push(String(chunk))) {
         for (const mapped of mapLine(line)) {
           if (mapped.type === "error") sawError = true
+          if (mapped.type === "text" && mapped.text.trim()) sawText = true
           yield mapped
         }
       }
@@ -159,6 +202,7 @@ export async function* runPiAgent(
     if (tail !== null) {
       for (const mapped of mapLine(tail)) {
         if (mapped.type === "error") sawError = true
+        if (mapped.type === "text" && mapped.text.trim()) sawText = true
         yield mapped
       }
     }
@@ -182,7 +226,18 @@ export async function* runPiAgent(
       return
     }
 
-    if (!sawError) yield { type: "done", durationMs: Date.now() - startedAt }
+    if (sawError) return
+
+    if (lastMessageError && !sawText) {
+      yield { type: "error", message: lastMessageError }
+      return
+    }
+
+    yield {
+      type: "done",
+      durationMs: Date.now() - startedAt,
+      ...(lastUsage ? { usage: lastUsage } : null),
+    }
   } finally {
     options.signal?.removeEventListener("abort", onAbort)
     killPi(child)
@@ -276,6 +331,51 @@ function mapEvent(event: PiEvent): AgentStreamEvent[] {
   }
 
   return []
+}
+
+/** Zeroes are pi's placeholder for "not counted yet", not a real count. */
+function toUsage(usage: PiUsage | undefined): AgentTokenUsage | undefined {
+  if (!usage) return undefined
+  const input = typeof usage.input === "number" ? usage.input : 0
+  const output = typeof usage.output === "number" ? usage.output : 0
+  if (input <= 0 && output <= 0) return undefined
+  return { input, output }
+}
+
+function asMessage(value: unknown): PiMessage | null {
+  return value && typeof value === "object" ? (value as PiMessage) : null
+}
+
+/**
+ * pi passes the provider's failure through verbatim, and Ollama's OpenAI shim
+ * nests the readable sentence two JSON envelopes deep behind an HTTP status.
+ * Peel it down to that sentence, and keep the raw string if it is shaped some
+ * other way.
+ */
+function describeMessageError(message: PiMessage): string {
+  const raw = message.errorMessage?.trim()
+  if (!raw) return "pi: the model call failed"
+  const status = /^(\d{3}):\s*/.exec(raw)
+  let value: unknown = status ? raw.slice(status[0].length) : raw
+  for (let depth = 0; depth < 8; depth++) {
+    if (typeof value === "string") {
+      const trimmed = value.trim()
+      if (!trimmed.startsWith("{")) break
+      try {
+        value = JSON.parse(trimmed) as unknown
+      } catch {
+        break
+      }
+      continue
+    }
+    if (!value || typeof value !== "object") break
+    const next = (value as { error?: unknown }).error ?? (value as { message?: unknown }).message
+    if (next == null) break
+    value = next
+  }
+  const text = typeof value === "string" ? value.trim() : ""
+  const detail = text || truncate(raw)
+  return status ? `pi: ${status[1]} — ${detail}` : `pi: ${detail}`
 }
 
 /** Tool results are `{ content: [{ type: "text", text }] }` blocks. */

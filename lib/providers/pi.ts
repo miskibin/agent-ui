@@ -13,6 +13,7 @@ import {
 import { hasPiBinary } from "@/lib/pi-runtime"
 import { withSystemPrefix } from "@/lib/providers/system-prefix"
 import {
+  fetchOllamaContextLengths,
   fetchOllamaModels,
   normalizeBaseUrl,
   ollamaReachErrorMessage,
@@ -112,9 +113,12 @@ export function createPiProvider(
         collectSourceModels(sources),
       ])
       await writeModelsConfig(configDir, baseUrl, models, remote)
+      // Only the local ones: a hosted source does not tell us its window, and
+      // guessing one would put a confidently wrong number under the composer.
+      const contexts = await fetchOllamaContextLengths(baseUrl, models)
       return [
         ...models.map((model) => ({
-          ...toModelOption(model),
+          ...toModelOption(model, contexts[model.id]),
           id: joinModelId(OLLAMA_SOURCE, model.id),
           group: OLLAMA_SOURCE,
         })),

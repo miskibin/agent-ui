@@ -4,6 +4,7 @@ import type { OllamaSettings } from "@/lib/settings/schema"
 import { LineBuffer } from "@/lib/stream-framing"
 import {
   fetchLoadedOllamaModels,
+  fetchOllamaContextLengths,
   fetchOllamaModels,
   fetchVisionCapableModelIds,
   normalizeBaseUrl,
@@ -77,7 +78,8 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
 
     async listModels() {
       const models = await fetchOllamaModels(baseUrl)
-      return models.map(toModelOption)
+      const contexts = await fetchOllamaContextLengths(baseUrl, models)
+      return models.map((model) => toModelOption(model, contexts[model.id]))
     },
 
     async visionModels() {

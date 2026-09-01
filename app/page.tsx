@@ -28,7 +28,7 @@ import {
 } from "@/components/command-palette"
 import {
   ContextUsage,
-  contextBaseTokens,
+  contextTurnUsage,
   useDraftStore,
 } from "@/components/context-usage"
 import { FolderPicker } from "@/components/folder-picker"
@@ -450,10 +450,7 @@ export default function ChatPage() {
    * not rebuilt while one is streaming.
    */
   const draftStore = useDraftStore()
-  const contextBase = React.useMemo(
-    () => contextBaseTokens(messages),
-    [messages]
-  )
+  const contextTurn = contextTurnUsage(messages)
   const contextTotal = React.useMemo(
     () => models.find((option) => option.id === model)?.contextLength,
     [model, models]
@@ -1839,7 +1836,8 @@ export default function ChatPage() {
             />
             <ContextUsage
               store={draftStore}
-              base={contextBase}
+              input={contextTurn.input}
+              output={contextTurn.output}
               total={contextTotal}
             />
           </>
@@ -1851,8 +1849,9 @@ export default function ChatPage() {
       chooseModel,
       chooseProvider,
       configureProvider,
-      contextBase,
       contextTotal,
+      contextTurn.input,
+      contextTurn.output,
       draftStore,
       effort,
       handleSend,

@@ -407,17 +407,18 @@ export function mapAcpUpdate(
       )
     case "plan": {
       // `AgentStreamEvent` has no plan variant. Folding it into a single
-      // upserting tool card renders the checklist through the existing
-      // tool-call disclosure with no change to any vendored component.
-      const markdown = planMarkdown(update.entries)
-      return markdown
+      // upserting tool call is what lets the vendored components render it:
+      // `todo-list` reads exactly these arguments, so the plan reaches both
+      // the tool row and the panel above the composer with no new event type.
+      const todos = planTodos(update.entries)
+      return todos
         ? [
             {
               type: "tool",
               id: "acp-plan",
-              name: "Plan",
+              name: "plan",
               status: "done",
-              output: markdown,
+              input: todos,
             },
           ]
         : []
@@ -457,19 +458,109 @@ function mapToolCall(
         ? "error"
         : "running"
 
-  const output =
+  const raw =
     update.content === undefined
       ? undefined
       : flattenToolContent(update.content as AcpToolCallContent[])
+  const read = raw ? unwrapReadEnvelope(raw) : null
+  const output = read ? read.body : raw
+  const input = toolInput(update.rawInput, summary.rawInput, read)
 
   return {
     type: "tool",
     id,
     name: summary.title || "tool",
     status,
-    ...(update.rawInput !== undefined ? { input: stringify(update.rawInput) } : null),
+    ...(input ? { input } : null),
     ...(output ? { output } : null),
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                             read-tool envelopes                            */
+/* -------------------------------------------------------------------------- */
+
+type ReadEnvelope = { path?: string; body: string; startLine?: number }
+
+/**
+ * dsh reports a file read as its own envelope — `<path>…</path>`, `<type>`, then
+ * a `<content>` whose every line is prefixed `N: ` — where pi and cursor hand
+ * back the bare body. Left as-is the vendored read-file card draws its own
+ * gutter next to dsh's prefixes (two columns of numbers) and shows the tags as
+ * if they were the first lines of the file. Unwrapping the envelope here, in
+ * app-local code, fixes the card without touching it and without any other
+ * harness — whose output never matches this shape — seeing a change.
+ */
+const READ_ENVELOPE =
+  /^\s*<path>([^<]*)<\/path>\s*(?:<type>([^<]*)<\/type>\s*)?<content>\r?\n?([\s\S]*?)(?:\r?\n?<\/content>)?\s*$/
+
+function unwrapReadEnvelope(output: string): ReadEnvelope | null {
+  const match = READ_ENVELOPE.exec(output)
+  if (!match) return null
+  const path = match[1].trim() || undefined
+  const body = match[3]
+  // A directory listing is not numbered; only a file body gets the strip.
+  if ((match[2] ?? "file").trim() === "directory") return { path, body }
+  const stripped = stripLineNumbers(body)
+  return stripped ? { path, ...stripped } : { path, body }
+}
+
+/**
+ * `N: text` on consecutive lines and nothing else — the numbering dsh adds, not
+ * a numbered list that happens to live in the file. Any gap or unnumbered line
+ * aborts the strip and the body is shown verbatim; the last line is exempt
+ * because `truncate` can cut one in half.
+ */
+function stripLineNumbers(
+  body: string
+): { body: string; startLine: number } | null {
+  const lines = body.split("\n")
+  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop()
+  if (lines.length === 0) return null
+
+  const out: string[] = []
+  let expected = 0
+  for (const [index, line] of lines.entries()) {
+    const match = /^ *(\d+): ?([\s\S]*)$/.exec(line)
+    if (!match) {
+      if (index === lines.length - 1 && index > 0) {
+        out.push(line)
+        break
+      }
+      return null
+    }
+    const number = Number(match[1])
+    if (index === 0) expected = number
+    else if (number !== expected + index) return null
+    out.push(match[2])
+  }
+  return { body: out.join("\n"), startLine: expected }
+}
+
+/**
+ * The args the card shows — and reads the file's path and window out of, for
+ * its language and its gutter. dsh names neither in `rawInput`, so an unwrapped
+ * envelope supplies them; whatever the agent did send always wins.
+ */
+function toolInput(
+  updated: unknown,
+  known: unknown,
+  read: ReadEnvelope | null
+): string | undefined {
+  const derived: Record<string, unknown> = {}
+  if (read?.path) derived.path = read.path
+  if (read?.startLine && read.startLine > 1) derived.offset = read.startLine
+
+  const base = updated ?? known
+  if (Object.keys(derived).length === 0) {
+    return updated === undefined ? undefined : stringify(updated)
+  }
+  if (base && typeof base === "object" && !Array.isArray(base)) {
+    return stringify({ ...derived, ...(base as Record<string, unknown>) })
+  }
+  return base === undefined || base === null
+    ? stringify(derived)
+    : stringify(base)
 }
 
 /** Flattens the `content` / `diff` / `terminal` variants down to text. */
@@ -499,16 +590,21 @@ function blockText(block: AcpContentBlock | undefined): string | undefined {
   return undefined
 }
 
-function planMarkdown(entries: unknown): string | undefined {
+/**
+ * ACP plan entries as the argument payload a todo tool would have sent —
+ * `{ todos: [{ content, status }] }`, which is what `parseTodoItems` in
+ * `components/ui/todo-list` reads. ACP's own status words (`pending`,
+ * `in_progress`, `completed`) are already the ones it normalizes to.
+ */
+function planTodos(entries: unknown): string | undefined {
   if (!Array.isArray(entries) || entries.length === 0) return undefined
-  return entries
+  const todos = entries
     .map((entry) => {
       const item = (entry ?? {}) as { content?: string; status?: string }
-      const mark = item.status === "completed" ? "x" : " "
-      const suffix = item.status === "in_progress" ? " _(in progress)_" : ""
-      return `- [${mark}] ${item.content ?? ""}${suffix}`
+      return { content: item.content ?? "", status: item.status ?? "pending" }
     })
-    .join("\n")
+    .filter((item) => item.content)
+  return todos.length ? JSON.stringify({ todos }) : undefined
 }
 
 function stringify(value: unknown): string | undefined {

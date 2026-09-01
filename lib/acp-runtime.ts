@@ -1,6 +1,6 @@
 import "server-only"
 
-import { existsSync } from "node:fs"
+import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 
 /**
@@ -16,12 +16,76 @@ import path from "node:path"
 
 export type AcpCommand = { cmd: string; args: string[] }
 
-/** A JS entry point needs a Node to run it; anything else is executable. */
+/**
+ * A JS entry point needs a Node to run it; anything else is executable —
+ * except on Windows, where `npm i -g` installs an agent as a `.cmd` shim and
+ * Node refuses to spawn `.cmd`/`.bat` without a shell (EINVAL, ever since the
+ * fix for CVE-2024-27980) while a bare `dsh` is not found at all (ENOENT,
+ * because the extensionless sibling is a shell script). Running the shim
+ * through `cmd.exe` would mean passing the prompt through its quoting, so we
+ * look past it for the JS entry point it wraps — the same trade
+ * `lib/pi-runtime.ts` makes, generalized here over a configurable command.
+ */
 export function resolveAcpCommand(command: string, args: string[]): AcpCommand {
   const target = command.trim()
-  return /\.[cm]?js$/.test(target)
-    ? { cmd: process.execPath, args: [target, ...args] }
-    : { cmd: target, args: [...args] }
+  if (/\.[cm]?js$/.test(target)) {
+    return { cmd: process.execPath, args: [target, ...args] }
+  }
+  if (process.platform === "win32") {
+    const resolved = resolveWindowsTarget(target)
+    if (resolved) {
+      return resolved.entry
+        ? { cmd: process.execPath, args: [resolved.entry, ...args] }
+        : { cmd: resolved.exe!, args: [...args] }
+    }
+  }
+  return { cmd: target, args: [...args] }
+}
+
+type WindowsTarget = { exe?: string; entry?: string }
+
+/**
+ * An explicit path is taken as given (looking through it only when it is a
+ * shim); a bare name is searched on PATH, preferring a real `.exe` over a shim.
+ */
+function resolveWindowsTarget(target: string): WindowsTarget | null {
+  if (!target) return null
+  if (target.includes("/") || target.includes("\\") || path.isAbsolute(target)) {
+    if (!SHIM_EXT.test(target)) return null
+    const entry = shimEntry(target)
+    return entry ? { entry } : null
+  }
+  for (const dir of pathDirs()) {
+    const exe = path.join(dir, `${target}.exe`)
+    if (existsSync(exe)) return { exe }
+    for (const ext of [".cmd", ".bat"]) {
+      const shim = path.join(dir, `${target}${ext}`)
+      if (!existsSync(shim)) continue
+      const entry = shimEntry(shim)
+      if (entry) return { entry }
+    }
+  }
+  return null
+}
+
+const SHIM_EXT = /\.(cmd|bat)$/i
+
+/**
+ * npm's Windows shim ends in a line naming the package entry relative to the
+ * shim's own directory (`"%dp0%\node_modules\<pkg>\bin.js"`), which is the
+ * only thing here worth reading out of it.
+ */
+function shimEntry(shim: string): string | null {
+  try {
+    const match = /%dp0%[\\/]*([^"%\r\n]+?\.[cm]?js)/i.exec(
+      readFileSync(shim, "utf8")
+    )
+    if (!match) return null
+    const entry = path.join(path.dirname(shim), match[1].replace(/\//g, "\\"))
+    return existsSync(entry) ? entry : null
+  } catch {
+    return null
+  }
 }
 
 /**
