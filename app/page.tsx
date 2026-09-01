@@ -26,11 +26,6 @@ import {
   CommandPalette,
   type CommandPaletteSession,
 } from "@/components/command-palette"
-import {
-  ContextUsage,
-  contextBaseTokens,
-  useDraftStore,
-} from "@/components/context-usage"
 import { FolderPicker } from "@/components/folder-picker"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
@@ -406,20 +401,6 @@ export default function ChatPage() {
         ? messages.filter((message) => !isInternalMessage(message))
         : messages,
     [messages]
-  )
-  /**
-   * The composer's context ring. `base` is recomputed every render but only
-   * *changes* when a turn reports its usage, so the memoized composer below is
-   * not rebuilt while one is streaming.
-   */
-  const draftStore = useDraftStore()
-  const contextBase = React.useMemo(
-    () => contextBaseTokens(messages),
-    [messages]
-  )
-  const contextTotal = React.useMemo(
-    () => models.find((option) => option.id === model)?.contextLength,
-    [model, models]
   )
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
@@ -908,7 +889,7 @@ export default function ChatPage() {
    *
    * Fire-and-forget on purpose: the answer is already delivered and persisted,
    * so this owns nothing the chat needs. It reports itself in two places for
-   * two different reasons — a corner toast while it runs, because a
+   * two different reasons — a toast at the bottom while it runs, because a
    * local model can take a few seconds and silence would read as a hang, and a
    * marker in the thread afterwards, because "a file that goes into every
    * future conversation just changed" deserves something the user can scroll
@@ -921,9 +902,7 @@ export default function ChatPage() {
     memoryRunsRef.current.add(sessionId)
 
     const toastId = `memory-${sessionId}`
-    // No position override: this rides the app's own corner (the `Toaster`'s
-    // `bottom-right`), where every other notification in the app appears.
-    const at = { id: toastId } as const
+    const at = { id: toastId, position: "bottom-center" } as const
     toast.loading("Updating memory\u2026", at)
     try {
       const result = await api.updateMemory(sessionId)
@@ -1765,7 +1744,6 @@ export default function ChatPage() {
       <ChatInput
         onSend={handleSend}
         onStop={handleStop}
-        onTextChange={draftStore.set}
         isGenerating={isGenerating}
         placeholder={
           pendingAsk
@@ -1800,11 +1778,6 @@ export default function ChatPage() {
               side="top"
               className="min-w-0"
             />
-            <ContextUsage
-              store={draftStore}
-              base={contextBase}
-              total={contextTotal}
-            />
           </>
         }
       />
@@ -1814,9 +1787,6 @@ export default function ChatPage() {
       chooseModel,
       chooseProvider,
       configureProvider,
-      contextBase,
-      contextTotal,
-      draftStore,
       effort,
       handleSend,
       handleStop,
