@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { clearSessions, createSession, listSessions } from "@/lib/store/sessions"
+import type { CreateSessionInput } from "@/lib/store/types"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -11,9 +12,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  let body: { title?: string; providerId?: string; model?: string } = {}
+  let body: CreateSessionInput = {}
   try {
-    body = (await req.json()) as typeof body
+    body = (await req.json()) as CreateSessionInput
   } catch {
     /* an empty body means "a blank chat with defaults" */
   }
@@ -21,6 +22,8 @@ export async function POST(req: Request) {
     title: body.title,
     providerId: body.providerId,
     model: body.model,
+    cwd: body.cwd,
+    gitBranch: body.gitBranch,
   })
   return NextResponse.json({ session }, { status: 201 })
 }

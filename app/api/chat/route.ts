@@ -24,6 +24,8 @@ type ChatBody = {
   /** App session id — the thread in `lib/store`, not the provider's own id. */
   sessionId?: string
   effort?: string
+  /** Working folder for this run; falls back to the chat's stored folder. */
+  cwd?: string
   /**
    * Ids minted by the client so its optimistic messages and the persisted
    * ones are the same rows. Absent ids are generated here.
@@ -140,6 +142,7 @@ export async function POST(req: Request) {
           model,
           sessionId: providerSessionId,
           effort: info.capabilities.effort ? body.effort : undefined,
+          cwd: body.cwd?.trim() || session.cwd,
           history,
           signal: abort.signal,
         })) {

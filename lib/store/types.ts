@@ -29,6 +29,13 @@ export type SessionMeta = {
   model: string
   /** Provider-side conversation id, for providers with `capabilities.resume`. */
   providerSessionId?: string
+  /**
+   * Absolute path the agent works in for this chat, overriding the workspace
+   * from settings. Empty / absent = the app's own cwd.
+   */
+  cwd?: string
+  /** Git branch shown next to the folder. Display only — nothing checks out. */
+  gitBranch?: string
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -37,7 +44,14 @@ export type SessionMeta = {
 export type SessionPatch = Partial<
   Pick<
     SessionMeta,
-    "title" | "pinned" | "order" | "providerId" | "model" | "providerSessionId"
+    | "title"
+    | "pinned"
+    | "order"
+    | "providerId"
+    | "model"
+    | "providerSessionId"
+    | "cwd"
+    | "gitBranch"
   >
 >
 
@@ -45,4 +59,6 @@ export type CreateSessionInput = {
   title?: string
   providerId?: string
   model?: string
+  cwd?: string
+  gitBranch?: string
 }

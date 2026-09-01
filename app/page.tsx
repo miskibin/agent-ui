@@ -3,6 +3,8 @@
 import { arrayMove } from "@dnd-kit/sortable"
 import {
   Copy,
+  Folder,
+  GitBranch,
   HelpCircle,
   Palette,
   PanelLeft,
@@ -29,6 +31,7 @@ import {
   CommandPalette,
   type CommandPaletteSession,
 } from "@/components/command-palette"
+import { FolderPicker } from "@/components/folder-picker"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
   formatAskQuestionOutput,
@@ -62,6 +65,7 @@ import {
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
+import { folderName } from "@/lib/folder"
 import { runLayoutTransition } from "@/lib/layout-transition"
 import {
   applyStreamEvent,
@@ -443,6 +447,37 @@ export default function ChatPage() {
         )
     },
     [patchLocal]
+  )
+
+  /**
+   * The chat's working folder. A chat that does not exist yet (the very first
+   * one, before anything is sent) is created with the folder already on it, so
+   * picking a folder is never lost.
+   */
+  const setFolder = React.useCallback(
+    (next: { cwd: string; gitBranch: string }) => {
+      const sessionId = activeIdRef.current
+      if (!sessionId) {
+        void api
+          .createSession({ providerId, model, ...next })
+          .then((created) => {
+            setSessions((prev) => [created, ...prev])
+            setThreads((prev) => ({ ...prev, [created.id]: [] }))
+            setActiveId(created.id)
+          })
+          .catch((err: unknown) =>
+            toast.error(errorMessage(err, "Could not start a new chat"))
+          )
+        return
+      }
+      patchLocal(sessionId, next)
+      void api
+        .patchSession(sessionId, next)
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not set the folder"))
+        )
+    },
+    [model, patchLocal, providerId]
   )
 
   const togglePin = React.useCallback((id: string, pinned: boolean) => {
@@ -934,17 +969,21 @@ export default function ChatPage() {
         const run = runs[session.id]
         const subtitle = run
           ? STAGE_SUBTITLES[run.stage === "idle" ? "thinking" : run.stage]
-          : session.messageCount === 0
-            ? "New chat"
-            : [
-                providerName(session.providerId),
-                session.providerId === providerId
-                  ? (models.find((m) => m.id === session.model)?.name ??
-                    session.model)
-                  : session.model,
-              ]
-                .filter(Boolean)
-                .join(" · ")
+          : session.cwd
+            ? // A chat pinned to a folder says where it works — that places it
+              // faster than the model it happens to be using.
+              <FolderSubtitle cwd={session.cwd} branch={session.gitBranch} />
+            : session.messageCount === 0
+              ? "New chat"
+              : [
+                  providerName(session.providerId),
+                  session.providerId === providerId
+                    ? (models.find((m) => m.id === session.model)?.name ??
+                      session.model)
+                    : session.model,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
         return {
           id: session.id,
           title: session.title,
@@ -1198,7 +1237,13 @@ export default function ChatPage() {
             title={activeSession?.title ?? "New chat"}
             generating={isGenerating}
             stage={activeRun?.stage ?? "thinking"}
-          />
+          >
+            <FolderPicker
+              cwd={activeSession?.cwd}
+              gitBranch={activeSession?.gitBranch}
+              onChange={setFolder}
+            />
+          </AppHeaderTitle>
           <AppHeaderActions>
             <AppHeaderButton
               label="Search chats and commands"
@@ -1314,6 +1359,22 @@ const RelativeTime = React.memo(function RelativeTime({ from }: { from: number }
   useTick(30_000)
   return <>{relativeTime(from, nowMs())}</>
 })
+
+/** Sidebar subtitle for a chat with a working folder: `agent-ui · main`. */
+function FolderSubtitle({ cwd, branch }: { cwd: string; branch?: string }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <Folder className="size-3 shrink-0 opacity-70" />
+      <span className="min-w-0 truncate">{folderName(cwd)}</span>
+      {branch ? (
+        <>
+          <GitBranch className="size-3 shrink-0 opacity-70" />
+          <span className="min-w-0 truncate opacity-90">{branch}</span>
+        </>
+      ) : null}
+    </span>
+  )
+}
 
 const SidebarSessionSection = React.memo(function SidebarSessionSection({
   open,

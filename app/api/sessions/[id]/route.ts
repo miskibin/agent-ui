@@ -24,7 +24,10 @@ export async function GET(_req: Request, ctx: Ctx) {
   return NextResponse.json({ session, messages: await readMessages(id) })
 }
 
-/** Rename, pin and reorder. `order` moves the row to that sidebar index. */
+/**
+ * Rename, pin, reorder and per-chat settings (working folder, branch, the
+ * provider-side conversation id). `order` moves the row to that sidebar index.
+ */
 export async function PATCH(req: Request, ctx: Ctx) {
   const { id } = await ctx.params
   let body: SessionPatch
@@ -45,6 +48,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
       typeof body.providerSessionId === "string"
         ? body.providerSessionId
         : undefined,
+    cwd: typeof body.cwd === "string" ? body.cwd : undefined,
+    gitBranch: typeof body.gitBranch === "string" ? body.gitBranch : undefined,
   })
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })
