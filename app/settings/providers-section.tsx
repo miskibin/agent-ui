@@ -24,6 +24,7 @@ import type { AppSettingsApi } from "./use-app-settings"
 const PROVIDERS = [
   { id: "mock", label: "Mock" },
   { id: "ollama", label: "Ollama" },
+  { id: "pi", label: "pi (Ollama)" },
   { id: "cursorAgent", label: "Cursor Agent" },
 ] as const
 
@@ -261,6 +262,58 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
             <RotateCw className={testing ? "animate-spin" : undefined} />
             Test
           </Button>
+        </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="pi (Ollama)"
+        htmlFor="provider-pi"
+        description="Agentic harness: the pi CLI drives the models above with read, write, edit and bash tools."
+        control={
+          <>
+            <StatusBadge phase={phase} status={map[statusKey("pi")]} />
+            <Switch
+              id="provider-pi"
+              checked={providers.pi.enabled}
+              onCheckedChange={(enabled) =>
+                setProviders({ pi: { ...providers.pi, enabled } })
+              }
+            />
+          </>
+        }
+      >
+        <div className="grid gap-2">
+          <Input
+            aria-label="pi binary path"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Leave empty to autodetect pi on PATH"
+            className="h-8 font-mono text-[12px]"
+            value={providers.pi.binPath}
+            onChange={(event) =>
+              setProviders({
+                pi: { ...providers.pi, binPath: event.target.value },
+              })
+            }
+          />
+          <Input
+            aria-label="pi workspace"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Workspace directory — leave empty to use the app's cwd"
+            className="h-8 font-mono text-[12px]"
+            value={providers.pi.workspace}
+            onChange={(event) =>
+              setProviders({
+                pi: { ...providers.pi, workspace: event.target.value },
+              })
+            }
+          />
+          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            pi runs shell commands and edits files in this directory with no
+            sandbox and no approval prompt.
+          </p>
         </div>
       </SettingsRow>
 

@@ -1,6 +1,6 @@
 # Agent UI
 
-A fast, local-first **desktop app** for coding agents. One interface, swappable backends: the local `cursor-agent` CLI, any model served by [Ollama](https://ollama.com), or a scripted mock — with Claude Code and OpenCode adapters on the roadmap. Built entirely on [miskibin/chat-components](https://github.com/miskibin/chat-components), the shadcn/ui registry of agent-grade chat primitives, wrapped in a frameless Tauri shell with its own window chrome.
+A fast, local-first **desktop app** for coding agents. One interface, swappable backends: the local `cursor-agent` CLI, any model served by [Ollama](https://ollama.com) — as plain chat or as a full agentic run through the [`pi`](https://pi.dev) harness — or a scripted mock — with Claude Code and OpenCode adapters on the roadmap. Built entirely on [miskibin/chat-components](https://github.com/miskibin/chat-components), the shadcn/ui registry of agent-grade chat primitives, wrapped in a frameless Tauri shell with its own window chrome.
 
 [![CI](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml) [![Desktop](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml)
 
@@ -20,9 +20,26 @@ Reasoning streams, tool calls with live status (including failures), Shiki code,
 | --- | :-: | :-: | --- |
 | **Cursor Agent** | ✅ | ✅ | Spawns the local `agent` CLI; full agentic runs in your workspace |
 | **Ollama** | — | replayed | Direct `/api/chat` streaming with `thinking` support (deepseek-r1, qwen3…); stateless, so the app replays the stored transcript |
+| **pi (Ollama)** | ✅ | ✅ | Spawns the [`pi`](https://pi.dev) CLI in `--mode json` — read/write/edit/bash over your local models, sessions on disk |
 | **Mock** | ✅ | — | Scripted runs that exercise every UI part; no binary, no network |
 
 Providers are detected at runtime and surfaced in the picker with availability badges. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
+
+### The pi harness
+
+Ollama on its own answers questions; `pi` turns the same models into an agent that reads and edits files and runs commands. It is the smallest harness that does this well — four tools, ~7k tokens of cold-start context, so a 4–8B model still has room to think:
+
+```bash
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent   # provides `pi`
+ollama pull qwen3:8b                                             # or qwen2.5-coder:7b
+```
+
+Then pick **pi (Ollama)** in the composer. The app writes a `models.json` pointing pi at your Ollama server, so no manual `~/.pi` setup is needed, and `PI_CODING_AGENT_DIR` keeps it separate from a personal pi install.
+
+Two things worth knowing:
+
+- **pi has no sandbox.** It edits files and runs shell commands in its workspace with your permissions and no approval prompt. Set **Providers → pi → workspace** to the directory you want it loose in; it defaults to the app's own cwd.
+- **Set `num_ctx` explicitly.** Ollama's default context silently truncates an agent prompt after a few tool calls; give the model a Modelfile with as much context as your VRAM allows.
 
 ## Quick start
 
@@ -60,14 +77,17 @@ Everything is local JSON under `~/.agent-ui` (override with `AGENT_UI_DIR`):
 - `sessions/index.json` — sidebar metadata (titles, pins, order, provider/model, timestamps)
 - `sessions/<id>.json` — full transcripts (reasoning, tool calls, markdown)
 
-The agent backends keep their own conversation context (Cursor sessions resume by id); this store owns what they don't — your rendered transcripts and sidebar state.
+- `pi/models.json` — generated: points pi at your Ollama server's OpenAI-compatible endpoint
+- `pi/sessions/*.jsonl` — pi's own transcripts, kept out of your personal `~/.pi/agent`
+
+The agent backends keep their own conversation context (Cursor and pi sessions resume by id); this store owns what they don't — your rendered transcripts and sidebar state.
 
 ## Settings
 
 `/settings` applies everything instantly and persists to `settings.json`:
 
 - **Appearance** — six hand-tuned shadcn theme presets (Default, Clay, Ocean, Forest, Rose, Violet) with separate light/dark palettes, light/dark/system mode, and a corner-radius slider. A tiny inline bootstrap script applies the stored theme before first paint — no flash.
-- **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` binary path, default provider, with live reachability badges.
+- **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, default provider, with live reachability badges.
 - **Chat** — default reasoning effort, prompt suggestions, auto-titling.
 - **Data** — data directory and a clear-all-chats action.
 
@@ -77,7 +97,8 @@ The agent backends keep their own conversation context (Cursor sessions resume b
 app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
                               │                 ├── mock      (scripted)
                  persists     ▼                 ├── cursor    (spawns CLI)
-                        lib/store/*.json        └── ollama    (HTTP stream)
+                        lib/store/*.json        ├── ollama    (HTTP stream)
+                                                └── pi        (spawns CLI → Ollama)
 ```
 
 - One streaming protocol (`AgentStreamEvent`: `session · thinking · tool · text · done · error`) between every backend and the UI.
