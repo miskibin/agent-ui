@@ -8,6 +8,8 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it.
 
+Every file the agent touches is one click from the transcript. An edit headline, a row in the files-changed card or a `path.ts` chip in the answer's own text opens a **side-by-side file panel** — the diff, or the whole file with the edited lines marked, syntax-highlighted and scrolled to the first change. Material-style file icons mark the file everywhere it is named. The panel reads the file through `GET /api/file`, which is confined to the active provider's workspace (and never the app's own data directory), and falls back to the diff alone when there is nothing to read.
+
 | Dark mode (Ocean theme) | ⌘K command palette |
 | --- | --- |
 | ![Dark mode](.github/screenshots/chat-dark.png) | ![Command palette](.github/screenshots/palette.png) |
@@ -105,6 +107,7 @@ app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
 - One streaming protocol (`AgentStreamEvent`: `session · thinking · tool · text · done · error`) between every backend and the UI.
 - The chat surface is a pure client page: nothing on the critical path waits for the server, the sidebar seeds from a localStorage snapshot before the network answers, and message rows keep the memoization guarantees of the component family during streaming.
 - UI comes from the chat-components registry — themed by shadcn tokens, customizable through `data-slot` attributes without forking.
+- `GET /api/file` backs the file panel: it resolves a path against the running provider's workspace (`cursor-agent` and the mock use the app's cwd, pi its configured workspace), refuses anything outside it or inside the app's data directory, and caps a read at 1.5 MB.
 
 ## Development
 

@@ -47,8 +47,16 @@ import {
   SidebarEmptyState,
   type ChatSidebarItemData,
 } from "@/components/ui/chat-sidebar"
+import {
+  FilePreview,
+  filePreviewFromTool,
+  type FilePreviewFile,
+} from "@/components/ui/file-preview"
 import type { GenerationStage } from "@/components/ui/generation-status"
-import type { MessageToolCallData } from "@/components/ui/message"
+import type {
+  ChangeSummaryFile,
+  MessageToolCallData,
+} from "@/components/ui/message"
 import { MessageList } from "@/components/ui/message-list"
 import {
   DEFAULT_MODEL_EFFORTS,
@@ -214,11 +222,15 @@ export default function ChatPage() {
   >({})
   const [runs, setRuns] = React.useState<Record<string, SessionRun>>({})
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
+  /** The file open in the right-hand panel; null = the panel is closed. */
+  const [preview, setPreview] = React.useState<FilePreviewFile | null>(null)
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
   const threadsRef = React.useRef(threads)
   const activeIdRef = React.useRef(activeId)
+  const sessionsRef = React.useRef(sessions)
+  const providerIdRef = React.useRef(providerId)
   const inflightRef = React.useRef(new Set<string>())
   const bootstrappedRef = React.useRef(false)
 
@@ -227,6 +239,8 @@ export default function ChatPage() {
   React.useEffect(() => {
     threadsRef.current = threads
     activeIdRef.current = activeId
+    sessionsRef.current = sessions
+    providerIdRef.current = providerId
   })
 
   const messages = threads[activeId] ?? EMPTY_MESSAGES
@@ -419,6 +433,8 @@ export default function ChatPage() {
       setMobileNavOpen(false)
       const current = activeIdRef.current
       if (current !== id) {
+        // The open file belongs to a turn in the chat being left behind.
+        setPreview(null)
         // Crossing between the centered opening and a thread slides the composer.
         const from = threadsRef.current[current]?.length ?? 0
         const to = threadsRef.current[id]?.length ?? 0
@@ -461,6 +477,7 @@ export default function ChatPage() {
   }, [])
 
   const removeSession = React.useCallback((id: string) => {
+    if (activeIdRef.current === id) setPreview(null)
     abortsRef.current.get(id)?.abort()
     abortsRef.current.delete(id)
     setThreads((prev) => {
@@ -485,6 +502,7 @@ export default function ChatPage() {
 
   const handleNewChat = React.useCallback(async () => {
     setMobileNavOpen(false)
+    setPreview(null)
     const empty = sessions.find(
       (session) =>
         session.messageCount === 0 && (threadsRef.current[session.id]?.length ?? 0) === 0
@@ -914,6 +932,118 @@ export default function ChatPage() {
   )
 
   /* ---------------------------------------------------------------------- */
+  /* File preview                                                            */
+  /* ---------------------------------------------------------------------- */
+
+  const closePreview = React.useCallback(() => setPreview(null), [])
+
+  /**
+   * Opens the panel from what the transcript already holds, then fills in the
+   * file's text from disk when that arrives. The fetch is strictly an
+   * enrichment: it never gates the open, and a failure (no such file, another
+   * machine's workspace, a path outside it) leaves the diff-only view standing.
+   *
+   * Disk text is only merged when the transcript carried none — a tool that
+   * streamed its own after-file already matches the diff beside it, and a
+   * partial read carries a `startLine` the whole file would not line up with.
+   */
+  const openPreview = React.useCallback((file: FilePreviewFile) => {
+    setPreview(file)
+    if (file.content !== undefined) return
+    const session = sessionsRef.current.find(
+      (item) => item.id === activeIdRef.current
+    )
+    const provider = session?.providerId || providerIdRef.current
+    if (!provider) return
+    void api
+      .fetchFile(file.path, provider)
+      .then((data) => {
+        setPreview((current) =>
+          current && current.path === file.path && current.content === undefined
+            ? { ...current, content: data.content }
+            : current
+        )
+      })
+      .catch(() => {
+        /* the panel degrades to the diff on its own */
+      })
+  }, [])
+
+  /**
+   * A change row or an inline `path.ts` chip names a path, not a tool — so
+   * reach back into the turn for the last tool that touched it. Null when the
+   * transcript no longer carries a body for that file.
+   */
+  const previewFromTurn = React.useCallback(
+    (messageId: string, path: string) => {
+      const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
+      const message = thread.find((item) => item.id === messageId)
+      const tools = message?.tools?.length
+        ? message.tools
+        : toolsFromParts(message?.parts ?? [])
+      let match: FilePreviewFile | null = null
+      for (const tool of tools) {
+        const file = filePreviewFromTool(tool)
+        if (file?.path === path) match = file
+      }
+      return match
+    },
+    []
+  )
+
+  const handleOpenFile = React.useCallback(
+    (_messageId: string, tool: MessageToolCallData) => {
+      const file = filePreviewFromTool(tool)
+      if (!file) {
+        toast.message("That tool call has no file to preview")
+        return
+      }
+      openPreview(file)
+    },
+    [openPreview]
+  )
+
+  const handleChangeFileClick = React.useCallback(
+    (messageId: string, change: ChangeSummaryFile) => {
+      openPreview(
+        previewFromTurn(messageId, change.path) ?? {
+          path: change.path,
+          added: change.additions,
+          removed: change.deletions,
+        }
+      )
+    },
+    [openPreview, previewFromTurn]
+  )
+
+  /**
+   * The badge hands over the path with any `:line` suffix already dropped;
+   * stripped again here because a host, not the component, decides what a
+   * location means.
+   */
+  const handleFileReferenceClick = React.useCallback(
+    (messageId: string, reference: string) => {
+      const path = reference.replace(/:\d+(?::\d+)?$/, "")
+      openPreview(previewFromTurn(messageId, path) ?? { path })
+    },
+    [openPreview, previewFromTurn]
+  )
+
+  const handleReviewChanges = React.useCallback(
+    (messageId: string) => {
+      const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
+      const message = thread.find((item) => item.id === messageId)
+      const tools = message?.tools?.length
+        ? message.tools
+        : toolsFromParts(message?.parts ?? [])
+      const first = tools.map(filePreviewFromTool).find(Boolean)
+      if (first) openPreview(first)
+      else toast.message("This turn changed no files")
+    },
+    [openPreview]
+  )
+
+  /* ---------------------------------------------------------------------- */
   /* Derived view models                                                     */
   /* ---------------------------------------------------------------------- */
 
@@ -1233,6 +1363,10 @@ export default function ChatPage() {
               generationStage={activeRun?.stage ?? "idle"}
               onEditMessage={handleEditMessage}
               onAskAnswer={handleAskAnswer}
+              onOpenFile={handleOpenFile}
+              onChangeFileClick={handleChangeFileClick}
+              onFileReferenceClick={handleFileReferenceClick}
+              onReviewChanges={handleReviewChanges}
               renderActions={(message) =>
                 message.sender === "assistant" ? (
                   <MessageActions
@@ -1257,6 +1391,38 @@ export default function ChatPage() {
             ) : null}
           </div>
         </div>
+      </div>
+
+      {/* Below md the file panel slides over the conversation, like the sidebar. */}
+      <div
+        aria-hidden={!preview}
+        onClick={closePreview}
+        className={cn(
+          "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
+          preview ? "opacity-100" : "pointer-events-none opacity-0"
+        )}
+      />
+      <div
+        data-slot="chat-file-panel"
+        // Off-canvas below md, zero-width above it: either way the closed panel
+        // stays out of the tab order.
+        inert={!preview}
+        className={cn(
+          "z-50 h-full shrink-0 overflow-hidden bg-background",
+          "transition-[width,opacity,transform] duration-300 ease-in-out motion-reduce:transition-none",
+          "max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:w-[min(30rem,100%)] max-md:shadow-xl md:relative",
+          preview
+            ? "md:w-[30rem] md:opacity-100"
+            : "max-md:translate-x-full md:w-0 md:opacity-0"
+        )}
+      >
+        {preview ? (
+          <FilePreview
+            file={preview}
+            onClose={closePreview}
+            className="border-l"
+          />
+        ) : null}
       </div>
 
       <CommandPalette
