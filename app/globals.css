@@ -253,6 +253,22 @@
 .lc-sidebar-wrap {
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+/* ---------------------------------------------------------------------------
+ * Desktop chrome, reserved before hydration. `data-desktop` is stamped by the
+ * pre-paint guard from a localStorage flag the header wrote on a previous run,
+ * so the frameless shell paints its window-control strip in the very first
+ * frame instead of shifting the header once the client chunk hydrates.
+ * ------------------------------------------------------------------------- */
+
+[data-slot="window-controls-reserve"] {
+  display: none;
+}
+
+:root[data-desktop="1"] [data-slot="window-controls-reserve"] {
+  display: block;
+}
+
 /* ---------------------------------------------------------------------------
  * Docs code blocks — Shiki renders dual-theme HTML at build time: light colors
  * are inline, dark colors ride along in `--shiki-dark`, swapped in below.
