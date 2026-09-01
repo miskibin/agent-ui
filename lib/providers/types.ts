@@ -51,6 +51,12 @@ export type AgentRunOptions = {
   /** Base64 image payloads (no `data:` prefix) attached to `prompt`, when
    *  `capabilities.vision`. */
   images?: string[]
+  /**
+   * Absolute working folder for this run — the chat's own folder, chosen in
+   * the header. Providers that spawn a CLI use it as the process cwd (and so
+   * as the sandbox the agent reads and writes in); ones that do not, ignore it.
+   */
+  cwd?: string
   signal: AbortSignal
 }
 

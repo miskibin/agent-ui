@@ -94,10 +94,37 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
       typeof value.providerSessionId === "string"
         ? value.providerSessionId
         : undefined,
+    cwd: typeof value.cwd === "string" ? value.cwd : undefined,
+    gitBranch:
+      typeof value.gitBranch === "string" ? value.gitBranch : undefined,
     createdAt: typeof value.createdAt === "number" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
     messageCount:
       typeof value.messageCount === "number" ? value.messageCount : 0,
+  }
+}
+
+/**
+ * Applies the metadata half of a patch. `order` is not here: it moves the row
+ * within the index, which only `patchSession` does.
+ */
+function applyPatch(meta: SessionMeta, patch: SessionPatch): SessionMeta {
+  return {
+    ...meta,
+    ...(patch.title !== undefined ? { title: clampTitle(patch.title) } : null),
+    ...(patch.pinned !== undefined ? { pinned: patch.pinned } : null),
+    ...(patch.providerId !== undefined
+      ? { providerId: patch.providerId }
+      : null),
+    ...(patch.model !== undefined ? { model: patch.model } : null),
+    ...(patch.providerSessionId !== undefined
+      ? { providerSessionId: patch.providerSessionId }
+      : null),
+    ...(patch.cwd !== undefined ? { cwd: patch.cwd.trim() } : null),
+    ...(patch.gitBranch !== undefined
+      ? { gitBranch: patch.gitBranch.trim() }
+      : null),
+    updatedAt: Date.now(),
   }
 }
 
@@ -140,6 +167,8 @@ export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
       order: 0,
       providerId: input.providerId ?? "",
       model: input.model ?? "",
+      ...(input.cwd?.trim() ? { cwd: input.cwd.trim() } : null),
+      ...(input.gitBranch?.trim() ? { gitBranch: input.gitBranch.trim() } : null),
       createdAt: now,
       updatedAt: now,
       messageCount: 0,
@@ -164,19 +193,7 @@ export function patchSession(
     const index = sessions.findIndex((session) => session.id === id)
     if (index < 0) return null
 
-    const next: SessionMeta = {
-      ...sessions[index],
-      ...(patch.title !== undefined ? { title: clampTitle(patch.title) } : null),
-      ...(patch.pinned !== undefined ? { pinned: patch.pinned } : null),
-      ...(patch.providerId !== undefined
-        ? { providerId: patch.providerId }
-        : null),
-      ...(patch.model !== undefined ? { model: patch.model } : null),
-      ...(patch.providerSessionId !== undefined
-        ? { providerSessionId: patch.providerSessionId }
-        : null),
-      updatedAt: Date.now(),
-    }
+    const next = applyPatch(sessions[index], patch)
 
     const rest = [...sessions.slice(0, index), ...sessions.slice(index + 1)]
     const target =
@@ -234,17 +251,8 @@ export async function writeMessages(
     const index = sessions.findIndex((session) => session.id === id)
     if (index < 0) return null
     const next: SessionMeta = {
-      ...sessions[index],
-      ...(patch.title !== undefined ? { title: clampTitle(patch.title) } : null),
-      ...(patch.providerId !== undefined
-        ? { providerId: patch.providerId }
-        : null),
-      ...(patch.model !== undefined ? { model: patch.model } : null),
-      ...(patch.providerSessionId !== undefined
-        ? { providerSessionId: patch.providerSessionId }
-        : null),
+      ...applyPatch(sessions[index], patch),
       messageCount: messages.length,
-      updatedAt: Date.now(),
     }
     sessions[index] = next
     await writeIndex(sessions)

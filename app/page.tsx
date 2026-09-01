@@ -29,6 +29,7 @@ import {
   CommandPalette,
   type CommandPaletteSession,
 } from "@/components/command-palette"
+import { FolderPicker } from "@/components/folder-picker"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
   formatAskQuestionOutput,
@@ -45,6 +46,7 @@ import {
   SideRow,
   SidebarCollapsibleSection,
   SidebarEmptyState,
+  SidebarItemBadge,
   type ChatSidebarItemData,
 } from "@/components/ui/chat-sidebar"
 import type { GenerationStage } from "@/components/ui/generation-status"
@@ -62,6 +64,7 @@ import {
   PromptSuggestions,
   type PromptSuggestion,
 } from "@/components/ui/prompt-suggestions"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import {
@@ -224,6 +227,8 @@ export default function ChatPage() {
   >({})
   const [runs, setRuns] = React.useState<Record<string, SessionRun>>({})
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
+  /** False until the first `/api/sessions` answer — drives the list skeleton. */
+  const [sessionsLoaded, setSessionsLoaded] = React.useState(false)
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
@@ -321,6 +326,7 @@ export default function ChatPage() {
         toast.error("Could not load providers")
       }
 
+      setSessionsLoaded(true)
       if (sessionsResult.status === "fulfilled") {
         bootstrappedRef.current = true
         const list = sessionsResult.value
@@ -454,6 +460,37 @@ export default function ChatPage() {
         )
     },
     [patchLocal]
+  )
+
+  /**
+   * The chat's working folder. A chat that does not exist yet (the very first
+   * one, before anything is sent) is created with the folder already on it, so
+   * picking a folder is never lost.
+   */
+  const setFolder = React.useCallback(
+    (next: { cwd: string; gitBranch: string }) => {
+      const sessionId = activeIdRef.current
+      if (!sessionId) {
+        void api
+          .createSession({ providerId, model, ...next })
+          .then((created) => {
+            setSessions((prev) => [created, ...prev])
+            setThreads((prev) => ({ ...prev, [created.id]: [] }))
+            setActiveId(created.id)
+          })
+          .catch((err: unknown) =>
+            toast.error(errorMessage(err, "Could not start a new chat"))
+          )
+        return
+      }
+      patchLocal(sessionId, next)
+      void api
+        .patchSession(sessionId, next)
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not set the folder"))
+        )
+    },
+    [model, patchLocal, providerId]
   )
 
   const togglePin = React.useCallback((id: string, pinned: boolean) => {
@@ -679,7 +716,13 @@ export default function ChatPage() {
         }
         if (event.type === "done") {
           drain()
-          const elapsed = (nowMs() - startedAt) / 1000
+          /**
+           * Labels the turn's "Worked for 12s" row. The provider's own
+           * `durationMs` wins over the wall clock for the same reason the
+           * chat route prefers it when persisting: otherwise the number the
+           * turn shows live would shift the moment the thread is reloaded.
+           */
+          const elapsed = (event.durationMs ?? nowMs() - startedAt) / 1000
           patchAssistant((message) => ({
             ...message,
             workedFor: elapsed,
@@ -955,7 +998,13 @@ export default function ChatPage() {
       while (userIndex >= 0 && current[userIndex].sender !== "user") userIndex--
       if (userIndex < 0) return
       const prompt = current[userIndex].content
-      const next = current.filter((message) => message.id !== messageId)
+      /**
+       * Everything from the user turn down goes, question included: the run
+       * below re-appends it — once in the optimistic thread, once server-side
+       * — so keeping it here would leave the prompt duplicated in the UI and
+       * on disk.
+       */
+      const next = current.slice(0, userIndex)
       void (async () => {
         await commitThread(sessionId, next)
         await runPrompt({
@@ -997,17 +1046,24 @@ export default function ChatPage() {
         const run = runs[session.id]
         const subtitle = run
           ? STAGE_SUBTITLES[run.stage === "idle" ? "thinking" : run.stage]
-          : session.messageCount === 0
-            ? "New chat"
-            : [
-                providerName(session.providerId),
-                session.providerId === providerId
-                  ? (models.find((m) => m.id === session.model)?.name ??
-                    session.model)
-                  : session.model,
-              ]
-                .filter(Boolean)
-                .join(" · ")
+          : session.cwd
+            ? // A chat pinned to a folder says where it works — that places it
+              // faster than the model it happens to be using.
+              <SidebarItemBadge
+                folder={session.cwd}
+                branch={session.gitBranch}
+              />
+            : session.messageCount === 0
+              ? "New chat"
+              : [
+                  providerName(session.providerId),
+                  session.providerId === providerId
+                    ? (models.find((m) => m.id === session.model)?.name ??
+                      session.model)
+                    : session.model,
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
         return {
           id: session.id,
           title: session.title,
@@ -1073,9 +1129,11 @@ export default function ChatPage() {
               ? `Ask ${activeProviderName}…`
               : "Ask anything"
         }
+        /* The composer already measures like the message column; the empty
+           chat only closes the gap under it, since the suggestions land there. */
         className={cn(
-          "transition-[max-width,padding] duration-300 ease-out",
-          isEmptyChat && "max-w-3xl pb-0 sm:pb-0"
+          "transition-[padding] duration-300 ease-out",
+          isEmptyChat && "pb-0 sm:pb-0"
         )}
         tools={
           <>
@@ -1194,6 +1252,7 @@ export default function ChatPage() {
             open={chatsOpen}
             onToggle={() => setChatsOpen((value) => !value)}
             sessions={sessionItems}
+            loading={!sessionsLoaded && sessionItems.length === 0}
             activeId={activeId}
             renameRequest={renameRequest}
             onSelect={selectSession}
@@ -1217,6 +1276,7 @@ export default function ChatPage() {
       selectSession,
       sessionItems,
       sessions,
+      sessionsLoaded,
       togglePin,
     ]
   )
@@ -1261,7 +1321,13 @@ export default function ChatPage() {
             title={activeSession?.title ?? "New chat"}
             generating={isGenerating}
             stage={activeRun?.stage ?? "thinking"}
-          />
+          >
+            <FolderPicker
+              cwd={activeSession?.cwd}
+              gitBranch={activeSession?.gitBranch}
+              onChange={setFolder}
+            />
+          </AppHeaderTitle>
           <AppHeaderActions>
             <AppHeaderButton
               label="Search chats and commands"
@@ -1286,7 +1352,9 @@ export default function ChatPage() {
             isEmptyChat && "justify-center"
           )}
         >
-          {isEmptyChat ? (
+          {threadLoading ? (
+            <ThreadLoading />
+          ) : isEmptyChat ? (
             <div
               data-slot="chat-opening"
               className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
@@ -1321,7 +1389,6 @@ export default function ChatPage() {
               <PromptSuggestions
                 items={SUGGESTIONS}
                 onSelect={(item) => void send(item.label, [], [])}
-                className="max-w-3xl px-3 pt-2 sm:px-4"
               />
             ) : null}
           </div>
@@ -1378,10 +1445,44 @@ const RelativeTime = React.memo(function RelativeTime({ from }: { from: number }
   return <>{relativeTime(from, nowMs())}</>
 })
 
+/** Cold start: the chat list is still in flight, so show rows, not "empty". */
+const SidebarLoading = React.memo(function SidebarLoading() {
+  return (
+    <div aria-busy className="flex flex-col gap-1 px-1 py-1">
+      {[0, 1, 2, 3].map((row) => (
+        <Skeleton key={row} className="h-9 w-full opacity-40" />
+      ))}
+    </div>
+  )
+})
+
+/** The transcript of a chat that is being read back from disk. */
+const ThreadLoading = React.memo(function ThreadLoading() {
+  return (
+    <div
+      aria-busy
+      aria-label="Loading the chat"
+      className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-7 overflow-hidden px-3 py-6 sm:px-4"
+    >
+      {[0, 1].map((turn) => (
+        <React.Fragment key={turn}>
+          <Skeleton className="ml-auto h-9 w-56 rounded-2xl opacity-40" />
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-3.5 w-[85%] opacity-30" />
+            <Skeleton className="h-3.5 w-[70%] opacity-30" />
+            <Skeleton className="h-3.5 w-[45%] opacity-30" />
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  )
+})
+
 const SidebarSessionSection = React.memo(function SidebarSessionSection({
   open,
   onToggle,
   sessions,
+  loading,
   activeId,
   renameRequest,
   onSelect,
@@ -1392,6 +1493,8 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   open: boolean
   onToggle: () => void
   sessions: ChatSidebarItemData[]
+  /** First fetch still in flight — "New chats appear here" would be a lie. */
+  loading: boolean
   activeId: string
   renameRequest: { id: string; token: number }
   onSelect: (id: string) => void
@@ -1412,7 +1515,13 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
         listId="recent"
         renameRequest={renameRequest}
         sortable
-        emptyState={<SidebarEmptyState>New chats appear here.</SidebarEmptyState>}
+        emptyState={
+          loading ? (
+            <SidebarLoading />
+          ) : (
+            <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
+          )
+        }
         onSelect={onSelect}
         onRename={onRename}
         onTogglePin={onTogglePin}

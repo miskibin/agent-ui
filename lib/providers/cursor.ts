@@ -122,7 +122,8 @@ export function createCursorProvider(
         model: options.model,
         sessionId: options.sessionId,
         signal: options.signal,
-        workspace: process.cwd(),
+        // The chat's own folder when it has one, else wherever the app runs.
+        workspace: options.cwd?.trim() || process.cwd(),
       })
     },
   }

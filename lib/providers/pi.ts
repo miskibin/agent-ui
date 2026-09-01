@@ -107,7 +107,8 @@ export function createPiProvider(
         model: `ollama/${options.model}`,
         sessionId: options.sessionId,
         thinking: options.effort,
-        workspace,
+        // A per-chat folder beats the one workspace from settings.
+        workspace: options.cwd?.trim() || workspace,
         configDir,
         sessionDir,
         binPath,

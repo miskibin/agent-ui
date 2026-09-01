@@ -15,6 +15,7 @@ import {
   onMaximizedChange,
   windowAction,
 } from "@/lib/desktop"
+import { rememberDesktopShell } from "@/lib/theme/apply"
 import { cn } from "@/lib/utils"
 
 /**
@@ -22,6 +23,12 @@ import { cn } from "@/lib/utils"
  * this bar *is* the title bar: the whole strip is a drag region, a double click
  * on empty space toggles maximize, and — off macOS, where the traffic lights
  * are drawn by the system — it carries its own minimize / maximize / close.
+ *
+ * The bar is deliberately quiet: the mark alone (no wordmark — the window
+ * already says what app this is), a hairline that only separates, and one line
+ * of 13px text for the open chat. Anything a page wants next to that title —
+ * the working-folder chip, a back link — goes in `AppHeaderTitle`'s children,
+ * which is the row's one flexible slot.
  *
  * Everything is slot-based (`AppHeaderBrand`, `AppHeaderTitle`,
  * `AppHeaderActions`, `AppHeaderButton`) so the chat page and the settings page
@@ -105,12 +112,12 @@ export function AppMark({ className, ...props }: React.ComponentProps<"svg">) {
 /* -------------------------------------------------------------------------- */
 
 export type AppHeaderBrandProps = React.ComponentProps<"span"> & {
-  /** Wordmark next to the mark; pass `null` for the mark alone. */
+  /** Wordmark next to the mark. Off by default — the mark carries it. */
   label?: React.ReactNode
 }
 
 export function AppHeaderBrand({
-  label = "Agent UI",
+  label = null,
   className,
   children,
   ...props
@@ -122,7 +129,7 @@ export function AppHeaderBrand({
       className={cn("flex shrink-0 items-center gap-2", className)}
       {...props}
     >
-      <AppMark />
+      <AppMark className="size-5" />
       {label != null ? (
         <span
           data-tauri-drag-region
@@ -168,7 +175,7 @@ export function AppHeaderTitle({
         <span
           aria-hidden
           data-tauri-drag-region
-          className="hidden h-4 w-px shrink-0 bg-border sm:block"
+          className="hidden h-3.5 w-px shrink-0 bg-border/60 sm:block"
         />
       ) : null}
       {title != null ? (
@@ -176,12 +183,14 @@ export function AppHeaderTitle({
           data-slot="app-header-title-text"
           data-tauri-drag-region
           title={typeof title === "string" ? title : undefined}
-          className="min-w-0 truncate text-[13px] text-muted-foreground"
+          className="min-w-0 truncate text-[13px] tracking-tight text-foreground/80"
         >
           {title}
         </span>
       ) : null}
       {generating ? (
+        /* `size` is the indicator's box, not the type: 13px box, 6.5px dot,
+           which sits right against the 12px label beside it. */
         <GenerationStatus
           stage={stage}
           size={13}
@@ -328,6 +337,23 @@ function WindowControls() {
 /* Header                                                                      */
 /* -------------------------------------------------------------------------- */
 
+/**
+ * Placeholder the width of `WindowControls`, rendered server-side and until
+ * hydration decides. It is `display:none` unless the pre-paint guard stamped
+ * `data-desktop="1"` on <html> (see `lib/theme/apply.ts`), so a browser tab
+ * pays nothing and the desktop shell stops shifting its whole header the
+ * moment the client chunk lands.
+ */
+function WindowControlsReserve() {
+  return (
+    <div
+      aria-hidden
+      data-slot="window-controls-reserve"
+      className="-mr-3 ml-2 h-12 w-[140px] shrink-0 self-stretch border-l sm:-mr-4"
+    />
+  )
+}
+
 export type AppHeaderProps = React.ComponentProps<"header">
 
 export function AppHeader({
@@ -336,7 +362,13 @@ export function AppHeader({
   onDoubleClick,
   ...props
 }: AppHeaderProps) {
+  const hydrated = useHydrated()
   const { desktop, native } = useDesktopChrome()
+
+  // Sticky enough for the next cold start to reserve the strip up front.
+  React.useEffect(() => {
+    if (hydrated) rememberDesktopShell(desktop)
+  }, [desktop, hydrated])
 
   const handleDoubleClick = (event: React.MouseEvent<HTMLElement>) => {
     onDoubleClick?.(event)
@@ -353,7 +385,7 @@ export function AppHeader({
       data-tauri-drag-region
       onDoubleClick={handleDoubleClick}
       className={cn(
-        "flex h-12 w-full shrink-0 items-center gap-2 border-b bg-background px-3 sm:gap-3 sm:px-4",
+        "flex h-12 w-full shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 sm:gap-3 sm:px-4",
         desktop && "select-none",
         // Clear the macOS traffic lights.
         native && "pl-[78px]",
@@ -363,6 +395,7 @@ export function AppHeader({
     >
       {children}
       {desktop && !native ? <WindowControls /> : null}
+      {hydrated ? null : <WindowControlsReserve />}
     </header>
   )
 }

@@ -1,8 +1,9 @@
 import type { MessageAttachmentData } from "@/components/ui/message"
 import type { ModelOption } from "@/components/ui/model-picker"
+import type { FolderInfo } from "@/lib/folder"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
-import type { AppSettings } from "@/lib/settings/schema"
+import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
 import type {
   CreateSessionInput,
   SessionMeta,
@@ -34,6 +35,37 @@ async function errorText(res: Response) {
 
 export function fetchSettings(): Promise<AppSettings> {
   return fetch("/api/settings", { cache: "no-store" }).then(json<AppSettings>)
+}
+
+/** Read-modify-write of the whole settings object — the file holds one blob. */
+async function updateSettings(
+  patch: (current: AppSettings) => AppSettings
+): Promise<AppSettings> {
+  const current = await fetchSettings()
+  const res = await fetch("/api/settings", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch(current)),
+  })
+  return json<AppSettings>(res)
+}
+
+/** Pushes a folder to the front of the picker's MRU list. */
+export function rememberFolder(path: string): Promise<AppSettings> {
+  return updateSettings((current) => ({
+    ...current,
+    recentFolders: [
+      path,
+      ...current.recentFolders.filter((entry) => entry !== path),
+    ].slice(0, MAX_RECENT_FOLDERS),
+  }))
+}
+
+/** Does this path exist, is it a directory, and what git branches does it have. */
+export function fetchFolderInfo(path: string): Promise<FolderInfo> {
+  return fetch(`/api/fs/validate?path=${encodeURIComponent(path)}`, {
+    cache: "no-store",
+  }).then(json<FolderInfo>)
 }
 
 export function fetchProviders(): Promise<ProviderInfo[]> {

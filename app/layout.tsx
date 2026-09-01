@@ -1,5 +1,4 @@
 import type { Metadata } from "next"
-import { Geist_Mono, Inter } from "next/font/google"
 import "./globals.css"
 import { Toaster } from "sonner"
 import { DesktopUpdater } from "@/components/desktop-updater"
@@ -12,18 +11,7 @@ import {
 import { AppearanceProvider } from "@/lib/theme/theme-client"
 import { cn } from "@/lib/utils"
 
-/** ChatGPT ships Klim’s Söhne (paid). Inter is the closest webfont we can distribute. */
-const fontSansUi = Inter({
-  subsets: ["latin", "latin-ext"],
-  variable: "--font-sans-ui",
-  display: "swap",
-})
-
-const fontMono = Geist_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono",
-  display: "swap",
-})
+import { themeFontClassName } from "./fonts"
 
 export const metadata: Metadata = {
   title: {
@@ -43,12 +31,9 @@ export default function RootLayout({
     <html
       lang="en"
       suppressHydrationWarning
-      className={cn(
-        "antialiased",
-        fontSansUi.variable,
-        fontMono.variable,
-        fontSansUi.className
-      )}
+      // Every theme font is mounted as a CSS variable; the active theme picks
+      // which one --font-sans / --font-mono point at.
+      className={cn("antialiased", themeFontClassName)}
     >
       <head>
         {/* Every theme preset, keyed by [data-theme] — see lib/theme/apply.ts. */}
