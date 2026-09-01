@@ -62,6 +62,7 @@ import {
   PromptSuggestions,
   type PromptSuggestion,
 } from "@/components/ui/prompt-suggestions"
+import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
@@ -218,6 +219,8 @@ export default function ChatPage() {
   >({})
   const [runs, setRuns] = React.useState<Record<string, SessionRun>>({})
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
+  /** False until the first `/api/sessions` answer — drives the list skeleton. */
+  const [sessionsLoaded, setSessionsLoaded] = React.useState(false)
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
@@ -315,6 +318,7 @@ export default function ChatPage() {
         toast.error("Could not load providers")
       }
 
+      setSessionsLoaded(true)
       if (sessionsResult.status === "fulfilled") {
         bootstrappedRef.current = true
         const list = sessionsResult.value
@@ -1170,6 +1174,7 @@ export default function ChatPage() {
             open={chatsOpen}
             onToggle={() => setChatsOpen((value) => !value)}
             sessions={sessionItems}
+            loading={!sessionsLoaded && sessionItems.length === 0}
             activeId={activeId}
             renameRequest={renameRequest}
             onSelect={selectSession}
@@ -1193,6 +1198,7 @@ export default function ChatPage() {
       selectSession,
       sessionItems,
       sessions,
+      sessionsLoaded,
       togglePin,
     ]
   )
@@ -1268,7 +1274,9 @@ export default function ChatPage() {
             isEmptyChat && "justify-center"
           )}
         >
-          {isEmptyChat ? (
+          {threadLoading ? (
+            <ThreadLoading />
+          ) : isEmptyChat ? (
             <div
               data-slot="chat-opening"
               className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
@@ -1376,10 +1384,44 @@ function FolderSubtitle({ cwd, branch }: { cwd: string; branch?: string }) {
   )
 }
 
+/** Cold start: the chat list is still in flight, so show rows, not "empty". */
+const SidebarLoading = React.memo(function SidebarLoading() {
+  return (
+    <div aria-busy className="flex flex-col gap-1 px-1 py-1">
+      {[0, 1, 2, 3].map((row) => (
+        <Skeleton key={row} className="h-9 w-full opacity-40" />
+      ))}
+    </div>
+  )
+})
+
+/** The transcript of a chat that is being read back from disk. */
+const ThreadLoading = React.memo(function ThreadLoading() {
+  return (
+    <div
+      aria-busy
+      aria-label="Loading the chat"
+      className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-7 overflow-hidden px-3 py-6 sm:px-4"
+    >
+      {[0, 1].map((turn) => (
+        <React.Fragment key={turn}>
+          <Skeleton className="ml-auto h-9 w-56 rounded-2xl opacity-40" />
+          <div className="flex flex-col gap-2">
+            <Skeleton className="h-3.5 w-[85%] opacity-30" />
+            <Skeleton className="h-3.5 w-[70%] opacity-30" />
+            <Skeleton className="h-3.5 w-[45%] opacity-30" />
+          </div>
+        </React.Fragment>
+      ))}
+    </div>
+  )
+})
+
 const SidebarSessionSection = React.memo(function SidebarSessionSection({
   open,
   onToggle,
   sessions,
+  loading,
   activeId,
   renameRequest,
   onSelect,
@@ -1390,6 +1432,8 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   open: boolean
   onToggle: () => void
   sessions: ChatSidebarItemData[]
+  /** First fetch still in flight — "New chats appear here" would be a lie. */
+  loading: boolean
   activeId: string
   renameRequest: { id: string; token: number }
   onSelect: (id: string) => void
@@ -1410,7 +1454,13 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
         listId="recent"
         renameRequest={renameRequest}
         sortable
-        emptyState={<SidebarEmptyState>New chats appear here.</SidebarEmptyState>}
+        emptyState={
+          loading ? (
+            <SidebarLoading />
+          ) : (
+            <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
+          )
+        }
         onSelect={onSelect}
         onRename={onRename}
         onTogglePin={onTogglePin}
