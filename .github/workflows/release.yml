@@ -16,9 +16,10 @@ env:
   RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
 
 jobs:
-  # The release is created once, up front, so the bundle jobs upload into the
-  # same one instead of four of them racing to create it. It stays a draft
-  # until every platform has uploaded, so it never goes public half-populated.
+  # The release is created once, up front, and every bundle job uploads into
+  # that one rather than creating its own — so added targets can never race to
+  # create the same release. It stays a draft until they have all uploaded, so
+  # it never goes public half-populated.
   create-release:
     name: Create draft release
     runs-on: ubuntu-latest
@@ -79,25 +80,17 @@ jobs:
     permissions:
       contents: write
 
+    # Windows only. The macOS (aarch64/x86_64-apple-darwin, on macos-latest)
+    # and Linux (x86_64-unknown-linux-gnu, on ubuntu-22.04) entries were
+    # dropped, not because they failed — add them back here if this ever
+    # ships beyond Windows; the rest of the job is already target-agnostic.
     strategy:
       fail-fast: false
       matrix:
         include:
-          - label: macOS (Apple silicon)
-            os: macos-latest
-            target: aarch64-apple-darwin
-            args: "--target aarch64-apple-darwin"
-          - label: macOS (Intel)
-            os: macos-latest
-            target: x86_64-apple-darwin
-            args: "--target x86_64-apple-darwin"
           - label: Windows (x64)
             os: windows-latest
             target: x86_64-pc-windows-msvc
-            args: ""
-          - label: Linux (x64)
-            os: ubuntu-22.04
-            target: x86_64-unknown-linux-gnu
             args: ""
 
     steps:
