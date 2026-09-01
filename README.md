@@ -40,6 +40,7 @@ Two things worth knowing:
 
 - **pi has no sandbox.** It edits files and runs shell commands in its workspace with your permissions and no approval prompt. Set **Providers → pi → workspace** to the directory you want it loose in; it defaults to the app's own cwd.
 - **Set `num_ctx` explicitly.** Ollama's default context silently truncates an agent prompt after a few tool calls; give the model a Modelfile with as much context as your VRAM allows.
+- **On Windows**, `npm i -g` installs pi as a `pi.cmd` shim, and Node refuses to spawn `.cmd` files directly. The app looks past the shim for pi's own entry point automatically; if your install is laid out unusually, point **Providers → pi** at a `pi.exe` or at the `…\dist\bundle\cli.js` the shim wraps — a `.js` path is run with the app's own Node.
 
 ## Quick start
 
