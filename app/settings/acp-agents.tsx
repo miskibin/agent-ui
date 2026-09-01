@@ -65,7 +65,7 @@ export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps)
     const all = Object.keys(acp.agents)
     return [
       ...all.filter((key) => key === "dsh"),
-      ...all.filter((key) => key !== "dsh").sort(),
+      ...all.filter((key) => key !== "dsh").sort((a, b) => a.localeCompare(b)),
     ]
   }, [acp.agents])
 
