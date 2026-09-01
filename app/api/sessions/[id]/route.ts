@@ -40,6 +40,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
     order: typeof body.order === "number" ? body.order : undefined,
     providerId: typeof body.providerId === "string" ? body.providerId : undefined,
     model: typeof body.model === "string" ? body.model : undefined,
+    // "" resets it — that is what `/clear` sends to drop the provider thread.
+    providerSessionId:
+      typeof body.providerSessionId === "string"
+        ? body.providerSessionId
+        : undefined,
   })
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })

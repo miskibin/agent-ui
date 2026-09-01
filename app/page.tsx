@@ -886,7 +886,13 @@ export default function ChatPage() {
       while (userIndex >= 0 && current[userIndex].sender !== "user") userIndex--
       if (userIndex < 0) return
       const prompt = current[userIndex].content
-      const next = current.filter((message) => message.id !== messageId)
+      /**
+       * Everything from the user turn down goes, question included: the run
+       * below re-appends it — once in the optimistic thread, once server-side
+       * — so keeping it here would leave the prompt duplicated in the UI and
+       * on disk.
+       */
+      const next = current.slice(0, userIndex)
       void (async () => {
         await commitThread(sessionId, next)
         await runPrompt({
