@@ -86,7 +86,7 @@ export function ModelProvidersSection({ settings, loaded, update }: AppSettingsA
     <SettingsSection
       id="models"
       title="Model providers"
-      description="OpenAI-compatible endpoints that supply models to harnesses like pi and direct chat. Keys are stored locally in settings.json."
+      description="OpenAI-compatible endpoints that supply models to harnesses like pi and direct chat — this is where API keys live."
     >
       {loaded
         ? orderedSlugs.map((slug) => (

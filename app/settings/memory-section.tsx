@@ -275,7 +275,7 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
     : !memory.model
       ? "No extraction model chosen."
       : !store.ollamaEnabled
-        ? "Ollama is disabled in Providers."
+        ? "Ollama is disabled in Harnesses."
         : !store.ollamaReachable && !store.loading
           ? `No Ollama server at ${store.ollamaBaseUrl || "an unset URL"}.`
           : undefined

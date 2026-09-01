@@ -77,8 +77,8 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
   return (
     <SettingsSection
       id="providers"
-      title="Providers"
-      description="Which agent backends the composer can talk to."
+      title="Harnesses"
+      description="The agent backends that run your chats — each harness brings its own tools and session handling."
     >
       <SettingsRow
         title="Default provider"
