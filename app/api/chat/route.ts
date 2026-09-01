@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import type { MessageAttachmentData } from "@/components/ui/message"
 import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
+import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
 import { getProvider } from "@/lib/providers/registry"
 import type { AgentStreamEvent, ChatTurn } from "@/lib/providers/types"
 import {
@@ -137,6 +138,8 @@ export async function POST(req: Request) {
   let assistant = seedAssistantMessage(body.assistantMessageId || newId())
   let providerSessionId = providerChanged ? undefined : session.providerSessionId
   let durationMs: number | undefined
+  let usage: AgentTokenUsage | undefined
+  const cwd = body.cwd?.trim() || session.cwd
 
   const abort = new AbortController()
   const onClientGone = () => abort.abort()
@@ -163,7 +166,7 @@ export async function POST(req: Request) {
           model,
           sessionId: providerSessionId,
           effort: info.capabilities.effort ? body.effort : undefined,
-          cwd: body.cwd?.trim() || session.cwd,
+          cwd,
           history,
           images: info.capabilities.vision
             ? attachments.map((a) => base64FromDataUrl(a.url))
@@ -174,6 +177,7 @@ export async function POST(req: Request) {
           if (event.type === "done") {
             providerSessionId = event.sessionId ?? providerSessionId
             durationMs = event.durationMs
+            usage = event.usage
           }
           assistant = applyStreamEvent(assistant, event)
           send(event)
@@ -210,7 +214,14 @@ export async function POST(req: Request) {
       ...assistant,
       createdAt: Date.now(),
       workedFor: elapsed,
-      metadata: { model, providerId, responseTime: elapsed },
+      metadata: {
+        model,
+        providerId,
+        responseTime: elapsed,
+        finishedAt: Date.now(),
+        ...(cwd ? { cwd, gitBranch: session!.gitBranch } : null),
+        ...tokenMetadata(usage),
+      },
     }
     const keep = finished.content.trim() || (finished.parts?.length ?? 0) > 0
     const patch: SessionPatch = {
@@ -237,4 +248,18 @@ export async function POST(req: Request) {
       "X-Accel-Buffering": "no",
     },
   })
+}
+
+/** Only the counters the backend actually reported make it into the record. */
+function tokenMetadata(usage: AgentTokenUsage | undefined) {
+  if (!usage) return null
+  const { input, output, tokensPerSecond } = usage
+  return {
+    ...(input == null ? null : { inputTokens: input }),
+    ...(output == null ? null : { outputTokens: output }),
+    ...(tokensPerSecond == null ? null : { tokensPerSecond }),
+    ...(input == null && output == null
+      ? null
+      : { tokens: (input ?? 0) + (output ?? 0) }),
+  }
 }

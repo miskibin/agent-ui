@@ -28,6 +28,7 @@ import {
   readAppearanceMirror,
   writeAppearanceMirror,
 } from "./apply"
+import { findFont } from "./font-options"
 import { findPreset } from "./presets"
 
 const MODES: ThemeMode[] = ["light", "dark", "system"]
@@ -43,6 +44,14 @@ function normalizeAppearance(
     theme: findPreset(value.theme).id,
     mode: asMode(value.mode) ?? DEFAULT_SETTINGS.appearance.mode,
     radiusOverride: normalizeRadiusOverride(value.radiusOverride),
+    fontSans:
+      value.fontSans === undefined
+        ? DEFAULT_SETTINGS.appearance.fontSans
+        : findFont("sans", value.fontSans).id,
+    fontMono:
+      value.fontMono === undefined
+        ? DEFAULT_SETTINGS.appearance.fontMono
+        : findFont("mono", value.fontMono).id,
   }
 }
 
@@ -50,7 +59,9 @@ function isSame(a: AppearanceSettings, b: AppearanceSettings) {
   return (
     a.theme === b.theme &&
     a.mode === b.mode &&
-    a.radiusOverride === b.radiusOverride
+    a.radiusOverride === b.radiusOverride &&
+    a.fontSans === b.fontSans &&
+    a.fontMono === b.fontMono
   )
 }
 

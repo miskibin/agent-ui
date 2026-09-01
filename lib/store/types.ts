@@ -5,12 +5,27 @@ import type { ChatMessageData } from "@/components/ui/message-list"
  * bundle can share them with `lib/store/sessions` (which is server-only).
  */
 
+/**
+ * Provenance for one assistant turn — what answered, how long it took, what
+ * it cost. Surfaced by the metadata button next to copy / regenerate / delete,
+ * and every field is optional: a backend that reports nothing still produces a
+ * turn worth keeping.
+ */
 export type MessageMetadata = {
   model?: string
   providerId?: string
   /** Seconds spent on the turn — rendered under the assistant message. */
   responseTime?: number
+  /** Input + output, kept for turns stored before the split existed. */
   tokens?: number
+  inputTokens?: number
+  outputTokens?: number
+  tokensPerSecond?: number
+  /** Wall clock when the turn settled. */
+  finishedAt?: number
+  /** Working folder and branch the run actually used. */
+  cwd?: string
+  gitBranch?: string
 }
 
 /** Exactly what the UI renders: `ChatMessageData` plus provenance. */

@@ -4,10 +4,24 @@ import * as React from "react"
 import { Check, Monitor, Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import type { ThemeMode } from "@/lib/settings/schema"
 import { MAX_RADIUS, MIN_RADIUS } from "@/lib/theme/apply"
+import {
+  FOLLOW_THEME,
+  MONO_FONTS,
+  SANS_FONTS,
+  findFont,
+  type FontRole,
+} from "@/lib/theme/font-options"
 import {
   THEME_PRESETS,
   presetFontName,
@@ -26,6 +40,11 @@ const MODE_OPTIONS: { id: ThemeMode; label: string; icon: typeof Sun }[] = [
   { id: "dark", label: "Dark", icon: Moon },
   { id: "system", label: "System", icon: Monitor },
 ]
+
+/** Radix Select forbids an empty item value, and `FOLLOW_THEME` is one. */
+const THEME_FONT = " theme"
+
+const FONTS_BY_ROLE = { sans: SANS_FONTS, mono: MONO_FONTS }
 
 const subscribe = () => () => {}
 
@@ -120,6 +139,96 @@ function PresetCard({
   )
 }
 
+/**
+ * One typeface picker. Every option is drawn in its own face, so the list is
+ * the specimen — a font name means nothing to most people, and the row under
+ * the pair shows the pick at the size the app actually uses it.
+ */
+function FontSelect({
+  role,
+  label,
+  value,
+  onChange,
+}: {
+  role: FontRole
+  label: string
+  value: string
+  onChange: (id: string) => void
+}) {
+  const id = `font-${role}`
+  const current = findFont(role, value)
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <label
+        htmlFor={id}
+        className="text-[11px] font-medium text-muted-foreground"
+      >
+        {label}
+      </label>
+      <Select
+        value={current.id === FOLLOW_THEME ? THEME_FONT : current.id}
+        onValueChange={(next) =>
+          onChange(next === THEME_FONT ? FOLLOW_THEME : next)
+        }
+      >
+        <SelectTrigger
+          id={id}
+          size="sm"
+          className="w-full text-[12.5px]"
+          style={current.stack ? { fontFamily: current.stack } : undefined}
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {FONTS_BY_ROLE[role].map((font) => (
+            <SelectItem
+              key={font.id || THEME_FONT}
+              value={font.id || THEME_FONT}
+              /* One line, drawn in the face it names — the trigger renders the
+                 item's own text, so a two-line row would double its height.
+                 The theme entry has no stack: inheriting is what it does. */
+              style={font.stack ? { fontFamily: font.stack } : undefined}
+            >
+              {font.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        {current.description}
+      </p>
+    </div>
+  )
+}
+
+/**
+ * Reads the live custom properties rather than the option's own stack, so it
+ * shows what the document is actually rendering — including the theme's own
+ * face when neither override is set.
+ */
+function FontPreview() {
+  return (
+    <div
+      aria-hidden
+      className="flex flex-col gap-1 rounded-lg border bg-muted/40 px-3 py-2.5"
+    >
+      <span
+        className="text-[15px] leading-relaxed text-foreground"
+        style={{ fontFamily: "var(--font-sans)" }}
+      >
+        Sphinx of black quartz, judge my vow — 0123456789
+      </span>
+      <span
+        className="text-[12px] text-muted-foreground"
+        style={{ fontFamily: "var(--font-mono)" }}
+      >
+        {'const answer = await agent.run({ cwd: "~/code" }) // 0O1lI'}
+      </span>
+    </div>
+  )
+}
+
 export function AppearanceSection() {
   const { appearance, setAppearance } = useAppearance()
   const { resolvedTheme } = useTheme()
@@ -154,6 +263,29 @@ export function AppearanceSection() {
               onSelect={() => setAppearance({ theme: item.id })}
             />
           ))}
+        </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="Typeface"
+        description="Overrides the fonts the theme ships with. Interface covers the whole app; code covers snippets, diffs and paths."
+      >
+        <div className="flex flex-col gap-2.5">
+          <div className="grid gap-2.5 sm:grid-cols-2">
+            <FontSelect
+              role="sans"
+              label="Interface"
+              value={appearance.fontSans}
+              onChange={(fontSans) => setAppearance({ fontSans })}
+            />
+            <FontSelect
+              role="mono"
+              label="Code"
+              value={appearance.fontMono}
+              onChange={(fontMono) => setAppearance({ fontMono })}
+            />
+          </div>
+          <FontPreview />
         </div>
       </SettingsRow>
 

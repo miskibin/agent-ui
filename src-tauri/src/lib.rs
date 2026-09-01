@@ -94,6 +94,7 @@ impl LogTail {
 
 pub fn run() {
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         // Auto-update. The frontend drives it through the injected

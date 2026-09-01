@@ -1,11 +1,11 @@
 import { execFile } from "node:child_process"
 import { stat } from "node:fs/promises"
-import { homedir } from "node:os"
-import { isAbsolute, resolve } from "node:path"
+import { isAbsolute } from "node:path"
 import { promisify } from "node:util"
 
 import { NextResponse } from "next/server"
 
+import { expandHome } from "@/lib/fs-paths"
 import type { FolderInfo } from "@/lib/folder"
 
 export const runtime = "nodejs"
@@ -54,15 +54,6 @@ export async function GET(req: Request) {
 
   const git = await readGit(path)
   return NextResponse.json({ ...empty, exists: true, isDir: true, ...git })
-}
-
-/** `~` and `~/foo` — the only shell-ism a hand-typed path really needs. */
-function expandHome(input: string): string {
-  const path =
-    input === "~" || input.startsWith("~/")
-      ? `${homedir()}${input.slice(1)}`
-      : input
-  return isAbsolute(path) ? resolve(path) : path
 }
 
 async function readGit(cwd: string) {

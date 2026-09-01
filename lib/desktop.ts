@@ -13,6 +13,15 @@ type TauriWindow = {
   onResized(cb: () => void): Promise<() => void>
 }
 
+type TauriDialog = {
+  open(options: {
+    directory?: boolean
+    multiple?: boolean
+    defaultPath?: string
+    title?: string
+  }): Promise<string | string[] | null>
+}
+
 /** Shape of `Update` as the updater plugin's IIFE bundle exposes it. */
 type TauriUpdate = {
   version: string
@@ -33,6 +42,7 @@ type TauriDownloadEvent =
 type TauriGlobal = {
   window?: { getCurrentWindow(): TauriWindow }
   os?: { platform(): string }
+  dialog?: TauriDialog
   updater?: { check(): Promise<TauriUpdate | null> }
   process?: { relaunch(): Promise<void> }
 }
@@ -54,6 +64,37 @@ export function isDesktop(): boolean {
 export function hasNativeWindowControls(): boolean {
   const platform = tauri()?.os?.platform()
   return platform === "macos"
+}
+
+/**
+ * True when the shell can show the OS folder chooser (the `dialog` plugin is
+ * registered in `src-tauri`). Feature-detected rather than assumed: a browser
+ * tab has no such thing, and the picker falls back to its own directory
+ * browser, which is the only option there anyway.
+ */
+export function hasNativeFolderPicker(): boolean {
+  return typeof tauri()?.dialog?.open === "function"
+}
+
+/**
+ * Opens the OS folder chooser and resolves to the absolute path, or `null` if
+ * the user cancelled — or if there is no shell to ask.
+ */
+export async function pickFolderNative(
+  defaultPath?: string
+): Promise<string | null> {
+  const dialog = tauri()?.dialog
+  if (!dialog) return null
+  const picked = await dialog.open({
+    directory: true,
+    multiple: false,
+    title: "Choose a working folder",
+    ...(defaultPath ? { defaultPath } : null),
+  })
+  // `multiple: false` answers with a string, but the plugin's signature does
+  // not know that — take the first either way.
+  const path = Array.isArray(picked) ? picked[0] : picked
+  return path ?? null
 }
 
 export type WindowAction = "minimize" | "toggle-maximize" | "close"
