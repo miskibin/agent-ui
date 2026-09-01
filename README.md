@@ -8,7 +8,7 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it.
 
-Every file the agent touches is one click from the transcript. An edit headline, a row in the files-changed card or a `path.ts` chip in the answer's own text opens a **side-by-side file panel** — the diff, or the whole file with the edited lines marked, syntax-highlighted and scrolled to the first change. Material-style file icons mark the file everywhere it is named. The panel reads the file through `GET /api/file`, which is confined to the active provider's workspace (and never the app's own data directory), and falls back to the diff alone when there is nothing to read.
+Every file the agent touches is one click from the transcript. An edit headline, a row in the files-changed card or a `path.ts` chip in the answer's own text opens a **side-by-side file panel** — the diff, or the whole file with the edited lines marked, syntax-highlighted and scrolled to the first change. Material-style file icons mark the file everywhere it is named. On a wide window the panel is one half of a **draggable split** below the header — the width you drag it to is remembered — and below `md` it slides over the conversation instead. The panel reads the file through `GET /api/file`, which is confined to the active provider's workspace (and never the app's own data directory), and falls back to the diff alone when there is nothing to read.
 
 | Dark mode (Ocean theme) | ⌘K command palette |
 | --- | --- |

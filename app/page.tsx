@@ -16,6 +16,7 @@ import {
   Waves,
 } from "lucide-react"
 import * as React from "react"
+import { type Layout } from "react-resizable-panels"
 import { toast } from "sonner"
 
 import {
@@ -67,6 +68,11 @@ import {
   PromptSuggestions,
   type PromptSuggestion,
 } from "@/components/ui/prompt-suggestions"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
@@ -87,6 +93,16 @@ const DESKTOP_QUERY = "(min-width: 768px)"
 /** Last known sidebar index + open thread, so a reload paints before the fetch. */
 const CACHE_INDEX_KEY = "agent-ui:sessions"
 const CACHE_ACTIVE_KEY = "agent-ui:active-session"
+/** Where the dragged file-panel width is remembered, as a percentage. */
+const CACHE_SPLIT_KEY = "agent-ui:preview-size"
+
+/** The conversation and the file panel are the two panes of one split. */
+const WORKSPACE_GROUP_ID = "chat-workspace"
+const CHAT_PANEL_ID = "chat"
+const PREVIEW_PANEL_ID = "preview"
+const DEFAULT_PREVIEW_SIZE = 35
+const MIN_PREVIEW_SIZE = 20
+const MAX_PREVIEW_SIZE = 60
 
 const EMPTY_MESSAGES: StoredMessage[] = []
 
@@ -187,6 +203,17 @@ function writeCache(key: string, value: unknown) {
   }
 }
 
+/** Percentage of the workspace the file panel had last time, if it is sane. */
+function readPreviewSize() {
+  const raw = readCache<number>(CACHE_SPLIT_KEY)
+  return typeof raw === "number" &&
+    Number.isFinite(raw) &&
+    raw >= MIN_PREVIEW_SIZE &&
+    raw <= MAX_PREVIEW_SIZE
+    ? raw
+    : null
+}
+
 /**
  * The chat surface. Deliberately a pure client component: sessions, providers
  * and settings are fetched from the app's routes after mount (seeded from a
@@ -224,6 +251,10 @@ export default function ChatPage() {
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
   /** The file open in the right-hand panel; null = the panel is closed. */
   const [preview, setPreview] = React.useState<FilePreviewFile | null>(null)
+  // Where the divider was last dragged to. Read after mount, not during
+  // render: the pane it sizes is not on screen yet, and localStorage does not
+  // exist while the page prerenders.
+  const [previewSize, setPreviewSize] = React.useState(DEFAULT_PREVIEW_SIZE)
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
@@ -253,6 +284,10 @@ export default function ChatPage() {
     (activeSession?.messageCount ?? 0) > 0
   const isEmptyChat = messages.length === 0 && !threadLoading
   const drawerOpen = mobileNavOpen && !isDesktop
+  // The file panel is a resizable pane on desktop and an overlay below md.
+  // Derived, so exactly one FilePreview is ever mounted.
+  const dockedPreview = isDesktop ? preview : null
+  const overlayPreview = isDesktop ? null : preview
   const pendingAsk = React.useMemo(
     () => findPendingAsk(messages) !== null,
     [messages]
@@ -938,6 +973,23 @@ export default function ChatPage() {
   const closePreview = React.useCallback(() => setPreview(null), [])
 
   /**
+   * The saved split rides in on the panes' own `defaultSize` rather than the
+   * group's `defaultLayout`: the group mounts before the file pane exists, and
+   * a layout naming a panel that is not there yet is ignored.
+   */
+  React.useEffect(() => {
+    const saved = readPreviewSize()
+    // Deferred — a synchronous setState in an effect body is a lint error here.
+    if (saved != null) queueMicrotask(() => setPreviewSize(saved))
+  }, [])
+
+  const saveSplit = React.useCallback((layout: Layout) => {
+    const size = layout[PREVIEW_PANEL_ID]
+    if (size == null) return
+    writeCache(CACHE_SPLIT_KEY, size)
+  }, [])
+
+  /**
    * Opens the panel from what the transcript already holds, then fills in the
    * file's text from disk when that arrives. The fetch is strictly an
    * enrichment: it never gates the open, and a failure (no such file, another
@@ -1341,88 +1393,136 @@ export default function ChatPage() {
           </AppHeaderActions>
         </AppHeader>
 
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col overflow-x-hidden",
-            isEmptyChat && "justify-center"
-          )}
-        >
-          {isEmptyChat ? (
-            <div
-              data-slot="chat-opening"
-              className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+        {/*
+          Everything below the header — the header itself spans the full width
+          right of the sidebar, because it doubles as the desktop window's drag
+          chrome and must never be covered or squeezed by the file panel. The
+          `relative` here is what the below-md overlay anchors to.
+        */}
+        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          {/*
+            Desktop: the conversation and the file panel are two panes of one
+            draggable split. A pane's content wrapper carries an inline
+            `overflow: auto`, so the children that own their own scrolling turn
+            it off through `style` — a class would lose to the inline rule.
+          */}
+          <ResizablePanelGroup
+            id={WORKSPACE_GROUP_ID}
+            orientation="horizontal"
+            onLayoutChanged={saveSplit}
+            className="min-w-0 flex-1"
+          >
+            <ResizablePanel
+              id={CHAT_PANEL_ID}
+              defaultSize={`${100 - previewSize}%`}
+              minSize="40%"
+              className="flex min-w-0 flex-col"
+              style={{ overflow: "hidden" }}
             >
-              <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
-                How can I help?
-              </h2>
-            </div>
-          ) : (
-            <MessageList
-              messages={messages}
-              isGenerating={isGenerating}
-              generationStage={activeRun?.stage ?? "idle"}
-              onEditMessage={handleEditMessage}
-              onAskAnswer={handleAskAnswer}
-              onOpenFile={handleOpenFile}
-              onChangeFileClick={handleChangeFileClick}
-              onFileReferenceClick={handleFileReferenceClick}
-              onReviewChanges={handleReviewChanges}
-              renderActions={(message) =>
-                message.sender === "assistant" ? (
-                  <MessageActions
-                    messageId={message.id}
-                    content={message.content}
-                    onRegenerate={handleRegenerate}
-                    onDelete={handleDeleteMessage}
+              <div
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col overflow-x-hidden",
+                  isEmptyChat && "justify-center"
+                )}
+              >
+                {isEmptyChat ? (
+                  <div
+                    data-slot="chat-opening"
+                    className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+                  >
+                    <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
+                      How can I help?
+                    </h2>
+                  </div>
+                ) : (
+                  <MessageList
+                    messages={messages}
+                    isGenerating={isGenerating}
+                    generationStage={activeRun?.stage ?? "idle"}
+                    onEditMessage={handleEditMessage}
+                    onAskAnswer={handleAskAnswer}
+                    onOpenFile={handleOpenFile}
+                    onChangeFileClick={handleChangeFileClick}
+                    onFileReferenceClick={handleFileReferenceClick}
+                    onReviewChanges={handleReviewChanges}
+                    renderActions={(message) =>
+                      message.sender === "assistant" ? (
+                        <MessageActions
+                          messageId={message.id}
+                          content={message.content}
+                          onRegenerate={handleRegenerate}
+                          onDelete={handleDeleteMessage}
+                        />
+                      ) : null
+                    }
                   />
-                ) : null
-              }
-            />
-          )}
+                )}
 
-          <div data-slot="chat-composer" className="w-full shrink-0">
-            {composer}
-            {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
-              <PromptSuggestions
-                items={SUGGESTIONS}
-                onSelect={(item) => void send(item.label, [], [])}
-                className="max-w-3xl px-3 pt-2 sm:px-4"
+                <div data-slot="chat-composer" className="w-full shrink-0">
+                  {composer}
+                  {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
+                    <PromptSuggestions
+                      items={SUGGESTIONS}
+                      onSelect={(item) => void send(item.label, [], [])}
+                      className="max-w-3xl px-3 pt-2 sm:px-4"
+                    />
+                  ) : null}
+                </div>
+              </div>
+            </ResizablePanel>
+
+            {dockedPreview ? (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel
+                  id={PREVIEW_PANEL_ID}
+                  defaultSize={`${previewSize}%`}
+                  minSize={`${MIN_PREVIEW_SIZE}%`}
+                  maxSize={`${MAX_PREVIEW_SIZE}%`}
+                  className="flex min-w-0 flex-col"
+                  style={{ overflow: "hidden" }}
+                >
+                  <FilePreview
+                    file={dockedPreview}
+                    onClose={closePreview}
+                    className="border-l"
+                  />
+                </ResizablePanel>
+              </>
+            ) : null}
+          </ResizablePanelGroup>
+
+          {/*
+            Below md the file panel slides over the conversation, like the
+            sidebar — but inside this wrapper, so it stops at the header.
+          */}
+          <div
+            aria-hidden={!preview}
+            onClick={closePreview}
+            className={cn(
+              "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
+              preview ? "opacity-100" : "pointer-events-none opacity-0"
+            )}
+          />
+          <div
+            data-slot="chat-file-panel"
+            // Off-canvas when closed: keep it out of the tab order either way.
+            inert={!preview}
+            className={cn(
+              "absolute inset-y-0 right-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
+              "transition-transform duration-300 ease-in-out motion-reduce:transition-none md:hidden",
+              !preview && "translate-x-full"
+            )}
+          >
+            {overlayPreview ? (
+              <FilePreview
+                file={overlayPreview}
+                onClose={closePreview}
+                className="border-l"
               />
             ) : null}
           </div>
         </div>
-      </div>
-
-      {/* Below md the file panel slides over the conversation, like the sidebar. */}
-      <div
-        aria-hidden={!preview}
-        onClick={closePreview}
-        className={cn(
-          "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
-          preview ? "opacity-100" : "pointer-events-none opacity-0"
-        )}
-      />
-      <div
-        data-slot="chat-file-panel"
-        // Off-canvas below md, zero-width above it: either way the closed panel
-        // stays out of the tab order.
-        inert={!preview}
-        className={cn(
-          "z-50 h-full shrink-0 overflow-hidden bg-background",
-          "transition-[width,opacity,transform] duration-300 ease-in-out motion-reduce:transition-none",
-          "max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:w-[min(30rem,100%)] max-md:shadow-xl md:relative",
-          preview
-            ? "md:w-[30rem] md:opacity-100"
-            : "max-md:translate-x-full md:w-0 md:opacity-0"
-        )}
-      >
-        {preview ? (
-          <FilePreview
-            file={preview}
-            onClose={closePreview}
-            className="border-l"
-          />
-        ) : null}
       </div>
 
       <CommandPalette
