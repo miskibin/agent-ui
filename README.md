@@ -8,6 +8,8 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it. While a turn runs you watch it work; once it settles, the reasoning and tool calls fold into a single "Worked for 12s" row above the answer, one click from being opened again, with copy / regenerate / delete and a details popover — model, duration, tokens in and out, tok/s, folder — next to it.
 
+Every file the agent touches is one click from the transcript. An edit headline, a row in the files-changed card or a `path.ts` chip in the answer's own text opens a **side-by-side file panel** — the diff, or the whole file with the edited lines marked, syntax-highlighted and scrolled to the first change. Material-style file icons mark the file everywhere it is named. On a wide window the panel is one half of a **draggable split** below the header — the width you drag it to is remembered — and below `md` it slides over the conversation instead. The panel reads the file through `GET /api/file`, which is confined to the active provider's workspace (and never the app's own data directory), and falls back to the diff alone when there is nothing to read.
+
 ### The wait says what it is
 
 The stretch before a local model's first token is the one that looks broken, and "Thinking" is the wrong word for it: nothing is thinking yet, the weights are still being read off disk. Backends can send a `status` line, and the app shows it where the turn it belongs to is — above the empty answer, and on that chat's sidebar row — counting up, so a long wait reads as a long wait rather than a hang. Ollama asks `/api/ps` before every run, so it knows whether the model is cold and says so by name.
@@ -19,6 +21,8 @@ The stretch before a local model's first token is the one that looks broken, and
 | ![Dark mode](.github/screenshots/chat-dark.png) | ![Command palette](.github/screenshots/palette.png) |
 
 ![Settings](.github/screenshots/settings.png)
+
+![Memory settings](.github/screenshots/settings-memory.png)
 
 ## Providers
 
@@ -147,6 +151,7 @@ Everything is local JSON under `~/.agent-ui` (override with `AGENT_UI_DIR`):
 - `settings.json` — appearance, providers, chat behavior
 - `sessions/index.json` — sidebar metadata (titles, pins, order, provider/model, working folder, timestamps)
 - `sessions/<id>.json` — full transcripts (reasoning, tool calls, markdown)
+- `memory/<category>.md` — one markdown file per memory category, only if you turn memory on
 
 - `pi/models.json` — generated: points pi at your Ollama server's OpenAI-compatible endpoint
 - `pi/sessions/*.jsonl` — pi's own transcripts, kept out of your personal `~/.pi/agent`
@@ -165,7 +170,13 @@ The agent backends keep their own conversation context (Cursor, pi and ACP sessi
 
   Adding a theme is one entry in `scripts/import-tweakcn.mjs` and `node scripts/import-tweakcn.mjs`, which refreshes the checked-in `lib/theme/themes/generated.ts`; if it names a typeface the app does not load yet, the script says so.
 - **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, the list of ACP agents (command, workspace, permission policy, plus dsh's endpoint and sandbox), default provider, with live reachability badges.
+- **Memory** — off by default. A small local model reads *your* messages after each turn and keeps a handful of durable preferences — how you want answers written, your stack, how you work — in `~/.agent-ui/memory/<category>.md`. Those facts are handed to every backend you chat with afterwards, so it is opt-in and everything about it is visible: the files are plain markdown you can read and edit right in settings (rename a category to move its facts), a toast says when an update is running, and a marker in the thread says what changed.
+
+  The whole store is capped (2000 characters by default), which is the design: at that size every fact fits in the prompt, so there is no retrieval step, no embeddings and no vector store — and going over the cap makes the extractor merge and shorten what it already has instead of piling on more. It rewrites whole categories rather than appending lines, so contradictions get replaced rather than accumulated.
+
+  The extractor only ever sees what you typed — never the agent's replies, its tool calls, or any file it read — so nothing in a repository you point the agent at can write itself into a file that goes into all your later conversations. Health, ethnicity, religion, politics and gender identity are skipped unless you opt in; identity numbers, payment details and credentials are never stored either way. Needs Ollama; without it the notes are still used, just never updated automatically.
 - **Chat** — default reasoning effort, prompt suggestions, auto-titling, and notification sounds for completed runs and questions that need attention.
+
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
 
 ## Architecture
@@ -182,6 +193,7 @@ app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
 - One streaming protocol (`AgentStreamEvent`: `session · status · thinking · tool · text · done · error`) between every backend and the UI. `status` carries progress that is not part of the answer; `done` carries the turn's token usage.
 - The chat surface is a pure client page: nothing on the critical path waits for the server, the sidebar seeds from a localStorage snapshot before the network answers, and message rows keep the memoization guarantees of the component family during streaming.
 - UI comes from the chat-components registry — themed by shadcn tokens, customizable through `data-slot` attributes without forking.
+- `GET /api/file` backs the file panel: it resolves a path against the chat's own folder when it has one, else the running provider's workspace (`cursor-agent` and the mock use the app's cwd, pi its configured workspace), refuses anything outside that root or inside the app's data directory, and caps a read at 1.5 MB.
 
 ## Development
 

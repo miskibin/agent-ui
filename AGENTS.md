@@ -27,9 +27,10 @@ edit the vendored file. If composition genuinely can't express it, that's the si
 upstream component needs a new prop or slot: go through steps 1–4.
 
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
-`components/command-palette.tsx`, `components/folder-picker.tsx`, `components/message-actions.tsx`,
+`components/command-palette.tsx`, `components/folder-picker.tsx`, `components/memory-notice.tsx`,
+`components/message-actions.tsx`,
 `components/provider-picker.tsx`, `components/theme-provider.tsx`,
-everything in `app/`, `lib/providers/`, `lib/store/`, `lib/settings/`, `lib/theme/`,
+everything in `app/`, `lib/providers/`, `lib/store/`, `lib/settings/`, `lib/theme/`, `lib/memory/`,
 `lib/api-client.ts`, `lib/message-stream.ts`, `lib/desktop.ts`, `lib/folder.ts`,
 `lib/fs-paths.ts`, `src-tauri/`.
 
@@ -66,11 +67,39 @@ one interface:
   `sessions/index.json` (sidebar metadata) separate from `sessions/<id>.json` (transcripts).
   Settings in `settings.json` via `lib/settings/` (`GET/PUT /api/settings`, deep-merged over
   defaults so old files keep loading).
+- User memory (`lib/memory/`, off by default): durable preferences in
+  `memory/<category>.md`, one markdown file per category — a directory rather than a key in
+  settings.json precisely so it can be read, edited, exported and shredded on its own.
+  `context.ts` builds the block a turn is handed, which reaches the backend through the
+  `system` field of `AgentRunOptions`: Ollama sends it as a real system role, the CLI harnesses
+  (one prompt string each) get it fenced in front of the prompt by `withSystemPrefix`, and a
+  provider with `capabilities.resume` is sent it only on the first turn of its conversation.
+  `extract.ts` is the write path and runs *outside* the chat turn, on `POST /api/memory/update`
+  after the answer has settled, against a small Ollama model — so a slow or broken extraction
+  can never delay an answer. It rewrites whole categories rather than patching lines (that is
+  what lets one call add, correct, merge and shorten at once) and the UI's change list is a
+  line diff of the whole run, taken against the state it started from. The
+  `memory.maxChars` budget is enforced *after* the write, with a second merge-and-shorten pass
+  when it is exceeded — a small model will promise to stay under a cap and then not.
+  Two rules are load-bearing and must not be relaxed: the extractor is handed **only the
+  user's own messages** (never assistant text, tool calls, tool output or file contents), so
+  content the agent merely read cannot write itself into every future prompt; and category
+  ids are validated against a separator-free alphabet rather than escaped, because they
+  become file names.
 - Local files an answer points at: `lib/message-stream.ts` rewrites markdown image targets that
   name a path on this machine (`lib/local-media.ts`) to `GET /api/files`, which streams the file
   back on the app's own origin — a browser will not load `file://` from an http page. The route
   refuses cross-site requests and serves everything sandboxed and `nosniff`; `files.anyPath` in
   settings narrows it from any path (the default) to the app's folders.
+- The file panel: every file a turn touched opens beside the conversation. The components are
+  vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/page.tsx` owns the state
+  — which file is open, the split width under `agent-ui:preview-size`, closing on a chat switch —
+  and mounts the panel as the second pane of a `ResizablePanelGroup` *below* the `AppHeader`, which
+  keeps spanning the full width because it is also the desktop window's drag chrome. Below `md` the
+  same panel slides over the conversation inside that wrapper. `GET /api/file` reads the text: the
+  root is the chat's stored folder, else the provider's workspace, and it is resolved server-side
+  from the session id — the client never names a root. Anything outside it, or inside the app's
+  data directory, is a 403; the panel falls back to the diff alone on any failure.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.

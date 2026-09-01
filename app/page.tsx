@@ -14,6 +14,7 @@ import {
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import * as React from "react"
+import { type Layout } from "react-resizable-panels"
 import { toast } from "sonner"
 
 import {
@@ -26,6 +27,7 @@ import {
   type CommandPaletteSession,
 } from "@/components/command-palette"
 import { FolderPicker } from "@/components/folder-picker"
+import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
@@ -46,8 +48,14 @@ import {
   SidebarItemBadge,
   type ChatSidebarItemData,
 } from "@/components/ui/chat-sidebar"
+import {
+  FilePreview,
+  filePreviewFromTool,
+  type FilePreviewFile,
+} from "@/components/ui/file-preview"
 import type { GenerationStage } from "@/components/ui/generation-status"
 import type {
+  ChangeSummaryFile,
   MessageAttachmentData,
   MessageToolCallData,
 } from "@/components/ui/message"
@@ -61,6 +69,11 @@ import {
   PromptSuggestions,
   type PromptSuggestion,
 } from "@/components/ui/prompt-suggestions"
+import {
+  ResizableHandle,
+  ResizablePanel,
+  ResizablePanelGroup,
+} from "@/components/ui/resizable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
@@ -82,6 +95,7 @@ import {
   toolsFromParts,
 } from "@/lib/message-stream"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
+import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
 import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
@@ -93,6 +107,17 @@ const CACHE_INDEX_KEY = "agent-ui:sessions"
 const CACHE_ACTIVE_KEY = "agent-ui:active-session"
 /** Active/running transcripts plus this many recently opened bodies stay hot. */
 const MAX_CACHED_THREADS = 4
+
+/** Where the dragged file-panel width is remembered, as a percentage. */
+const CACHE_SPLIT_KEY = "agent-ui:preview-size"
+
+/** The conversation and the file panel are the two panes of one split. */
+const WORKSPACE_GROUP_ID = "chat-workspace"
+const CHAT_PANEL_ID = "chat"
+const PREVIEW_PANEL_ID = "preview"
+const DEFAULT_PREVIEW_SIZE = 35
+const MIN_PREVIEW_SIZE = 20
+const MAX_PREVIEW_SIZE = 60
 
 const EMPTY_MESSAGES: StoredMessage[] = []
 
@@ -214,6 +239,17 @@ function writeCache(key: string, value: unknown) {
   }
 }
 
+/** Percentage of the workspace the file panel had last time, if it is sane. */
+function readPreviewSize() {
+  const raw = readCache<number>(CACHE_SPLIT_KEY)
+  return typeof raw === "number" &&
+    Number.isFinite(raw) &&
+    raw >= MIN_PREVIEW_SIZE &&
+    raw <= MAX_PREVIEW_SIZE
+    ? raw
+    : null
+}
+
 /**
  * The chat surface. Deliberately a pure client component: sessions, providers
  * and settings are fetched from the app's routes after mount (seeded from a
@@ -238,6 +274,14 @@ export default function ChatPage() {
   })
 
   const [settings, setSettings] = React.useState<AppSettings | null>(null)
+  /**
+   * The last memory update per chat, shown as a marker in the thread. Keyed by
+   * session so switching chats mid-extraction cannot show one chat's changes
+   * under another's last turn.
+   */
+  const [memoryNotices, setMemoryNotices] = React.useState<
+    Record<string, { changes: MemoryChange[]; compacted?: boolean }>
+  >({})
   const [providers, setProviders] = React.useState<ProviderInfo[]>([])
   const [providerId, setProviderId] = React.useState("")
   const [models, setModels] = React.useState<ModelOption[]>([])
@@ -258,6 +302,12 @@ export default function ChatPage() {
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
   /** False until the first `/api/sessions` answer — drives the list skeleton. */
   const [sessionsLoaded, setSessionsLoaded] = React.useState(false)
+  /** The file open in the right-hand panel; null = the panel is closed. */
+  const [preview, setPreview] = React.useState<FilePreviewFile | null>(null)
+  // Where the divider was last dragged to. Read after mount, not during
+  // render: the pane it sizes is not on screen yet, and localStorage does not
+  // exist while the page prerenders.
+  const [previewSize, setPreviewSize] = React.useState(DEFAULT_PREVIEW_SIZE)
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
   const abortsRef = React.useRef(new Map<string, AbortController>())
@@ -276,6 +326,10 @@ export default function ChatPage() {
    * a chat that was merely opened must leave the chat's own agent alone.
    */
   const providerPickRef = React.useRef("")
+  /** Read by `runPrompt`, which must not re-create itself when settings land. */
+  const settingsRef = React.useRef<AppSettings | null>(null)
+  /** Chats with an extraction pass in flight, so a fast reply cannot start two. */
+  const memoryRunsRef = React.useRef(new Set<string>())
 
   // Mirrors for the stable callbacks below — they run after paint, so a click
   // handler always reads the state the user is looking at.
@@ -286,6 +340,7 @@ export default function ChatPage() {
     providersRef.current = providers
     providerIdRef.current = providerId
     modelRef.current = model
+    settingsRef.current = settings
   })
 
   /**
@@ -346,6 +401,10 @@ export default function ChatPage() {
     (activeSession?.messageCount ?? 0) > 0
   const isEmptyChat = messages.length === 0 && !threadLoading
   const drawerOpen = mobileNavOpen && !isDesktop
+  // The file panel is a resizable pane on desktop and an overlay below md.
+  // Derived, so exactly one FilePreview is ever mounted.
+  const dockedPreview = isDesktop ? preview : null
+  const overlayPreview = isDesktop ? null : preview
   const pendingAsk = React.useMemo(
     () => findPendingAsk(messages) !== null,
     [messages]
@@ -622,6 +681,8 @@ export default function ChatPage() {
       setMobileNavOpen(false)
       const current = activeIdRef.current
       if (current !== id) {
+        // The open file belongs to a turn in the chat being left behind.
+        setPreview(null)
         // Crossing between the centered opening and a thread slides the composer.
         const from = threadsRef.current[current]?.length ?? 0
         const to = threadsRef.current[id]?.length ?? 0
@@ -705,6 +766,7 @@ export default function ChatPage() {
   }, [])
 
   const removeSession = React.useCallback((id: string) => {
+    if (activeIdRef.current === id) setPreview(null)
     abortsRef.current.get(id)?.abort()
     abortsRef.current.delete(id)
     setThreads((prev) => {
@@ -775,6 +837,7 @@ export default function ChatPage() {
 
   const handleNewChat = React.useCallback(async () => {
     setMobileNavOpen(false)
+    setPreview(null)
     const empty = sessions.find(
       (session) =>
         session.messageCount === 0 && (threadsRef.current[session.id]?.length ?? 0) === 0
@@ -800,6 +863,57 @@ export default function ChatPage() {
   /* ---------------------------------------------------------------------- */
   /* Running a turn                                                          */
   /* ---------------------------------------------------------------------- */
+
+  /**
+   * Updates the user memory after a turn settles.
+   *
+   * Fire-and-forget on purpose: the answer is already delivered and persisted,
+   * so this owns nothing the chat needs. It reports itself in two places for
+   * two different reasons — a toast at the bottom while it runs, because a
+   * local model can take a few seconds and silence would read as a hang, and a
+   * marker in the thread afterwards, because "a file that goes into every
+   * future conversation just changed" deserves something the user can scroll
+   * back to rather than something that fades.
+   */
+  const runMemoryUpdate = React.useCallback(async (sessionId: string) => {
+    const memory = settingsRef.current?.memory
+    if (!memory?.enabled || !memory.autoUpdate || !memory.model) return
+    if (memoryRunsRef.current.has(sessionId)) return
+    memoryRunsRef.current.add(sessionId)
+
+    const toastId = `memory-${sessionId}`
+    const at = { id: toastId, position: "bottom-center" } as const
+    toast.loading("Updating memory\u2026", at)
+    try {
+      const result = await api.updateMemory(sessionId)
+      if (result.changes.length > 0) {
+        setMemoryNotices((prev) => ({
+          ...prev,
+          [sessionId]: {
+            changes: result.changes,
+            compacted: result.compacted,
+          },
+        }))
+        toast.dismiss(toastId)
+      } else if (result.skipped === "unreachable") {
+        toast.error("Memory: no Ollama server to extract with.", at)
+      } else if (result.skipped === "failed") {
+        toast.error("Couldn't update memory.", at)
+      } else {
+        // Nothing durable was said. That is the common case, and it is not
+        // worth a line of UI.
+        toast.dismiss(toastId)
+      }
+    } catch {
+      toast.error("Couldn't update memory.", at)
+    } finally {
+      memoryRunsRef.current.delete(sessionId)
+    }
+  }, [])
+
+  const dismissMemoryNotice = React.useCallback((sessionId: string) => {
+    setMemoryNotices((prev) => omit(prev, sessionId))
+  }, [])
 
   const runPrompt = React.useCallback(
     async (args: {
@@ -839,6 +953,10 @@ export default function ChatPage() {
           [sessionId]: { startedAt, stage: "thinking" },
         }))
         setFailures((prev) => omit(prev, sessionId))
+        // Last turn's marker belongs to last turn.
+        setMemoryNotices((prev) =>
+          sessionId in prev ? omit(prev, sessionId) : prev
+        )
       }
       if (args.animate) runLayoutTransition(paint)
       else paint()
@@ -900,12 +1018,13 @@ export default function ChatPage() {
         })
       }
 
+      let failed = false
+      let needsAttention = false
       const markFailed = () => {
+        failed = true
         setFailures((prev) => ({ ...prev, [sessionId]: true }))
       }
 
-      let failed = false
-      let needsAttention = false
       const notifiedAskTools = new Set<string>()
 
       /**
@@ -1107,9 +1226,13 @@ export default function ChatPage() {
           prev[sessionId]?.startedAt === startedAt ? omit(prev, sessionId) : prev
         )
         patchLocal(sessionId, { updatedAt: nowMs() })
+        /* Only a turn that actually landed is worth learning from. A stopped
+           one is usually about to be re-sent, and a failed one would spend a
+           model call to stack a second toast under the failure's own. */
+        if (!controller.signal.aborted && !failed) void runMemoryUpdate(sessionId)
       }
     },
-    [patchLocal, settings?.chat.notificationSounds]
+    [patchLocal, runMemoryUpdate, settings?.chat.notificationSounds]
   )
 
   const send = React.useCallback(
@@ -1365,6 +1488,135 @@ export default function ChatPage() {
       void commitThread(sessionId, next)
     },
     [activeId, commitThread]
+  )
+
+  /* ---------------------------------------------------------------------- */
+  /* File preview                                                            */
+  /* ---------------------------------------------------------------------- */
+
+  const closePreview = React.useCallback(() => setPreview(null), [])
+
+  /**
+   * The saved split rides in on the panes' own `defaultSize` rather than the
+   * group's `defaultLayout`: the group mounts before the file pane exists, and
+   * a layout naming a panel that is not there yet is ignored.
+   */
+  React.useEffect(() => {
+    const saved = readPreviewSize()
+    // Deferred — a synchronous setState in an effect body is a lint error here.
+    if (saved != null) queueMicrotask(() => setPreviewSize(saved))
+  }, [])
+
+  const saveSplit = React.useCallback((layout: Layout) => {
+    const size = layout[PREVIEW_PANEL_ID]
+    if (size == null) return
+    writeCache(CACHE_SPLIT_KEY, size)
+  }, [])
+
+  /**
+   * Opens the panel from what the transcript already holds, then fills in the
+   * file's text from disk when that arrives. The fetch is strictly an
+   * enrichment: it never gates the open, and a failure (no such file, another
+   * machine's workspace, a path outside it) leaves the diff-only view standing.
+   *
+   * Disk text is only merged when the transcript carried none — a tool that
+   * streamed its own after-file already matches the diff beside it, and a
+   * partial read carries a `startLine` the whole file would not line up with.
+   */
+  const openPreview = React.useCallback((file: FilePreviewFile) => {
+    setPreview(file)
+    if (file.content !== undefined) return
+    const session = sessionsRef.current.find(
+      (item) => item.id === activeIdRef.current
+    )
+    const provider = session?.providerId || providerIdRef.current
+    if (!provider) return
+    void api
+      .fetchFile(file.path, provider, session?.id ?? "")
+      .then((data) => {
+        setPreview((current) =>
+          current && current.path === file.path && current.content === undefined
+            ? { ...current, content: data.content }
+            : current
+        )
+      })
+      .catch(() => {
+        /* the panel degrades to the diff on its own */
+      })
+  }, [])
+
+  /**
+   * A change row or an inline `path.ts` chip names a path, not a tool — so
+   * reach back into the turn for the last tool that touched it. Null when the
+   * transcript no longer carries a body for that file.
+   */
+  const previewFromTurn = React.useCallback(
+    (messageId: string, path: string) => {
+      const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
+      const message = thread.find((item) => item.id === messageId)
+      const tools = message?.tools?.length
+        ? message.tools
+        : toolsFromParts(message?.parts ?? [])
+      let match: FilePreviewFile | null = null
+      for (const tool of tools) {
+        const file = filePreviewFromTool(tool)
+        if (file?.path === path) match = file
+      }
+      return match
+    },
+    []
+  )
+
+  const handleOpenFile = React.useCallback(
+    (_messageId: string, tool: MessageToolCallData) => {
+      const file = filePreviewFromTool(tool)
+      if (!file) {
+        toast.message("That tool call has no file to preview")
+        return
+      }
+      openPreview(file)
+    },
+    [openPreview]
+  )
+
+  const handleChangeFileClick = React.useCallback(
+    (messageId: string, change: ChangeSummaryFile) => {
+      openPreview(
+        previewFromTurn(messageId, change.path) ?? {
+          path: change.path,
+          added: change.additions,
+          removed: change.deletions,
+        }
+      )
+    },
+    [openPreview, previewFromTurn]
+  )
+
+  /**
+   * The badge hands over the path with any `:line` suffix already dropped;
+   * stripped again here because a host, not the component, decides what a
+   * location means.
+   */
+  const handleFileReferenceClick = React.useCallback(
+    (messageId: string, reference: string) => {
+      const path = reference.replace(/:\d+(?::\d+)?$/, "")
+      openPreview(previewFromTurn(messageId, path) ?? { path })
+    },
+    [openPreview, previewFromTurn]
+  )
+
+  const handleReviewChanges = React.useCallback(
+    (messageId: string) => {
+      const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
+      const message = thread.find((item) => item.id === messageId)
+      const tools = message?.tools?.length
+        ? message.tools
+        : toolsFromParts(message?.parts ?? [])
+      const first = tools.map(filePreviewFromTool).find(Boolean)
+      if (first) openPreview(first)
+      else toast.message("This turn changed no files")
+    },
+    [openPreview]
   )
 
   /* ---------------------------------------------------------------------- */
@@ -1696,64 +1948,160 @@ export default function ChatPage() {
           </AppHeaderActions>
         </AppHeader>
 
-        <div
-          className={cn(
-            "flex min-h-0 flex-1 flex-col overflow-x-hidden",
-            isEmptyChat && "justify-center"
-          )}
-        >
-          {threadLoading ? (
-            <ThreadLoading />
-          ) : isEmptyChat ? (
-            <div
-              data-slot="chat-opening"
-              className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+{/*
+          Everything below the header — the header itself spans the full width
+          right of the sidebar, because it doubles as the desktop window's drag
+          chrome and must never be covered or squeezed by the file panel. The
+          `relative` here is what the below-md overlay anchors to.
+        */}
+        <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+          {/*
+            Desktop: the conversation and the file panel are two panes of one
+            draggable split. A pane's content wrapper carries an inline
+            `overflow: auto`, so the children that own their own scrolling turn
+            it off through `style` — a class would lose to the inline rule.
+          */}
+          <ResizablePanelGroup
+            id={WORKSPACE_GROUP_ID}
+            orientation="horizontal"
+            onLayoutChanged={saveSplit}
+            className="min-w-0 flex-1"
+          >
+            <ResizablePanel
+              id={CHAT_PANEL_ID}
+              defaultSize={`${100 - previewSize}%`}
+              minSize="40%"
+              className="flex min-w-0 flex-col"
+              style={{ overflow: "hidden" }}
             >
-              <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
-                How can I help?
-              </h2>
-            </div>
-          ) : (
-            <MessageList
-              messages={visibleMessages}
-              isGenerating={isGenerating}
-              generationStage={activeRun?.stage ?? "idle"}
-              generationLabel={activeRun?.status}
-              onEditMessage={handleEditMessage}
-              onAskAnswer={handleAskAnswer}
-              renderActions={(message) =>
-                message.sender === "assistant" ? (
-                  <MessageActions
-                    message={message as StoredMessage}
-                    providerName={providerName(
-                      (message as StoredMessage).metadata?.providerId ?? ""
-                    )}
-                    onRegenerate={handleRegenerate}
-                    onDelete={handleDeleteMessage}
-                  />
-                ) : null
-              }
-            />
-          )}
+              <div
+                className={cn(
+                  "flex min-h-0 flex-1 flex-col overflow-x-hidden",
+                  isEmptyChat && "justify-center"
+                )}
+              >
+                {threadLoading ? (
+                  <ThreadLoading />
+                ) : isEmptyChat ? (
+                  <div
+                    data-slot="chat-opening"
+                    className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+                  >
+                    <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
+                      How can I help?
+                    </h2>
+                  </div>
+                ) : (
+                  <MessageList
+                    messages={visibleMessages}
+                    isGenerating={isGenerating}
+                    generationStage={activeRun?.stage ?? "idle"}
+                    generationLabel={activeRun?.status}
+                    onEditMessage={handleEditMessage}
+                    onAskAnswer={handleAskAnswer}
+                    onOpenFile={handleOpenFile}
+                    onChangeFileClick={handleChangeFileClick}
+                    onFileReferenceClick={handleFileReferenceClick}
+                    onReviewChanges={handleReviewChanges}
+                    renderActions={(message) =>
+                      message.sender === "assistant" ? (
+                        <MessageActions
+                          message={message as StoredMessage}
+                          providerName={providerName(
+                            (message as StoredMessage).metadata?.providerId ?? ""
+                          )}
+                          onRegenerate={handleRegenerate}
+                          onDelete={handleDeleteMessage}
+                        />
+                      ) : null
+                    }
+                  >
+                    {/* Composed in through the list's own `children` slot: the
+                        marker belongs after the last turn, inside the
+                        conversation column, and `MessageList` stays
+                        untouched. */}
+                    {memoryNotices[activeId] && !isGenerating ? (
+                      <MemoryNotice
+                        changes={memoryNotices[activeId].changes}
+                        compacted={memoryNotices[activeId].compacted}
+                        onDismiss={() => dismissMemoryNotice(activeId)}
+                      />
+                    ) : null}
+                  </MessageList>
+                )}
 
-          <div data-slot="chat-composer" className="w-full shrink-0">
-            {isEmptyChat ? (
-              /* Aligned with the composer card's own measure, so the two read
-                 as one control rather than two stacked ones. */
-              <div className="mx-auto flex w-full max-w-3xl px-3 pb-2 sm:px-4">
-                <FolderPicker
-                  variant="inline"
-                  cwd={activeSession?.cwd}
-                  gitBranch={activeSession?.gitBranch}
-                  onChange={setFolder}
-                />
+                <div data-slot="chat-composer" className="w-full shrink-0">
+                  {isEmptyChat ? (
+                    /* Aligned with the composer card's own measure, so the two
+                       read as one control rather than two stacked ones. */
+                    <div className="mx-auto flex w-full max-w-3xl px-3 pb-2 sm:px-4">
+                      <FolderPicker
+                        variant="inline"
+                        cwd={activeSession?.cwd}
+                        gitBranch={activeSession?.gitBranch}
+                        onChange={setFolder}
+                      />
+                    </div>
+                  ) : null}
+                  {composer}
+                  {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
+                    <PromptSuggestions
+                      items={SUGGESTIONS}
+                      onSelect={(item) => void send(item.label, [], [])}
+                    />
+                  ) : null}
+                </div>
               </div>
+            </ResizablePanel>
+
+            {dockedPreview ? (
+              <>
+                <ResizableHandle withHandle />
+                <ResizablePanel
+                  id={PREVIEW_PANEL_ID}
+                  defaultSize={`${previewSize}%`}
+                  minSize={`${MIN_PREVIEW_SIZE}%`}
+                  maxSize={`${MAX_PREVIEW_SIZE}%`}
+                  className="flex min-w-0 flex-col"
+                  style={{ overflow: "hidden" }}
+                >
+                  <FilePreview
+                    file={dockedPreview}
+                    onClose={closePreview}
+                    className="border-l"
+                  />
+                </ResizablePanel>
+              </>
             ) : null}
-            {composer}
-            {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
-              <PromptSuggestions
-                items={SUGGESTIONS}
-                onSelect={(item) => void send(item.label, [], [])}
+          </ResizablePanelGroup>
+
+          {/*
+            Below md the file panel slides over the conversation, like the
+            sidebar — but inside this wrapper, so it stops at the header.
+          */}
+          <div
+            aria-hidden={!preview}
+            onClick={closePreview}
+            className={cn(
+              "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
+              preview ? "opacity-100" : "pointer-events-none opacity-0"
+            )}
+          />
+          <div
+            data-slot="chat-file-panel"
+            // Off-canvas when closed: keep it out of the tab order either way.
+            inert={!preview}
+            className={cn(
+              "absolute inset-y-0 right-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
+              "transition-transform duration-300 ease-in-out motion-reduce:transition-none md:hidden",
+              !preview && "translate-x-full"
+            )}
+          >
+            {overlayPreview ? (
+              <FilePreview
+                file={overlayPreview}
+                onClose={closePreview}
+                className="border-l"
               />
             ) : null}
           </div>

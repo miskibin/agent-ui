@@ -43,6 +43,17 @@ export type ChatTurn = {
 export type AgentRunOptions = {
   prompt: string
   model: string
+  /**
+   * Out-of-band context for this turn — today, the user memory block from
+   * `lib/memory`. Providers with a real system role (Ollama) send it as one;
+   * the CLI harnesses, which accept a single prompt string, fence it in front
+   * of the prompt via `withSystemPrefix`.
+   *
+   * The chat route sends it once per backend conversation for providers with
+   * `capabilities.resume` — repeating it every turn would re-send context the
+   * backend already has — and on every turn for the stateless ones.
+   */
+  system?: string
   /** Provider-side session to resume, if capabilities.resume. */
   sessionId?: string
   effort?: string

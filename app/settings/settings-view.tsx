@@ -5,6 +5,7 @@ import Link from "next/link"
 import {
   ArrowLeft,
   Bot,
+  Brain,
   Database,
   MessageSquare,
   Palette,
@@ -23,10 +24,11 @@ import { cn } from "@/lib/utils"
 import { AppearanceSection } from "./appearance-section"
 import { ChatSection } from "./chat-section"
 import { DataSection } from "./data-section"
+import { MemorySection } from "./memory-section"
 import { ProvidersSection } from "./providers-section"
 import { useAppSettings } from "./use-app-settings"
 
-type SectionId = "appearance" | "chat" | "providers" | "data"
+type SectionId = "appearance" | "chat" | "providers" | "memory" | "data"
 
 type SettingsSection = {
   id: SectionId
@@ -68,6 +70,12 @@ const SECTION_GROUPS: SettingsGroup[] = [
         icon: Bot,
         keywords: "default provider mock ollama pi cursor acp dsh agent model",
       },
+      {
+        id: "memory",
+        label: "Memory",
+        icon: Brain,
+        keywords: "memory remember facts recall context notes learned",
+      },
     ],
   },
   {
@@ -81,6 +89,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
       },
     ],
   },
+
 ]
 
 const SECTIONS = SECTION_GROUPS.flatMap((group) => group.sections)
@@ -304,9 +313,11 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
               <ProvidersSection {...settings} />
             ) : null}
             {active === "chat" ? <ChatSection {...settings} /> : null}
+            {active === "memory" ? <MemorySection {...settings} /> : null}
             {active === "data" ? (
               <DataSection dataDir={dataDir} {...settings} />
             ) : null}
+
 
             <p className="mt-6 px-0.5 pb-4 text-[11px] text-muted-foreground">
               Agent UI runs entirely on this machine.

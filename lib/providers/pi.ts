@@ -5,6 +5,7 @@ import { join } from "node:path"
 
 import type { ModelOption } from "@/components/ui/model-picker"
 import { hasPiBinary } from "@/lib/pi-runtime"
+import { withSystemPrefix } from "@/lib/providers/system-prefix"
 import {
   fetchOllamaModels,
   normalizeBaseUrl,
@@ -121,7 +122,7 @@ export function createPiProvider(
       }
       const { runPiAgent } = await import("@/lib/pi-agent")
       yield* runPiAgent({
-        prompt: options.prompt,
+        prompt: withSystemPrefix(options.prompt, options.system),
         model: `ollama/${options.model}`,
         sessionId: options.sessionId,
         thinking: options.effort,

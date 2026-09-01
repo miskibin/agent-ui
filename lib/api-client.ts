@@ -1,6 +1,7 @@
 import type { MessageAttachmentData } from "@/components/ui/message"
 import type { ModelOption } from "@/components/ui/model-picker"
 import type { FolderInfo, FolderListing } from "@/lib/folder"
+import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
 import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
@@ -185,6 +186,32 @@ export function putMessages(
   })
 }
 
+export type FileResponse = {
+  path: string
+  content: string
+  /** The file was over the route's cap — `content` is only its head. */
+  truncated?: boolean
+}
+
+/**
+ * One file's text, resolved against the provider's workspace. Only ever used
+ * to enrich the preview panel, which already has the diff — callers are
+ * expected to swallow the rejection.
+ */
+export function fetchFile(
+  path: string,
+  providerId: string,
+  sessionId = ""
+): Promise<FileResponse> {
+  const query = new URLSearchParams({ path, provider: providerId })
+  // The chat's own folder, when it has one — resolved server-side from the
+  // stored session, so this is a name, not a root the client gets to pick.
+  if (sessionId) query.set("session", sessionId)
+  return fetch(`/api/file?${query}`, { cache: "no-store" }).then(
+    json<FileResponse>
+  )
+}
+
 export type ChatRequest = {
   prompt: string
   providerId: string
@@ -244,4 +271,57 @@ export async function streamChat(
   consume(lines.push(decoder.decode()))
   const tail = lines.finish()
   if (tail !== null) consume([tail, ""])
+}
+
+/* -------------------------------------------------------------------------- */
+/* Memory                                                                      */
+/* -------------------------------------------------------------------------- */
+
+export type MemoryStore = {
+  /** Absolute path of the memory directory, shown in settings. */
+  dir: string
+  files: MemoryFile[]
+  bytes: number
+  /** Ollama's state, which the settings page cannot know without asking. */
+  ollamaEnabled: boolean
+  ollamaBaseUrl: string
+  ollamaReachable: boolean
+}
+
+export function fetchMemory(): Promise<MemoryStore> {
+  return fetch("/api/memory", { cache: "no-store" }).then(json<MemoryStore>)
+}
+
+type MemoryWriteResult = { files: MemoryFile[]; bytes: number }
+
+/** Saves one category from the settings editor; empty content deletes it. */
+export function putMemoryFile(
+  category: string,
+  content: string
+): Promise<MemoryWriteResult> {
+  return fetch("/api/memory", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ category, content }),
+  }).then(json<MemoryWriteResult>)
+}
+
+/** Drops one category, or the whole store when `category` is omitted. */
+export function deleteMemoryFile(category?: string): Promise<MemoryWriteResult> {
+  const query = category ? `?category=${encodeURIComponent(category)}` : ""
+  return fetch(`/api/memory${query}`, { method: "DELETE" }).then(
+    json<MemoryWriteResult>
+  )
+}
+
+/**
+ * Runs an extraction pass over a thread. Fires after a turn settles, on its
+ * own request, so nothing about it can delay or fail the answer itself.
+ */
+export function updateMemory(sessionId: string): Promise<MemoryUpdateResult> {
+  return fetch("/api/memory/update", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+  }).then(json<MemoryUpdateResult>)
 }

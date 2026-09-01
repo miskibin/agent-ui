@@ -88,6 +88,11 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       const startedAt = Date.now()
       const messages = [
+        // Ollama has a real system role, so the memory block goes where it
+        // belongs instead of being fenced into the prompt like the CLIs need.
+        ...(options.system?.trim()
+          ? [{ role: "system" as const, content: options.system.trim() }]
+          : []),
         ...(options.history ?? []).map((turn) => ({
           role: turn.role,
           content: turn.content,
