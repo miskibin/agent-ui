@@ -200,9 +200,14 @@
     @apply border-border outline-ring/50;
   }
 
+  /* Percentages, not viewport units: CSS `zoom` on <html> (see lib/theme/apply.ts)
+     does not scale `vw`/`svh`, so a zoomed subtree that asks for 100svh gets the
+     raw window height multiplied by the zoom factor — i.e. overflow and a pair of
+     scrollbars. Every shell below chains `height: 100%` off the root box instead,
+     which applyZoom has already shrunk by 1/zoom. */
   html,
   body {
-    min-height: 100%;
+    height: 100%;
   }
 
   html {

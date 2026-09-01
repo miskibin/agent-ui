@@ -293,7 +293,7 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
   }, [])
 
   return (
-    <div className="flex h-svh min-h-0 flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background">
       <AppHeader>
         <Link
           href="/"

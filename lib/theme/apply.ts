@@ -77,17 +77,16 @@ export function normalizeZoom(value: unknown): number {
 
 function applyZoom(root: HTMLElement, zoom: number) {
   const next = clampZoom(zoom)
-  if (next === DEFAULT_ZOOM) {
-    root.style.removeProperty("zoom")
-    root.style.removeProperty("width")
-    root.style.removeProperty("height")
-    return
-  }
-  // CSS zoom multiplies used sizes; shrink the box so 100svh still fills the
-  // window instead of overflowing the overflow-hidden shell.
-  root.style.setProperty("zoom", String(next))
-  root.style.width = `${100 / next}vw`
-  root.style.height = `${100 / next}svh`
+  // `zoom` alone — no width/height compensation. A percentage resolves against
+  // a containing block already converted into the zoomed coordinate space, so
+  // the `height: 100%` chain in globals.css lands exactly on the window at every
+  // zoom level. Sizing the root at 100/zoom instead (or letting anything below
+  // ask for `svh`/`vw`, which `zoom` does *not* scale) overshoots the viewport
+  // by that same factor and is what put scrollbars on a resized UI.
+  root.style.removeProperty("width")
+  root.style.removeProperty("height")
+  if (next === DEFAULT_ZOOM) root.style.removeProperty("zoom")
+  else root.style.setProperty("zoom", String(next))
 }
 
 const FONT_KEYS = new Set(["font-sans", "font-mono", "font-serif"])
@@ -122,7 +121,7 @@ export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s
   APPEARANCE_STORAGE_KEY
 )})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
   DEFAULT_SETTINGS.appearance.theme
-)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){var z=Math.round(v.zoom*10)/10;d.style.setProperty("zoom",String(z));d.style.width=100/z+"vw";d.style.height=100/z+"svh"}var f=${JSON.stringify(
+)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){d.style.setProperty("zoom",String(Math.round(v.zoom*10)/10))}var f=${JSON.stringify(
   {
     "--font-sans": {
       stacks: fontStackMap("sans"),

@@ -26,6 +26,11 @@ import {
   CommandPalette,
   type CommandPaletteSession,
 } from "@/components/command-palette"
+import {
+  ContextUsage,
+  contextBaseTokens,
+  useDraftStore,
+} from "@/components/context-usage"
 import { FolderPicker } from "@/components/folder-picker"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
@@ -78,6 +83,12 @@ import {
 } from "@/components/ui/resizable"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
+import {
+  TodoPanel,
+  isTodoToolName,
+  parseTodoItems,
+  type TodoItem,
+} from "@/components/ui/todo-list"
 import * as api from "@/lib/api-client"
 import {
   MAX_IMAGE_BYTES,
@@ -123,6 +134,27 @@ const MIN_PREVIEW_SIZE = 20
 const MAX_PREVIEW_SIZE = 60
 
 const EMPTY_MESSAGES: StoredMessage[] = []
+const EMPTY_TODOS: TodoItem[] = []
+
+/**
+ * The newest plan in a thread, whoever wrote it — a `todo_write`-style tool
+ * from the harness, or an ACP `plan` update that `lib/acp-agent.ts` folds into
+ * the same tool arguments. Derived from the transcript rather than tracked
+ * alongside it, so a reloaded chat shows the plan the live turn ended on.
+ */
+function latestTodos(messages: StoredMessage[]): TodoItem[] {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const parts = messages[i].parts
+    if (!parts) continue
+    for (let j = parts.length - 1; j >= 0; j--) {
+      const part = parts[j]
+      if (part.type !== "tool" || !isTodoToolName(part.tool.name)) continue
+      const items = parseTodoItems(part.tool.input)
+      if (items) return items
+    }
+  }
+  return EMPTY_TODOS
+}
 
 /** How an answered Ask Question block is handed back to the model. */
 const ASK_ANSWER_PREFIX = "AskQuestion result: "
@@ -401,6 +433,30 @@ export default function ChatPage() {
         ? messages.filter((message) => !isInternalMessage(message))
         : messages,
     [messages]
+  )
+  /**
+   * The plan bar above the composer. A streaming turn rewrites `messages` every
+   * frame while the plan itself changes a handful of times per run, so the scan
+   * runs against a deferred copy — React drops the intermediate ones.
+   */
+  const deferredMessages = React.useDeferredValue(messages)
+  const todos = React.useMemo(
+    () => latestTodos(deferredMessages),
+    [deferredMessages]
+  )
+  /**
+   * The composer's context ring. `base` is recomputed every render but only
+   * *changes* when a turn reports its usage, so the memoized composer below is
+   * not rebuilt while one is streaming.
+   */
+  const draftStore = useDraftStore()
+  const contextBase = React.useMemo(
+    () => contextBaseTokens(messages),
+    [messages]
+  )
+  const contextTotal = React.useMemo(
+    () => models.find((option) => option.id === model)?.contextLength,
+    [model, models]
   )
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
@@ -889,7 +945,7 @@ export default function ChatPage() {
    *
    * Fire-and-forget on purpose: the answer is already delivered and persisted,
    * so this owns nothing the chat needs. It reports itself in two places for
-   * two different reasons — a toast at the bottom while it runs, because a
+   * two different reasons — a corner toast while it runs, because a
    * local model can take a few seconds and silence would read as a hang, and a
    * marker in the thread afterwards, because "a file that goes into every
    * future conversation just changed" deserves something the user can scroll
@@ -902,7 +958,9 @@ export default function ChatPage() {
     memoryRunsRef.current.add(sessionId)
 
     const toastId = `memory-${sessionId}`
-    const at = { id: toastId, position: "bottom-center" } as const
+    // No position override: this rides the app's own corner (the `Toaster`'s
+    // `bottom-right`), where every other notification in the app appears.
+    const at = { id: toastId } as const
     toast.loading("Updating memory\u2026", at)
     try {
       const result = await api.updateMemory(sessionId)
@@ -1744,6 +1802,7 @@ export default function ChatPage() {
       <ChatInput
         onSend={handleSend}
         onStop={handleStop}
+        onTextChange={draftStore.set}
         isGenerating={isGenerating}
         placeholder={
           pendingAsk
@@ -1778,6 +1837,11 @@ export default function ChatPage() {
               side="top"
               className="min-w-0"
             />
+            <ContextUsage
+              store={draftStore}
+              base={contextBase}
+              total={contextTotal}
+            />
           </>
         }
       />
@@ -1787,6 +1851,9 @@ export default function ChatPage() {
       chooseModel,
       chooseProvider,
       configureProvider,
+      contextBase,
+      contextTotal,
+      draftStore,
       effort,
       handleSend,
       handleStop,
@@ -1940,7 +2007,7 @@ export default function ChatPage() {
   )
 
   return (
-    <div className="relative flex h-svh min-h-0 overflow-hidden bg-background">
+    <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
       {/* Below md the sidebar slides over the conversation instead of squeezing it. */}
       <div
         aria-hidden={!drawerOpen}
@@ -2080,6 +2147,10 @@ export default function ChatPage() {
                       />
                     </div>
                   ) : null}
+                  {/* The plan the turn is working through, collapsed to one
+                      line. Keyed by chat so switching threads never carries a
+                      disclosure — or a plan — across. */}
+                  <TodoPanel key={activeId} items={todos} />
                   {composer}
                   {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
                     <PromptSuggestions

@@ -15,7 +15,7 @@ export default function Loading() {
     <div
       aria-busy
       aria-label="Loading"
-      className="flex h-svh min-h-0 overflow-hidden bg-background"
+      className="flex h-full min-h-0 overflow-hidden bg-background"
     >
       <div className="hidden h-full w-[290px] shrink-0 flex-col gap-2 border-r border-sidebar-border bg-sidebar p-3 md:flex">
         <Skeleton className="h-6 w-20 opacity-60" />
