@@ -41,7 +41,7 @@ npm run desktop:dev                            # dev shell against localhost:300
 npm run desktop:build                          # installer for your platform
 ```
 
-A production bundle ships the Next standalone server as a Node sidecar: the shell picks a free port, boots the server (~0.6 s), and only then shows the window — no white flash, dark splash if startup is slow. Tagged releases (`v*`) build Windows, macOS (arm64 + x64) and Linux installers via GitHub Actions.
+A production bundle ships the Next standalone server as a Node sidecar: the shell picks a free port, boots the server (~0.6 s), and only then shows the window — no white flash, dark splash if startup is slow. Releases build a Windows (x64) installer via GitHub Actions — push a `v*` tag, or run the Release workflow from the Actions tab with the tag to cut. `npm run desktop:build` still produces an installer for whichever platform you are on.
 
 ### Web / server
 
