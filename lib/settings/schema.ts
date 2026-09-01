@@ -1,3 +1,9 @@
+import {
+  FOLLOW_THEME,
+  findFont,
+  type FontRole,
+} from "@/lib/theme/font-options"
+
 /**
  * App settings shared by the settings page (writes) and the chat/provider
  * layer (reads). Persisted as JSON in ~/.agent-ui/settings.json via
@@ -18,6 +24,12 @@ export type AppearanceSettings = {
    * one rounding.
    */
   radiusOverride: number | null
+  /**
+   * Typeface ids from `lib/theme/font-options`, overriding the ones the theme
+   * ships with. `""` (`FOLLOW_THEME`) hands the choice back to the preset.
+   */
+  fontSans: string
+  fontMono: string
 }
 
 export type OllamaSettings = {
@@ -78,6 +90,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     theme: "modern-minimal",
     mode: "system",
     radiusOverride: null,
+    // The themes disagree about the UI face; the app does not have to. This
+    // is the one people recognise, and every theme still keeps its palette.
+    fontSans: "chatgpt",
+    fontMono: FOLLOW_THEME,
   },
   providers: {
     active: "mock",
@@ -115,6 +131,16 @@ export function normalizeSettings(raw: unknown): AppSettings {
         Number.isFinite(appearance.radiusOverride)
           ? appearance.radiusOverride
           : null,
+      fontSans: asFontId(
+        "sans",
+        appearance.fontSans,
+        DEFAULT_SETTINGS.appearance.fontSans
+      ),
+      fontMono: asFontId(
+        "mono",
+        appearance.fontMono,
+        DEFAULT_SETTINGS.appearance.fontMono
+      ),
     },
     providers: {
       ...DEFAULT_SETTINGS.providers,
@@ -145,6 +171,15 @@ function asObject(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {}
+}
+
+/**
+ * A field that is not there at all means "never chosen", which is the app's
+ * default — not `FOLLOW_THEME`, and not a reason to throw the file away. An
+ * id that *is* there but no longer exists resolves to following the theme.
+ */
+function asFontId(role: FontRole, value: unknown, fallback: string): string {
+  return typeof value === "string" ? findFont(role, value).id : fallback
 }
 
 function isMode(value: unknown): value is ThemeMode {

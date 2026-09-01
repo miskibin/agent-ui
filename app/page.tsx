@@ -2,17 +2,14 @@
 
 import { arrayMove } from "@dnd-kit/sortable"
 import {
-  Copy,
   HelpCircle,
   Palette,
   PanelLeft,
   Paperclip,
   Pencil,
-  RefreshCw,
   Search,
   Settings as SettingsIcon,
   Sparkles,
-  Trash2,
   Waves,
 } from "lucide-react"
 import * as React from "react"
@@ -30,6 +27,7 @@ import {
   type CommandPaletteSession,
 } from "@/components/command-palette"
 import { FolderPicker } from "@/components/folder-picker"
+import { MessageActions } from "@/components/message-actions"
 import { ProviderPicker } from "@/components/provider-picker"
 import {
   formatAskQuestionOutput,
@@ -64,7 +62,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
-import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
+import type {
+  AgentStatusStage,
+  AgentStreamEvent,
+} from "@/lib/cursor-agent-types"
 import { runLayoutTransition } from "@/lib/layout-transition"
 import {
   applyStreamEvent,
@@ -109,12 +110,29 @@ const SUGGESTIONS: PromptSuggestion[] = [
   },
 ]
 
-type SessionRun = { startedAt: number; stage: GenerationStage }
+type SessionRun = {
+  startedAt: number
+  stage: GenerationStage
+  /**
+   * Latest `status` line from the backend — "Loading qwen3:8b into memory ·
+   * 24s". Shown instead of the stage word, and dropped the moment real output
+   * arrives, because by then the stage word is true again.
+   */
+  status?: string
+}
 
 const STAGE_SUBTITLES: Record<Exclude<GenerationStage, "idle">, string> = {
   thinking: "Thinking",
   searching: "Searching",
   responding: "Responding",
+}
+
+/**
+ * `AgentStatusStage` is finer than the indicator's three stages: setup phases
+ * have no dot of their own, and read as thinking.
+ */
+function statusStage(stage: AgentStatusStage | undefined): GenerationStage {
+  return stage === "searching" || stage === "responding" ? stage : "thinking"
 }
 
 /** Wall clock read, hoisted out of the component so render stays pure. */
@@ -224,6 +242,7 @@ export default function ChatPage() {
   const abortsRef = React.useRef(new Map<string, AbortController>())
   const threadsRef = React.useRef(threads)
   const activeIdRef = React.useRef(activeId)
+  const sessionsRef = React.useRef(sessions)
   const inflightRef = React.useRef(new Set<string>())
   const bootstrappedRef = React.useRef(false)
 
@@ -232,6 +251,7 @@ export default function ChatPage() {
   React.useEffect(() => {
     threadsRef.current = threads
     activeIdRef.current = activeId
+    sessionsRef.current = sessions
   })
 
   const messages = threads[activeId] ?? EMPTY_MESSAGES
@@ -613,10 +633,20 @@ export default function ChatPage() {
       const setStage = (stage: GenerationStage) => {
         setRuns((prev) => {
           const run = prev[sessionId]
-          if (!run || run.startedAt !== startedAt || run.stage === stage) {
-            return prev
-          }
-          return { ...prev, [sessionId]: { ...run, stage } }
+          if (!run || run.startedAt !== startedAt) return prev
+          // Real output supersedes whatever the backend last said it was up
+          // to, so the stage change clears the status line with it.
+          if (run.stage === stage && run.status === undefined) return prev
+          return { ...prev, [sessionId]: { startedAt: run.startedAt, stage } }
+        })
+      }
+
+      const setStatus = (status: string, stage: GenerationStage) => {
+        setRuns((prev) => {
+          const run = prev[sessionId]
+          if (!run || run.startedAt !== startedAt) return prev
+          if (run.stage === stage && run.status === status) return prev
+          return { ...prev, [sessionId]: { ...run, stage, status } }
         })
       }
 
@@ -713,15 +743,39 @@ export default function ChatPage() {
           patchAssistant((message) => ({
             ...message,
             workedFor: elapsed,
+            // Mirrors what the chat route persists, so the details popover
+            // says the same thing before and after a reload.
             metadata: {
               model: args.model,
               providerId: args.providerId,
               responseTime: elapsed,
+              finishedAt: nowMs(),
+              ...folderMetadata(sessionsRef.current, sessionId),
+              ...(event.usage?.input == null
+                ? null
+                : { inputTokens: event.usage.input }),
+              ...(event.usage?.output == null
+                ? null
+                : { outputTokens: event.usage.output }),
+              ...(event.usage?.tokensPerSecond == null
+                ? null
+                : { tokensPerSecond: event.usage.tokensPerSecond }),
+              ...(event.usage?.input == null && event.usage?.output == null
+                ? null
+                : {
+                    tokens:
+                      (event.usage?.input ?? 0) + (event.usage?.output ?? 0),
+                  }),
             },
           }))
           if (event.sessionId) {
             patchLocal(sessionId, { providerSessionId: event.sessionId })
           }
+          return
+        }
+        if (event.type === "status") {
+          // Progress, not content: nothing to fold into the message.
+          setStatus(event.text, statusStage(event.stage))
           return
         }
         if (event.type === "thinking") setStage("thinking")
@@ -976,7 +1030,8 @@ export default function ChatPage() {
       sessions.map((session) => {
         const run = runs[session.id]
         const subtitle = run
-          ? STAGE_SUBTITLES[run.stage === "idle" ? "thinking" : run.stage]
+          ? (run.status ??
+            STAGE_SUBTITLES[run.stage === "idle" ? "thinking" : run.stage])
           : session.cwd
             ? // A chat pinned to a folder says where it works — that places it
               // faster than the model it happens to be using.
@@ -1248,17 +1303,11 @@ export default function ChatPage() {
             <PanelLeft />
           </button>
           <AppHeaderBrand />
-          <AppHeaderTitle
-            title={activeSession?.title ?? "New chat"}
-            generating={isGenerating}
-            stage={activeRun?.stage ?? "thinking"}
-          >
-            <FolderPicker
-              cwd={activeSession?.cwd}
-              gitBranch={activeSession?.gitBranch}
-              onChange={setFolder}
-            />
-          </AppHeaderTitle>
+          {/* Just the title. The working folder lives above the composer and
+              on the sidebar row; the run's progress lives above the turn it
+              belongs to and on that row's own line. Neither needs a second
+              home in the window chrome. */}
+          <AppHeaderTitle title={activeSession?.title ?? "New chat"} />
           <AppHeaderActions>
             <AppHeaderButton
               label="Search chats and commands"
@@ -1299,13 +1348,16 @@ export default function ChatPage() {
               messages={messages}
               isGenerating={isGenerating}
               generationStage={activeRun?.stage ?? "idle"}
+              generationLabel={activeRun?.status}
               onEditMessage={handleEditMessage}
               onAskAnswer={handleAskAnswer}
               renderActions={(message) =>
                 message.sender === "assistant" ? (
                   <MessageActions
-                    messageId={message.id}
-                    content={message.content}
+                    message={message as StoredMessage}
+                    providerName={providerName(
+                      (message as StoredMessage).metadata?.providerId ?? ""
+                    )}
                     onRegenerate={handleRegenerate}
                     onDelete={handleDeleteMessage}
                   />
@@ -1315,6 +1367,18 @@ export default function ChatPage() {
           )}
 
           <div data-slot="chat-composer" className="w-full shrink-0">
+            {isEmptyChat ? (
+              /* Aligned with the composer card's own measure, so the two read
+                 as one control rather than two stacked ones. */
+              <div className="mx-auto flex w-full max-w-3xl px-3 pb-2 sm:px-4">
+                <FolderPicker
+                  variant="inline"
+                  cwd={activeSession?.cwd}
+                  gitBranch={activeSession?.gitBranch}
+                  onChange={setFolder}
+                />
+              </div>
+            ) : null}
             {composer}
             {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
               <PromptSuggestions
@@ -1462,60 +1526,6 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
   )
 })
 
-const MessageActions = React.memo(function MessageActions({
-  messageId,
-  content,
-  onRegenerate,
-  onDelete,
-}: {
-  messageId: string
-  content: string
-  onRegenerate: (id: string) => void
-  onDelete: (id: string) => void
-}) {
-  return (
-    <div className="-mt-2 mb-4 flex gap-1 opacity-60 transition-opacity focus-within:opacity-100 hover:opacity-100">
-      <ActionBtn
-        title="Copy"
-        onClick={() => {
-          void navigator.clipboard.writeText(content)
-          toast.success("Copied")
-        }}
-      >
-        <Copy />
-      </ActionBtn>
-      <ActionBtn title="Regenerate" onClick={() => onRegenerate(messageId)}>
-        <RefreshCw />
-      </ActionBtn>
-      <ActionBtn title="Delete" onClick={() => onDelete(messageId)}>
-        <Trash2 />
-      </ActionBtn>
-    </div>
-  )
-})
-
-function ActionBtn({
-  title,
-  onClick,
-  children,
-}: {
-  title: string
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      aria-label={title}
-      onClick={onClick}
-      className="inline-grid size-7 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-3.5"
-    >
-      {children}
-    </button>
-  )
-}
-
 /* -------------------------------------------------------------------------- */
 /* Helpers                                                                     */
 /* -------------------------------------------------------------------------- */
@@ -1524,6 +1534,20 @@ function pickProvider(list: ProviderInfo[], preferred: string) {
   const wanted = list.find((item) => item.id === preferred)
   if (wanted?.available) return wanted.id
   return list.find((item) => item.available)?.id ?? preferred ?? ""
+}
+
+/**
+ * The folder the run actually used, for the details popover. Read from the
+ * sidebar mirror rather than passed down, so a turn that started before the
+ * folder was set still records the one the route ran in.
+ */
+function folderMetadata(sessions: SessionMeta[], sessionId: string) {
+  const session = sessions.find((item) => item.id === sessionId)
+  if (!session?.cwd) return null
+  return {
+    cwd: session.cwd,
+    ...(session.gitBranch ? { gitBranch: session.gitBranch } : null),
+  }
 }
 
 function omit<T>(record: Record<string, T>, key: string): Record<string, T> {

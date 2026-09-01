@@ -6,7 +6,13 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 ![Agent UI — streaming agent run](.github/screenshots/chat-run.png)
 
-Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it. While a turn runs you watch it work; once it settles, the reasoning and tool calls fold into a single "Worked for 12s" row above the answer, one click from being opened again.
+Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it. While a turn runs you watch it work; once it settles, the reasoning and tool calls fold into a single "Worked for 12s" row above the answer, one click from being opened again, with copy / regenerate / delete and a details popover — model, duration, tokens in and out, tok/s, folder — next to it.
+
+### The wait says what it is
+
+The stretch before a local model's first token is the one that looks broken, and "Thinking" is the wrong word for it: nothing is thinking yet, the weights are still being read off disk. Backends can send a `status` line, and the app shows it where the turn it belongs to is — above the empty answer, and on that chat's sidebar row — counting up, so a long wait reads as a long wait rather than a hang. Ollama asks `/api/ps` before every run, so it knows whether the model is cold and says so by name.
+
+![Loading a cold model, said out loud](.github/screenshots/chat-status.png)
 
 | Dark mode (Cosmic Night theme) | ⌘K command palette |
 | --- | --- |
@@ -27,7 +33,18 @@ Providers are detected at runtime and surfaced in the picker with availability b
 
 ### One folder per chat
 
-The chip next to the chat title picks the folder this conversation works in — validated as you type, with the repo's local branches offered when the folder is a git repo, and the folders you used before one click away. Providers that spawn a CLI (Cursor, pi) run in it, so two chats can work in two checkouts at once; the sidebar shows each chat's folder under its title. Nothing is checked out for you — the branch is what you record, not what the app switches to.
+The picker sits directly above the composer on a new chat, where choosing where the agent works is the next thing to do. Once the conversation starts it steps out of the way: the folder is then the sidebar row's own second line, next to every other chat's. Providers that spawn a CLI (Cursor, pi) run in it, so two chats can work in two checkouts at once. Nothing is checked out for you — the branch is what you record, not what the app switches to.
+
+![Choosing a working folder](.github/screenshots/folder-picker.png)
+
+Four ways in, because each covers a case the others do not:
+
+- **Recents**, first — the answer is usually a folder you already used. Each one can be forgotten again; an MRU nobody can prune stops being useful.
+- **A browser**, rooted at your home directory or at `/`, marking git repos as it goes. It runs off the app's own route rather than an OS dialog, so it works identically in a browser tab and in the desktop shell.
+- **A typed path**, with `~` and completion as you type: `~/code/ag` lists `~/code` and narrows to what matches.
+- **The system chooser**, in the desktop shell, for when the folder is easier to find in Explorer or Finder. Feature-detected — a browser tab simply does not show the button.
+
+The path is validated on the server while you type, and the repo's local branches are offered when it is a git repo.
 
 ### The pi harness
 
@@ -91,7 +108,9 @@ The agent backends keep their own conversation context (Cursor and pi sessions r
 
 `/settings` applies everything instantly and persists to `settings.json`:
 
-- **Appearance** — nine complete shadcn themes vendored from the [tweakcn](https://tweakcn.com) registry (Modern Minimal, Graphite, T3 Chat, Catppuccin, Mocha Mousse, Cosmic Night, Amethyst Haze, Perpetuity, Notebook). A theme is not just a palette: it brings its own typeface, corner radius, shadows and letter-spacing, in separate light and dark sets, and the app's own surfaces (code blocks, tool cards, message bubbles) are mixed from those tokens so a warm theme warms the whole window. Plus light/dark/system mode and an optional radius override. A tiny inline bootstrap script applies the stored theme before first paint — no flash.
+- **Appearance** — nine complete shadcn themes vendored from the [tweakcn](https://tweakcn.com) registry (Modern Minimal, Graphite, T3 Chat, Catppuccin, Mocha Mousse, Cosmic Night, Amethyst Haze, Perpetuity, Notebook). A theme is not just a palette: it brings its own typeface, corner radius, shadows and letter-spacing, in separate light and dark sets, and the app's own surfaces (code blocks, tool cards, message bubbles) are mixed from those tokens so a warm theme warms the whole window. Plus light/dark/system mode and an optional radius override.
+
+  **Typeface** is the one token you can pin across every theme: an interface font and a code font, each defaulting to a stack led by the face ChatGPT renders with, each option drawn in its own face in the list. The override is written straight onto `<html>`, which outranks the theme's own value; picking *Theme default* hands the decision back. A tiny inline bootstrap script applies the stored theme *and* the stored fonts before first paint — no flash, no reflow.
 
   Adding a theme is one entry in `scripts/import-tweakcn.mjs` and `node scripts/import-tweakcn.mjs`, which refreshes the checked-in `lib/theme/themes/generated.ts`; if it names a typeface the app does not load yet, the script says so.
 - **Providers** — enable/disable each backend, Ollama base URL, `cursor-agent` and `pi` binary paths, the pi workspace directory, default provider, with live reachability badges.
@@ -108,7 +127,7 @@ app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
                                                 └── pi        (spawns CLI → Ollama)
 ```
 
-- One streaming protocol (`AgentStreamEvent`: `session · thinking · tool · text · done · error`) between every backend and the UI.
+- One streaming protocol (`AgentStreamEvent`: `session · status · thinking · tool · text · done · error`) between every backend and the UI. `status` carries progress that is not part of the answer; `done` carries the turn's token usage.
 - The chat surface is a pure client page: nothing on the critical path waits for the server, the sidebar seeds from a localStorage snapshot before the network answers, and message rows keep the memoization guarantees of the component family during streaming.
 - UI comes from the chat-components registry — themed by shadcn tokens, customizable through `data-slot` attributes without forking.
 

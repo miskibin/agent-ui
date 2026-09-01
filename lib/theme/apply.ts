@@ -15,10 +15,16 @@
  *
  * Every variable in the registry item is emitted as-is; the one edit is fonts,
  * where the loaded `var(--font-…)` is prepended to the theme's stack.
+ *
+ * The typeface is the one token a user may pin across themes (Settings →
+ * Appearance). That override is written inline on <html>, which outranks the
+ * `[data-theme]` block, and is stamped by the pre-paint guard for the same
+ * reason the preset is: a font swap after first paint is a visible reflow.
  */
 
 import { DEFAULT_SETTINGS, type AppearanceSettings } from "@/lib/settings/schema"
 
+import { fontStack, fontStackMap } from "./font-options"
 import { withLoadedFont } from "./fonts"
 import { THEME_PRESETS, findPreset, presetVars } from "./presets"
 
@@ -74,16 +80,30 @@ export function themePresetCss(): string {
 
 /**
  * Pre-paint guard. Reads the localStorage mirrors and stamps the preset (plus
- * an optional radius override and the desktop flag) onto <html> before the
- * first paint, so a reload never flashes the default theme or a browser-shaped
- * header. Dependency-free, try/catch-wrapped, and mode-agnostic — next-themes'
- * own inline script still owns the `.dark` class.
+ * the typeface overrides, an optional radius override and the desktop flag)
+ * onto <html> before the first paint, so a reload never flashes the default
+ * theme, the wrong font or a browser-shaped header. Dependency-free,
+ * try/catch-wrapped, and mode-agnostic — next-themes' own inline script still
+ * owns the `.dark` class.
  */
 export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s=localStorage,v=JSON.parse(s.getItem(${JSON.stringify(
   APPEARANCE_STORAGE_KEY
 )})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
   DEFAULT_SETTINGS.appearance.theme
-)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(s.getItem(${JSON.stringify(
+)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");var f=${JSON.stringify(
+  {
+    "--font-sans": {
+      stacks: fontStackMap("sans"),
+      fallback: DEFAULT_SETTINGS.appearance.fontSans,
+      key: "fontSans",
+    },
+    "--font-mono": {
+      stacks: fontStackMap("mono"),
+      fallback: DEFAULT_SETTINGS.appearance.fontMono,
+      key: "fontMono",
+    },
+  }
+)};for(var p in f){var c=f[p],i=typeof v[c.key]==="string"?v[c.key]:c.fallback,t=c.stacks[i];if(t)d.style.setProperty(p,t)}if(s.getItem(${JSON.stringify(
   DESKTOP_STORAGE_KEY
 )})==="1")d.setAttribute("data-desktop","1")}catch(e){}`
 
@@ -106,7 +126,10 @@ function ensureStyleElement() {
  * class.
  */
 export function applyAppearance(
-  appearance: Pick<AppearanceSettings, "theme" | "radiusOverride">
+  appearance: Pick<
+    AppearanceSettings,
+    "theme" | "radiusOverride" | "fontSans" | "fontMono"
+  >
 ) {
   if (typeof document === "undefined") return
   ensureStyleElement()
@@ -115,6 +138,16 @@ export function applyAppearance(
   const radius = normalizeRadiusOverride(appearance.radiusOverride)
   if (radius === null) root.style.removeProperty("--radius")
   else root.style.setProperty("--radius", `${radius}rem`)
+  // An inline custom property outranks the `[data-theme]` block, so clearing
+  // it — rather than writing the preset's own stack back — is what hands the
+  // typeface decision to the theme again.
+  setFont(root, "--font-sans", fontStack("sans", appearance.fontSans))
+  setFont(root, "--font-mono", fontStack("mono", appearance.fontMono))
+}
+
+function setFont(root: HTMLElement, property: string, stack: string) {
+  if (stack) root.style.setProperty(property, stack)
+  else root.style.removeProperty(property)
 }
 
 export function readAppearanceMirror(): Partial<AppearanceSettings> | null {

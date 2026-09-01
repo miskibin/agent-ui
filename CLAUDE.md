@@ -27,9 +27,11 @@ edit the vendored file. If composition genuinely can't express it, that's the si
 upstream component needs a new prop or slot: go through steps 1–4.
 
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
-`components/command-palette.tsx`, `components/provider-picker.tsx`, `components/theme-provider.tsx`,
+`components/command-palette.tsx`, `components/folder-picker.tsx`, `components/message-actions.tsx`,
+`components/provider-picker.tsx`, `components/theme-provider.tsx`,
 everything in `app/`, `lib/providers/`, `lib/store/`, `lib/settings/`, `lib/theme/`,
-`lib/api-client.ts`, `lib/message-stream.ts`, `lib/desktop.ts`, `src-tauri/`.
+`lib/api-client.ts`, `lib/message-stream.ts`, `lib/desktop.ts`, `lib/folder.ts`,
+`lib/fs-paths.ts`, `src-tauri/`.
 
 ## What this app is
 
@@ -38,7 +40,11 @@ one interface:
 
 - `lib/providers/types.ts` — `AgentProvider { info, listModels, run }` + capability flags
   (`tools`, `resume`, `effort`, `vision`). One streaming protocol for every backend:
-  `AgentStreamEvent` (`session · thinking · tool · text · done · error`).
+  `AgentStreamEvent` (`session · status · thinking · tool · text · done · error`).
+  `status` is progress that is *not* message content (a cold model being loaded, a CLI
+  being spawned); the UI shows the latest one while the turn is still empty and drops it
+  when real output arrives. `done` carries the turn's token usage, which the chat route
+  persists as message metadata.
 - Providers: `mock` (scripted), `cursor` (spawns the `cursor-agent` CLI, resumes by session id),
   `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
   `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over the same Ollama server —
@@ -52,6 +58,10 @@ one interface:
   every variable — colors, radius, fonts, shadows, tracking — into one `[data-theme]`
   stylesheet, `app/fonts.ts` loads the typefaces they name, and the app's own surface aliases
   in `globals.css` are `color-mix`ed from those tokens. Do not hand-edit theme data.
+  The typeface is the one token the user may pin across themes:
+  `lib/theme/font-options.ts` lists the choices, and `applyAppearance` writes the picked
+  stack inline on `<html>`, which outranks the `[data-theme]` block. A new family needs a
+  `next/font` loader in `app/fonts.ts` as well as an entry there.
 - Persistence: JSON under `~/.agent-ui` (`AGENT_UI_DIR` override) via `lib/store/` —
   `sessions/index.json` (sidebar metadata) separate from `sessions/<id>.json` (transcripts).
   Settings in `settings.json` via `lib/settings/` (`GET/PUT /api/settings`, deep-merged over

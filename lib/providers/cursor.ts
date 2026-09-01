@@ -114,6 +114,13 @@ export function createCursorProvider(
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
+      // Spawning the CLI and its first round-trip are silent; say so rather
+      // than letting the UI guess that the model is already thinking.
+      yield {
+        type: "status",
+        stage: "connecting",
+        text: `Starting cursor-agent with ${options.model}`,
+      }
       applyBinOverride()
       const { runCursorAgent } = await import("@/lib/cursor-agent")
       // Resume carries the transcript server-side, so `history` is ignored.

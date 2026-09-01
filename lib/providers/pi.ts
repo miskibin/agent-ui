@@ -91,6 +91,13 @@ export function createPiProvider(
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
+      // Writing the catalog and spawning the CLI both happen before a single
+      // token exists, and both can be slow enough to look like a hang.
+      yield {
+        type: "status",
+        stage: "connecting",
+        text: "Pointing pi at the Ollama catalog",
+      }
       // pi resolves `--model` against its own catalog, so the config has to
       // know about the tag before the process starts.
       try {
@@ -101,6 +108,11 @@ export function createPiProvider(
         return
       }
 
+      yield {
+        type: "status",
+        stage: "loading",
+        text: `Starting pi with ${options.model}`,
+      }
       const { runPiAgent } = await import("@/lib/pi-agent")
       yield* runPiAgent({
         prompt: options.prompt,
