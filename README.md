@@ -6,7 +6,7 @@ A fast, local-first **desktop app** for coding agents. One interface, swappable 
 
 ![Agent UI — streaming agent run](.github/screenshots/chat-run.png)
 
-Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it.
+Reasoning streams, tool calls with live status (including failures), Shiki code, tables, KaTeX and Mermaid, a files-changed summary with per-file diff stats — every turn is rendered from the shared `AgentStreamEvent` protocol, whatever backend produced it. While a turn runs you watch it work; once it settles, the reasoning and tool calls fold into a single "Worked for 12s" row above the answer, one click from being opened again.
 
 | Dark mode (Cosmic Night theme) | ⌘K command palette |
 | --- | --- |
