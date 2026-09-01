@@ -29,6 +29,9 @@ export type ProviderInfo = {
 export type ChatTurn = {
   role: "user" | "assistant"
   content: string
+  /** Base64 image payloads (no `data:` prefix) attached to this turn, for
+   *  providers that replay history — only meaningful when `capabilities.vision`. */
+  images?: string[]
 }
 
 export type AgentRunOptions = {
@@ -45,6 +48,9 @@ export type AgentRunOptions = {
    * `capabilities.resume` ignore it — the backend already has the context.
    */
   history?: ChatTurn[]
+  /** Base64 image payloads (no `data:` prefix) attached to `prompt`, when
+   *  `capabilities.vision`. */
+  images?: string[]
   signal: AbortSignal
 }
 
@@ -57,4 +63,10 @@ export type AgentProvider = {
   info(): Promise<ProviderInfo>
   listModels(): Promise<ModelOption[]>
   run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent>
+  /**
+   * Ids from `listModels()` that actually accept image input. Only providers
+   * with `capabilities.vision` need to implement this — others are never
+   * asked. Omit it and every model is treated as vision-incapable.
+   */
+  visionModels?(): Promise<string[]>
 }
