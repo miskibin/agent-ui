@@ -3,6 +3,13 @@ import type { ModelOption } from "@/components/ui/model-picker"
 
 export type { AgentStreamEvent }
 
+/**
+ * How much of the machine a harness may touch for one turn, in the app's own
+ * vocabulary — each provider maps these onto whatever its backend actually
+ * speaks (ACP permission policies, dsh sandbox levels, …).
+ */
+export type PermissionMode = "read-only" | "edits" | "full"
+
 /** What a provider can do — the UI degrades gracefully per flag. */
 export type ProviderCapabilities = {
   /** Full agentic runs: tool calls, file edits. */
@@ -13,6 +20,12 @@ export type ProviderCapabilities = {
   effort: boolean
   /** Accepts image attachments. */
   vision: boolean
+  /**
+   * Permission modes this harness can enforce, in the order a picker should
+   * show them. Absent or empty = no user choice: the provider runs under a
+   * fixed policy (its settings, or no tools at all).
+   */
+  permissionModes?: PermissionMode[]
 }
 
 export type ProviderInfo = {
@@ -57,6 +70,13 @@ export type AgentRunOptions = {
   /** Provider-side session to resume, if capabilities.resume. */
   sessionId?: string
   effort?: string
+  /**
+   * Per-chat override of the harness's configured permission policy. The chat
+   * route only sends it when `capabilities.permissionModes` lists it; absent
+   * means "whatever settings say", which is the behavior every provider had
+   * before this option existed.
+   */
+  permissionMode?: PermissionMode
   /**
    * Prior turns of this thread, oldest first, excluding `prompt`.
    *

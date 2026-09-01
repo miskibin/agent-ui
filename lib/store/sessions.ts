@@ -98,6 +98,10 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
     cwd: typeof value.cwd === "string" ? value.cwd : undefined,
     gitBranch:
       typeof value.gitBranch === "string" ? value.gitBranch : undefined,
+    permissionMode:
+      typeof value.permissionMode === "string"
+        ? value.permissionMode
+        : undefined,
     createdAt: typeof value.createdAt === "number" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
     messageCount:
@@ -124,6 +128,9 @@ function applyPatch(meta: SessionMeta, patch: SessionPatch): SessionMeta {
     ...(patch.cwd !== undefined ? { cwd: patch.cwd.trim() } : null),
     ...(patch.gitBranch !== undefined
       ? { gitBranch: patch.gitBranch.trim() }
+      : null),
+    ...(patch.permissionMode !== undefined
+      ? { permissionMode: patch.permissionMode.trim() }
       : null),
     updatedAt: Date.now(),
   }
@@ -176,6 +183,9 @@ export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
       model: input.model ?? "",
       ...(input.cwd?.trim() ? { cwd: input.cwd.trim() } : null),
       ...(input.gitBranch?.trim() ? { gitBranch: input.gitBranch.trim() } : null),
+      ...(input.permissionMode?.trim()
+        ? { permissionMode: input.permissionMode.trim() }
+        : null),
       createdAt: now,
       updatedAt: now,
       messageCount: 0,

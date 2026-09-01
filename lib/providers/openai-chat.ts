@@ -59,7 +59,10 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
         capabilities: {
           tools: false,
           resume: false,
-          effort: false,
+          // `reasoning_effort` is the OpenAI-compatible spelling; an endpoint
+          // that does not know it says so on the first request and the retry
+          // below drops it, so offering the control costs nothing.
+          effort: true,
           vision: false,
         },
         available: sources.length > 0,
@@ -125,20 +128,25 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
 
       let res: Response
       try {
-        res = await post(source, model, messages, true, options.signal)
-        // Not every compat server knows `stream_options`, and the ones that do
-        // not reject the whole request rather than ignoring it — so when the
-        // complaint names it, the usage report is what gets given up rather
-        // than the turn. Any other 400 is the endpoint's own answer and is
-        // shown as-is instead of being sent twice.
-        if (res.status === 400) {
+        const body: RequestFields = {
+          streamOptions: true,
+          reasoningEffort: reasoningEffort(options.effort),
+        }
+        res = await post(source, model, messages, body, options.signal)
+        // Not every compat server knows `stream_options` or `reasoning_effort`,
+        // and the ones that do not reject the whole request rather than
+        // ignoring it — so when the complaint names one, that field is what
+        // gets given up rather than the turn. At most one retry per field: a
+        // 400 nobody can attribute is the endpoint's own answer and is shown
+        // as-is instead of being sent again.
+        for (let attempt = 0; attempt < 2 && res.status === 400; attempt++) {
           const detail = await res.text().catch(() => "")
-          if (/stream_options/i.test(detail)) {
-            res = await post(source, model, messages, false, options.signal)
-          } else {
+          const dropped = dropOffendingField(body, detail)
+          if (!dropped) {
             yield { type: "error", message: failureMessage(source, 400, detail) }
             return
           }
+          res = await post(source, model, messages, body, options.signal)
         }
       } catch (err) {
         if (options.signal.aborted) return
@@ -227,11 +235,17 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
   }
 }
 
+/** The optional request fields a picky endpoint may make us give up. */
+type RequestFields = {
+  streamOptions: boolean
+  reasoningEffort?: string
+}
+
 function post(
   source: ModelSource,
   model: string,
   messages: Array<{ role: string; content: string }>,
-  streamOptions: boolean,
+  fields: RequestFields,
   signal: AbortSignal
 ) {
   return fetch(`${source.baseUrl}/chat/completions`, {
@@ -243,12 +257,51 @@ function post(
     body: JSON.stringify({
       model,
       stream: true,
-      ...(streamOptions ? { stream_options: { include_usage: true } } : null),
+      ...(fields.streamOptions
+        ? { stream_options: { include_usage: true } }
+        : null),
+      ...(fields.reasoningEffort
+        ? { reasoning_effort: fields.reasoningEffort }
+        : null),
       messages,
     }),
     signal,
     cache: "no-store",
   })
+}
+
+/**
+ * The app's effort scale in OpenAI's vocabulary: it accepts `low | medium |
+ * high`, so the picker's `xhigh` lands on `high` rather than being rejected.
+ */
+function reasoningEffort(effort: string | undefined): string | undefined {
+  const value = effort?.trim().toLowerCase()
+  if (!value) return undefined
+  return value === "xhigh" ? "high" : value
+}
+
+/**
+ * Reads a 400 and turns off whichever optional field it blames, returning
+ * whether anything changed (i.e. whether a retry is worth making).
+ *
+ * A complaint that names a field wins over a vague "unknown parameter", so a
+ * server grumbling about `stream_options` never costs the turn its effort
+ * setting as well.
+ */
+function dropOffendingField(fields: RequestFields, detail: string): boolean {
+  const namesStream = /stream_options/i.test(detail)
+  const namesEffort = /reasoning_effort/i.test(detail)
+  const vague = /unknown|unsupported/i.test(detail)
+
+  if (fields.streamOptions && namesStream) {
+    fields.streamOptions = false
+    return true
+  }
+  if (fields.reasoningEffort && (namesEffort || (vague && !namesStream))) {
+    fields.reasoningEffort = undefined
+    return true
+  }
+  return false
 }
 
 /** An error the endpoint reported inside the stream rather than as a status. */

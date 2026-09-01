@@ -5,7 +5,11 @@ import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
 import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
 import { buildMemoryContext } from "@/lib/memory/context"
 import { getProvider } from "@/lib/providers/registry"
-import type { AgentStreamEvent, ChatTurn } from "@/lib/providers/types"
+import type {
+  AgentStreamEvent,
+  ChatTurn,
+  PermissionMode,
+} from "@/lib/providers/types"
 import {
   applyStreamEvent,
   deriveSessionTitle,
@@ -32,6 +36,11 @@ type ChatBody = {
   /** App session id — the thread in `lib/store`, not the provider's own id. */
   sessionId?: string
   effort?: string
+  /**
+   * How much the harness may touch this turn; falls back to the chat's stored
+   * mode, and is dropped entirely unless the provider publishes it.
+   */
+  permissionMode?: string
   /** Working folder for this run; falls back to the chat's stored folder. */
   cwd?: string
   /**
@@ -133,6 +142,14 @@ export async function POST(req: Request) {
   let durationMs: number | undefined
   let usage: AgentTokenUsage | undefined
   const cwd = body.cwd?.trim() || session.cwd
+  // Like `cwd`: the turn's own choice, else what the chat last stored — and
+  // only when this backend actually publishes the mode, so a client that
+  // never sends one (or sends a mode this harness cannot enforce) leaves the
+  // provider on its configured policy exactly as before.
+  const permissionMode = allowedPermissionMode(
+    info.capabilities.permissionModes,
+    body.permissionMode?.trim() || session.permissionMode
+  )
 
   /**
    * Standing user memory for this turn, when the feature is on.
@@ -177,6 +194,7 @@ export async function POST(req: Request) {
           system: memoryContext,
           sessionId: providerSessionId,
           effort: info.capabilities.effort ? body.effort : undefined,
+          permissionMode,
           cwd,
           history,
           images: info.capabilities.vision
@@ -259,6 +277,22 @@ export async function POST(req: Request) {
       "X-Accel-Buffering": "no",
     },
   })
+}
+
+/**
+ * The requested permission mode, but only if this provider declared it. An
+ * unknown or unsupported value is dropped rather than refused: the turn still
+ * runs, under the harness's own policy.
+ */
+function allowedPermissionMode(
+  offered: PermissionMode[] | undefined,
+  wanted: string | undefined
+): PermissionMode | undefined {
+  const mode = wanted?.trim()
+  if (!mode) return undefined
+  return (offered ?? []).includes(mode as PermissionMode)
+    ? (mode as PermissionMode)
+    : undefined
 }
 
 /**

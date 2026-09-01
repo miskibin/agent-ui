@@ -58,6 +58,13 @@ export type SessionMeta = {
   cwd?: string
   /** Git branch shown next to the folder. Display only — nothing checks out. */
   gitBranch?: string
+  /**
+   * Per-chat permission mode (`lib/providers/types`'s `PermissionMode`), for
+   * harnesses that publish `capabilities.permissionModes`. Kept as a plain
+   * string here so the store never has to be migrated when the vocabulary
+   * grows; the chat route validates it against the provider before use.
+   */
+  permissionMode?: string
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -74,6 +81,7 @@ export type SessionPatch = Partial<
     | "providerSessionId"
     | "cwd"
     | "gitBranch"
+    | "permissionMode"
   >
 >
 
@@ -83,4 +91,5 @@ export type CreateSessionInput = {
   model?: string
   cwd?: string
   gitBranch?: string
+  permissionMode?: string
 }

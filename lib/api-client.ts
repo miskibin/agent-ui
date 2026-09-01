@@ -3,7 +3,11 @@ import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker
 import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
-import type { ProviderCapabilities, ProviderInfo } from "@/lib/providers/types"
+import type {
+  PermissionMode,
+  ProviderCapabilities,
+  ProviderInfo,
+} from "@/lib/providers/types"
 import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
 import { LineBuffer } from "@/lib/stream-framing"
 import type {
@@ -243,6 +247,12 @@ export type ChatRequest = {
   /** App session id — the thread being appended to. */
   sessionId: string
   effort?: string
+  /**
+   * How much the harness may touch for this turn — only meaningful for
+   * providers whose `capabilities.permissionModes` lists it; the route drops
+   * anything else.
+   */
+  permissionMode?: PermissionMode
   /** Minted here so optimistic rows and persisted rows share their ids. */
   userMessageId: string
   assistantMessageId: string

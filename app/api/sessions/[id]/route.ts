@@ -50,6 +50,9 @@ export async function PATCH(req: Request, ctx: Ctx) {
         : undefined,
     cwd: typeof body.cwd === "string" ? body.cwd : undefined,
     gitBranch: typeof body.gitBranch === "string" ? body.gitBranch : undefined,
+    // "" clears it — the chat falls back to the harness's configured policy.
+    permissionMode:
+      typeof body.permissionMode === "string" ? body.permissionMode : undefined,
   })
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })

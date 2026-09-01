@@ -24,6 +24,8 @@ export async function POST(req: Request) {
     model: body.model,
     cwd: body.cwd,
     gitBranch: body.gitBranch,
+    permissionMode:
+      typeof body.permissionMode === "string" ? body.permissionMode : undefined,
   })
   return NextResponse.json({ session }, { status: 201 })
 }

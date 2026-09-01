@@ -19,12 +19,16 @@ import {
   probeOllama,
   type OllamaModel,
 } from "@/lib/providers/ollama-api"
-import type { AcpAgentSettings } from "@/lib/settings/schema"
+import type {
+  AcpAgentSettings,
+  DshSandboxMode,
+} from "@/lib/settings/schema"
 import { withSystemPrefix } from "@/lib/providers/system-prefix"
 import type {
   AgentProvider,
   AgentRunOptions,
   AgentStreamEvent,
+  PermissionMode,
   ProviderInfo,
 } from "@/lib/providers/types"
 
@@ -62,6 +66,15 @@ const READ_KINDS = new Set(["read", "search", "fetch", "think"])
  */
 const READ_TOOL_NAMES =
   /^(read|read_image|view|cat|open|glob|grep|search|find|ls|list|list_[a-z_]*|get_[a-z_]*|web_search|fetch)$/i
+
+/**
+ * Permission modes offered per agent kind. Only dsh has a sandbox that can
+ * hold an agent to *writes inside the workspace*, so it is the only one that
+ * can honestly offer `edits`: for a generic ACP agent the same choice would be
+ * indistinguishable from `full`.
+ */
+const ACP_PERMISSION_MODES: PermissionMode[] = ["read-only", "full"]
+const DSH_PERMISSION_MODES: PermissionMode[] = ["read-only", "edits", "full"]
 
 const MODEL_CACHE_MS = 5 * 60 * 1000
 type ModelCacheEntry = { at: number; models: ModelOption[]; raw: Map<string, string> }
@@ -102,8 +115,14 @@ export function createAcpProvider(
     return { available: true }
   }
 
-  /** The spawn spec for this agent, regenerating dsh's overlay first. */
-  const spawnSpec = async () => {
+  /**
+   * The spawn spec for this agent, regenerating dsh's overlay first.
+   *
+   * `mode` is the turn's permission override, which for dsh has to be decided
+   * here rather than at the ACP layer: its sandbox is set by an environment
+   * variable read when the process starts.
+   */
+  const spawnSpec = async (mode?: PermissionMode) => {
     if (!isDsh) {
       return {
         command,
@@ -113,11 +132,15 @@ export function createAcpProvider(
       }
     }
     const patch = await ensureDshPatch(configDir, baseUrl)
+    const sandbox = dshSandbox(mode)
     return {
       command,
       args: [...DSH_ACP_ARGS, ...(patch ? ["--patch", patch] : []), ...agent.args],
       cwd: workspace,
-      env: { ...dshEnv(configDir, agent.dsh), ...agent.env },
+      env: {
+        ...dshEnv(configDir, sandbox ? { ...agent.dsh, sandbox } : agent.dsh),
+        ...agent.env,
+      },
     }
   }
 
@@ -139,6 +162,7 @@ export function createAcpProvider(
           // disappears, so the control would be dead.
           effort: isDsh && !baseUrl,
           vision: false,
+          permissionModes: isDsh ? DSH_PERMISSION_MODES : ACP_PERMISSION_MODES,
         },
         available: false,
       }
@@ -183,7 +207,9 @@ export function createAcpProvider(
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
-      const spec = await spawnSpec().catch((err: unknown) => err as Error)
+      const spec = await spawnSpec(options.permissionMode).catch(
+        (err: unknown) => err as Error
+      )
       if (spec instanceof Error) {
         yield {
           type: "error",
@@ -216,7 +242,11 @@ export function createAcpProvider(
             await writeFile(target, content, "utf8")
           },
           decidePermission({ toolCall, options: choices }) {
-            return decide(agent.permissionMode, toolCall, choices)
+            return decide(
+              acpPolicy(options.permissionMode) ?? agent.permissionMode,
+              toolCall,
+              choices
+            )
           },
         },
       })
@@ -229,6 +259,43 @@ export function createAcpProvider(
 /* -------------------------------------------------------------------------- */
 
 type PermissionChoice = { optionId?: string; name?: string; kind?: string }
+
+/**
+ * The app's per-chat mode → the ACP approval policy for this turn. `edits` and
+ * `full` both auto-approve at the protocol level; what separates them is the
+ * sandbox the agent runs *inside*, which only dsh has (see `dshSandbox`).
+ *
+ * Returns null when the turn carried no override, which leaves the agent's
+ * configured policy — including `reject-all`, a setting the picker cannot
+ * express — exactly as it was.
+ */
+function acpPolicy(
+  mode: PermissionMode | undefined
+): AcpAgentSettings["permissionMode"] | null {
+  switch (mode) {
+    case "read-only":
+      return "auto-approve-reads"
+    case "edits":
+    case "full":
+      return "auto-approve"
+    default:
+      return null
+  }
+}
+
+/** The same mode as dsh's own sandbox level, or null for no override. */
+function dshSandbox(mode: PermissionMode | undefined): DshSandboxMode | null {
+  switch (mode) {
+    case "read-only":
+      return "read-only"
+    case "edits":
+      return "workspace-write"
+    case "full":
+      return "danger-full-access"
+    default:
+      return null
+  }
+}
 
 /**
  * `session/request_permission` is a live subprocess blocked on our answer, and
