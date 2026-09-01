@@ -11,9 +11,6 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
-
 env:
   # The tag being cut: the pushed tag, or the one a manual dispatch asked for.
   RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.tag }}
@@ -25,6 +22,11 @@ jobs:
   create-release:
     name: Create draft release
     runs-on: ubuntu-latest
+
+    # Scoped per job rather than workflow-wide: every job here writes to the
+    # release, but each one says so for itself.
+    permissions:
+      contents: write
 
     outputs:
       release_id: ${{ steps.create.outputs.result }}
@@ -72,6 +74,10 @@ jobs:
     name: ${{ matrix.label }}
     needs: create-release
     runs-on: ${{ matrix.os }}
+
+    # tauri-action uploads the installers as release assets.
+    permissions:
+      contents: write
 
     strategy:
       fail-fast: false
@@ -150,6 +156,10 @@ jobs:
     name: Publish release
     needs: [create-release, bundle]
     runs-on: ubuntu-latest
+
+    # Flipping the release out of draft, and so creating the tag.
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/github-script@v8
