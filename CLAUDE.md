@@ -56,17 +56,60 @@ does not ship them, so they have no upstream to match. They are listed in the ch
 `components/memory-notice.tsx`, `components/message-actions.tsx`, `components/stash-menu.tsx`,
 `components/folder-status.tsx`, `components/chat-changes.tsx`, `components/context-usage.tsx`,
 `components/provider-picker.tsx`, `components/provider-logo.tsx`, `components/permission-picker.tsx`,
-`components/theme-provider.tsx`, `app/settings/model-providers-section.tsx`,
+`components/theme-provider.tsx`, `components/chat-sidebar-panel.tsx`, `components/sidebar-sections.tsx`,
+`components/chat-skeletons.tsx`, `components/chat-suggestions.tsx`, `components/live-time.tsx`,
+`app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
 `lib/theme/`, `lib/memory/`, `lib/handoff/`,
 `lib/api-client.ts`, `lib/message-stream.ts`, `lib/turn-files.ts`, `lib/session-groups.ts`,
 `lib/desktop.ts`, `lib/folder.ts`, `lib/fs-paths.ts`, `lib/open-target.ts`, `lib/git-status.ts`,
 `lib/completion.ts`, `lib/model-pricing.ts`, `lib/file-actions.tsx`, `lib/drafts.ts`,
 `lib/slash-commands.ts`, `lib/app-shortcuts.ts`, `lib/notifications.ts`, `lib/attachments.ts`,
-`lib/local-media.ts`, `src-tauri/`.
+`lib/local-media.ts`, `lib/chat-helpers.ts`, `lib/ask-tools.ts`, `lib/ui-cache.ts`,
+`lib/todo-plan.ts`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
 as the rest of `components/ui/**`.
+
+### The chat page is a composition root over `app/hooks/`
+
+`app/page.tsx` wires the surface together and lays it out; it holds no concern of its own.
+Each concern is one hook, and they are called in the order the data flows:
+
+- `use-chat-refs` — the shared spine. Every ref more than one concern reads (the open chat, the
+  loaded threads, the session index, the settings, the abort controllers, the composer handle)
+  plus `useMirrorRefs`, the single dependency-free effect that refreshes them after each paint.
+  They exist so a click handler, a shortcut or a stream callback can read what the user is
+  looking at *without* closing over it — a closure over state is a new identity every render,
+  which is exactly what breaks the memoized rows. **`useMirrorRefs` must stay ahead of
+  `use-composer-drafts`**: restoring a chat's parked draft calls the composer's `onTextChange`
+  synchronously, and that handler reads `activeIdRef` to decide which chat to save under, so a
+  mirror one render behind files the newly opened chat's draft under the one just left.
+- `use-session-index` — the sidebar index and the open chat, plus the mutations that touch only
+  those. Deliberately the layer with nothing behind it, so `use-agent-config` can write back
+  through `patchLocal` without a cycle.
+- `use-threads` — the transcripts, lazily loaded, on a 4-entry LRU that protects the open and
+  the running ones.
+- `use-agent-config` — settings, harnesses, the model catalog, effort and permission, and the
+  writing-back that makes a chat remember its own agent.
+- `use-chat-nav` — sidebar collapse, the mobile drawer, folded folder sections, the palette,
+  the rename token.
+- `use-file-panel` — which file is open, the split, the diff prefs, and every way a file gets
+  opened (tool row, change card, `path.ts:42` chip, the whole-chat list).
+- `use-memory-notices`, `use-prompt-stash`, `use-message-queue`, `use-composer-drafts` — the
+  memory marker and the composer's own conveniences.
+- `use-chat-actions` — the mutations that cross concerns: opening a chat re-points the pickers
+  and closes the panel; deleting one drops its thread, queue, draft and run.
+- `use-turn-runner` — one streaming turn end to end; `use-chat-turns` — send (slash commands,
+  attachments, the detached queued run), stop, and the in-place transcript edits.
+- `use-thread-view`, `use-sidebar-items`, `use-command-palette` — the derived view models;
+  `use-chat-bootstrap`, `use-attention`, `use-chat-shortcuts`, `use-composer-height` and
+  `use-is-desktop` — the small ones.
+
+Pure helpers stay in `lib/` and are exported so they can be unit tested: `lib/chat-helpers.ts`
+(time and label formatting, `pickProvider`, `omit`, `errorMessage`), `lib/ask-tools.ts`
+(`findPendingAsk`, `completeAsk`, `isInternalMessage`), `lib/ui-cache.ts` (every `agent-ui:*`
+snapshot key, in one place) and `lib/todo-plan.ts` (`latestTodos`).
 
 ## What this app is
 
@@ -252,9 +295,10 @@ one interface:
   write back to. Closed sections are remembered under `agent-ui:folder-sections` — closed ones
   only, so a folder seen for the first time opens.
 - The file panel: every file a turn touched opens beside the conversation. The components are
-  vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/page.tsx` owns the state
-  — which file is open, the split width under `agent-ui:preview-size`, closing on a chat switch —
-  and mounts the panel as the second pane of a `ResizablePanelGroup` *below* the `AppHeader`, which
+  vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/hooks/use-file-panel.ts`
+  owns the state — which file is open, the split width under `agent-ui:preview-size`, closing on
+  a chat switch — and `app/page.tsx` mounts the panel as the second pane of a
+  `ResizablePanelGroup` *below* the `AppHeader`, which
   keeps spanning the full width because it is also the desktop window's drag chrome. Below `md` the
   same panel slides over the conversation inside that wrapper. `GET /api/file` reads the text: the
   root is the chat's stored folder, else the provider's workspace, and it is resolved server-side
@@ -278,8 +322,8 @@ one interface:
   "N files changed in this chat" (`components/chat-changes.tsx`) is the union of every turn's
   card, for the whole-thread scope next to the per-turn one.
 - Composer conveniences, all app-owned state over the vendored composer's handle
-  (`ChatInputHandle`): messages typed mid-turn are queued per chat (`queues` in `app/page.tsx`)
-  and sent one at a time as turns end — a stopped turn keeps its queue; `@` lists files under
+  (`ChatInputHandle`): messages typed mid-turn are queued per chat
+  (`app/hooks/use-message-queue.ts`) and sent one at a time as turns end — a stopped turn keeps its queue; `@` lists files under
   the chat's folder through `GET /api/fs/search` (a bounded, briefly cached walk that skips
   `node_modules`-style directories); each chat's draft is parked in memory on switch (files
   included) and its text under `agent-ui:drafts` (`lib/drafts.ts`); ⌘S stashes the draft into
@@ -326,7 +370,7 @@ one interface:
   `cn()` with consumer `className` merged last, cva for real variant sets,
   `focus-visible` rings, 11–13.5px type scale.
 - **Strict react-hooks rules are CI-enforced.** No synchronous `setState` in effect bodies —
-  defer via `queueMicrotask` (existing examples in `app/page.tsx`) or restructure.
+  defer via `queueMicrotask` (existing examples in `app/hooks/`) or restructure.
 - Errors surface via `sonner` toasts; availability degrades gracefully (see provider badges).
 
 ## Commands
