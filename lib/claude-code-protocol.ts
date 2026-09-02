@@ -152,9 +152,9 @@ type ClaudeCodeBlock = {
 export class ClaudeCodeTranslator {
   private sessionEmitted = false
   private currentMessageId: string | undefined
-  private streamedIds = new Set<string>()
+  private readonly streamedIds = new Set<string>()
   /** tool_use id → name, so a tool_result can name the row it completes. */
-  private toolNames = new Map<string, string>()
+  private readonly toolNames = new Map<string, string>()
   private gotText = false
 
   /** True once a `result` line arrived — the CLI's own verdict on the turn. */

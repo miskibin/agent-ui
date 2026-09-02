@@ -1,9 +1,8 @@
 import { spawn, spawnSync } from "node:child_process"
 import { createServer } from "node:net"
 import { createRequire } from "node:module"
-import fs from "node:fs/promises"
+import fs, { mkdtemp, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
-import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -68,7 +67,9 @@ export async function launchChromium(playwright) {
 /** `next build`, unless a standalone bundle is already sitting there. */
 export function ensureBuild({ force = false } = {}) {
   if (!force && existsSync(path.join(STANDALONE, "server.js"))) return
-  const build = spawnSync("npm", ["run", "build"], {
+  // Run next's own bin through this node binary: no PATH lookup, no shim.
+  const nextBin = createRequire(import.meta.url).resolve("next/dist/bin/next")
+  const build = spawnSync(process.execPath, [nextBin, "build"], {
     cwd: ROOT,
     stdio: "inherit",
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },

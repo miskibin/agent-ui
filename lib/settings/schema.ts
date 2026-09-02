@@ -450,7 +450,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
   }
 }
 
-const PERMISSION_MODES: PermissionMode[] = ["read-only", "edits", "full"]
+const PERMISSION_MODES = new Set<PermissionMode>(["read-only", "edits", "full"])
 
 /**
  * The mode becomes CLI permission flags, so a value an older build or a
@@ -462,9 +462,7 @@ function normalizeClaudeCode(raw: unknown): ClaudeCodeSettings {
   const merged = { ...fallback, ...asObject(raw) }
   return {
     ...merged,
-    permissionMode: PERMISSION_MODES.includes(
-      merged.permissionMode as PermissionMode
-    )
+    permissionMode: PERMISSION_MODES.has(merged.permissionMode as PermissionMode)
       ? (merged.permissionMode as PermissionMode)
       : fallback.permissionMode,
   }
