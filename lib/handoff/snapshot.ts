@@ -1,6 +1,8 @@
 import "server-only"
 
 import { execFile } from "node:child_process"
+import { access, constants } from "node:fs/promises"
+import { delimiter, join } from "node:path"
 
 import type { WorktreeSnapshot } from "@/lib/handoff/types"
 
@@ -23,6 +25,43 @@ import type { WorktreeSnapshot } from "@/lib/handoff/types"
 const GIT_TIMEOUT_MS = 1_500
 /** Enough for a very dirty tree; past this the handoff would not fit anyway. */
 const MAX_GIT_OUTPUT = 512 * 1024
+
+/**
+ * Where a git binary normally lives, tried before the user's PATH so the
+ * command that runs after every turn is pinned to a fixed location whenever
+ * one exists. PATH is only a fallback, for the odd install (a portable git on
+ * Windows, a version manager) that keeps it elsewhere.
+ */
+const KNOWN_GIT_LOCATIONS =
+  process.platform === "win32"
+    ? [
+        "C:\\Program Files\\Git\\cmd\\git.exe",
+        "C:\\Program Files\\Git\\bin\\git.exe",
+        "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+      ]
+    : ["/usr/bin/git", "/usr/local/bin/git", "/opt/homebrew/bin/git", "/bin/git"]
+
+let gitBinary: Promise<string | null> | undefined
+
+/** Absolute path of the git binary, resolved once per process; null = none. */
+function resolveGit(): Promise<string | null> {
+  gitBinary ??= (async () => {
+    const exe = process.platform === "win32" ? "git.exe" : "git"
+    const fromPath = (process.env.PATH ?? "")
+      .split(delimiter)
+      .filter(Boolean)
+      .map((dir) => join(dir, exe))
+    for (const candidate of [...KNOWN_GIT_LOCATIONS, ...fromPath]) {
+      const ok = await access(candidate, constants.X_OK).then(
+        () => true,
+        () => false
+      )
+      if (ok) return candidate
+    }
+    return null
+  })()
+  return gitBinary
+}
 
 export async function readWorktreeSnapshot(
   cwd: string | undefined
@@ -64,10 +103,12 @@ export async function readDiffStat(
   return rows
 }
 
-function git(args: string[], cwd: string): Promise<string | null> {
+async function git(args: string[], cwd: string): Promise<string | null> {
+  const binary = await resolveGit()
+  if (!binary) return null
   return new Promise((resolve) => {
     execFile(
-      "git",
+      binary,
       ["--no-optional-locks", ...args],
       {
         cwd,

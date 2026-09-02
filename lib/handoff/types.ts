@@ -160,12 +160,23 @@ export function sameWorkingFolder(a?: string, b?: string) {
   return (a ?? "").trim() === (b ?? "").trim()
 }
 
+/**
+ * Plain code-point order. Deliberately not `localeCompare`: the snapshot is
+ * compared, never shown, and a locale-dependent order would make two machines
+ * disagree about whether the same tree changed.
+ */
+function byCodePoint(a: string, b: string) {
+  if (a < b) return -1
+  if (a > b) return 1
+  return 0
+}
+
 /** Different commit, or a different set of dirty paths. */
 export function snapshotsDiffer(a: WorktreeSnapshot, b: WorktreeSnapshot) {
   if (a.head !== b.head) return true
   if (a.status.length !== b.status.length) return true
-  const left = [...a.status].sort()
-  const right = [...b.status].sort()
+  const left = [...a.status].sort(byCodePoint)
+  const right = [...b.status].sort(byCodePoint)
   return left.some((line, index) => line !== right[index])
 }
 
