@@ -24,15 +24,25 @@ import { cn } from "@/lib/utils"
  * future conversation". The user should be able to scroll back and find the
  * moment it happened, and open what changed.
  */
+const EDIT_MEMORY_LINK =
+  "mt-2 inline-block rounded-md text-[11px] text-muted-foreground underline underline-offset-2 transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
 export function MemoryNotice({
   changes,
   compacted,
   onDismiss,
+  onOpenMemorySettings,
   className,
 }: {
   changes: MemoryChange[]
   compacted?: boolean
   onDismiss: () => void
+  /**
+   * Opens settings on the memory section. Given by a host that shows settings
+   * as a panel over the chat; without it the link navigates to `/settings`,
+   * which throws away a turn the chat is still streaming.
+   */
+  onOpenMemorySettings?: () => void
   className?: string
 }) {
   const [open, setOpen] = React.useState(false)
@@ -100,12 +110,19 @@ export function MemoryNotice({
               </ul>
             </div>
           ))}
-          <Link
-            href="/settings#memory"
-            className="mt-2 inline-block rounded-md text-[11px] text-muted-foreground underline underline-offset-2 transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          >
-            Edit what&apos;s remembered
-          </Link>
+          {onOpenMemorySettings ? (
+            <button
+              type="button"
+              onClick={onOpenMemorySettings}
+              className={cn(EDIT_MEMORY_LINK, "cursor-pointer")}
+            >
+              Edit what&apos;s remembered
+            </button>
+          ) : (
+            <Link href="/settings#memory" className={EDIT_MEMORY_LINK}>
+              Edit what&apos;s remembered
+            </Link>
+          )}
         </div>
       ) : null}
     </div>

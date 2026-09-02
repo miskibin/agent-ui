@@ -3,6 +3,7 @@ import path from "node:path"
 
 import { NextResponse } from "next/server"
 
+import { resolveInRoot } from "@/lib/fs-search"
 import { acpAgentKey } from "@/lib/providers/acp"
 import { CURSOR_PROVIDER_ID } from "@/lib/providers/cursor"
 import { PI_PROVIDER_ID } from "@/lib/providers/pi"
@@ -80,7 +81,20 @@ export async function GET(req: Request) {
   const root = path.resolve(
     /*turbopackIgnore: true*/ await workspaceRoot(providerId, sessionId)
   )
-  const resolved = path.resolve(root, requested)
+  /**
+   * An answer names a file the way it thinks of it — a bare `Messages.tsx`, or
+   * a `frontend/app/globals.css` that is only a suffix of the real path — so
+   * the plain join is a first guess, not the answer. `resolveInRoot` falls
+   * back to the folder's own walk and takes the deepest unique suffix; the
+   * path it found travels back in the response, because the panel and its
+   * "Open in …" menu should name the file that was actually opened.
+   */
+  const found = await resolveInRoot(root, requested)
+  const resolved = found?.absolute ?? path.resolve(root, requested)
+  // Only a name the walk had to repair travels back; a path that resolved on
+  // its own is echoed exactly as asked, so the panel keeps saying what the
+  // tool said.
+  const name = found && !found.exact ? found.relative : requested
 
   if (!contains(root, resolved)) {
     return NextResponse.json(
@@ -109,7 +123,7 @@ export async function GET(req: Request) {
   try {
     if (size <= MAX_BYTES) {
       const content = await readFile(/*turbopackIgnore: true*/ resolved, "utf8")
-      return NextResponse.json({ path: requested, content })
+      return NextResponse.json({ path: name, content })
     }
     // Too big to send whole: hand back the head so the panel still renders.
     const handle = await open(/*turbopackIgnore: true*/ resolved, "r")
@@ -117,7 +131,7 @@ export async function GET(req: Request) {
       const buffer = Buffer.alloc(MAX_BYTES)
       const { bytesRead } = await handle.read(buffer, 0, MAX_BYTES, 0)
       return NextResponse.json({
-        path: requested,
+        path: name,
         content: buffer.subarray(0, bytesRead).toString("utf8"),
         truncated: true,
       })

@@ -311,8 +311,11 @@ function dshSandbox(mode: PermissionMode | undefined): DshSandboxMode | null {
 /** The app's modes, narrow → wide, so two different axes can be compared. */
 const MODE_RANK: Record<PermissionMode, number> = {
   "read-only": 0,
-  edits: 1,
-  full: 2,
+  // Read-only plus an obligation to write the plan down — nothing an ACP
+  // policy or a sandbox level can express, so no agent here ever publishes it.
+  plan: 1,
+  edits: 2,
+  full: 3,
 }
 
 /**

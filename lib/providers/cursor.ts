@@ -10,10 +10,26 @@ import type {
   AgentProvider,
   AgentRunOptions,
   AgentStreamEvent,
+  PermissionMode,
   ProviderInfo,
 } from "@/lib/providers/types"
 
 export const CURSOR_PROVIDER_ID = "cursorAgent"
+
+/**
+ * The CLI's own three conversation modes, in the app's vocabulary. `--mode
+ * ask` answers without touching the workspace, `--mode plan` writes the change
+ * down instead of making it, and no flag at all is the agent that edits — so
+ * `edits` is deliberately absent: cursor-agent has no level between "does not
+ * write" and "writes anywhere it likes".
+ */
+const CURSOR_PERMISSION_MODES: PermissionMode[] = ["read-only", "plan", "full"]
+
+function cursorMode(mode: PermissionMode | undefined) {
+  if (mode === "read-only") return "ask" as const
+  if (mode === "plan") return "plan" as const
+  return undefined
+}
 
 /** Familiar models first; the CLI lists dozens of aliases behind them. */
 const HEADLINE_IDS = [
@@ -82,6 +98,9 @@ export function createCursorProvider(
           // The CLI picks reasoning depth per model; there is no effort flag.
           effort: false,
           vision: false,
+          permissionModes: CURSOR_PERMISSION_MODES,
+          // No flag = the agent that edits, which is what the CLI does today.
+          defaultPermissionMode: "full",
         },
         available,
         unavailableReason: reason,
@@ -135,6 +154,7 @@ export function createCursorProvider(
         model: options.model,
         sessionId: options.sessionId,
         signal: options.signal,
+        mode: cursorMode(options.permissionMode),
         // The chat's own folder when it has one, else wherever the app runs.
         workspace: options.cwd?.trim() || process.cwd(),
       })

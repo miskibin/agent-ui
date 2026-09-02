@@ -86,10 +86,15 @@ one interface:
   option whose failure is already swallowed, and the OpenAI-compatible paths send
   `reasoning_effort` and retry without it. `cursor` is the one harness without the control —
   its CLI has no flag for it. Permission is unified the same way: `PermissionMode` is
-  `read-only | edits | full`, a provider lists which of those it can enforce in
+  `read-only | plan | edits | full`, a provider lists which of those it can enforce in
   `capabilities.permissionModes`, and the composer's `components/permission-picker.tsx`
-  shows up only then — ACP's generic client offers read-only/full, dsh maps all three onto
-  its own sandbox — with the chosen mode persisted per session.
+  shows up only then — ACP's generic client offers read-only/full, dsh maps all three of
+  its levels onto its own sandbox, and `cursor` offers read-only/plan/full, which are its
+  CLI's own `--mode ask`, `--mode plan` and no flag at all (`edits` is absent because
+  cursor-agent has nothing between "does not write" and "writes anywhere"). `plan` is the
+  one mode no policy can be synthesized into: it is read-only *plus* an obligation to
+  write the change down, so only a backend that has such a mode publishes it. The chosen
+  mode is persisted per session.
 - Providers: `mock` (scripted), `cursor` (spawns the `cursor-agent` CLI, resumes by session id),
   `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
   `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over *every* configured
@@ -260,6 +265,16 @@ one interface:
   root is the chat's stored folder, else the provider's workspace, and it is resolved server-side
   from the session id — the client never names a root. Anything outside it, or inside the app's
   data directory, is a 403; the panel falls back to the diff alone on any failure.
+
+  A name an *answer* wrote is not a path, and that is what `lib/fs-search.ts` repairs. Cursor
+  says `` `Messages.tsx` `` in a sentence and `frontend/app/globals.css` above a snippet;
+  joined with the chat's folder both land on nothing, and every click on them used to open an
+  empty panel. `resolveInRoot` tries the join first and then the folder's own bounded walk (the
+  same cached one `@`-mentions use), where the *deepest* suffix agreement wins and has to be the
+  only one at that depth — so a bare `Messages.tsx` resolves when one file carries the name, and
+  a `utils.ts` two packages both carry resolves to nothing rather than to a guess. `/api/file`
+  answers with the path it actually read, so the panel header, its menu and "Copy path" name that
+  file; `/api/open` runs the same repair before it launches anything.
 - Quality of life around files: every file the chat names — a change-card row, the file
   panel's header, a path chip or an image in an answer, a chat row's folder — carries one
   right-click menu, built by `lib/file-actions.tsx` from what `GET /api/open` detected on this
@@ -269,7 +284,9 @@ one interface:
   server-side, as a fixed argv with the path as one argument — never `shell: true`; a Windows
   `.cmd` shim or `start` goes through `cmd.exe` with every argument quoted by the app and
   paths carrying `"`, `%` or a newline refused — resolves a relative path against the chat's
-  stored folder, refuses the data directory, and under `files.anyPath` off is confined to the
+  stored folder, normalizes the separators (a `C:\repo` joined with an answer's
+  `app/globals.css` arrives mixed, and Explorer's `/select,` silently does nothing with a
+  forward slash in it), refuses the data directory, and under `files.anyPath` off is confined to the
   app's own folders like `/api/files` (`lib/fs-roots.ts`). `Settings → Editor & terminal`
   picks the defaults (`settings.editor`), ⌘O opens the chat's folder. "Revert changes" is
   `POST /api/git/revert` (`git checkout -- <file>`, tracked files only, confirmed through a
@@ -305,6 +322,14 @@ one interface:
   Cursor it resells nothing: its bare ids *are* Anthropic ids at Anthropic's own rates, so
   they are priced from the `ANTHROPIC` table, with the tier aliases (`sonnet`, `opus`, …)
   resolved to whatever that tier is today.
+- Settings are a panel over the chat, not a route the sidebar navigates to: `app/page.tsx`
+  holds `settingsSection` and renders `SettingsView` (a `next/dynamic` import, so the chat
+  never waits for it) in a fixed overlay, while `/settings` stays for deep links and renders
+  the same component without an `onClose`. The reason is not layout — this page owns every
+  in-flight turn, and unmounting it aborts the fetch, which `/api/chat` reads as the client
+  giving up and kills the run. `dataDir` is the one thing a panel cannot render server-side,
+  so `GET /api/settings/data-dir` hands it over; closing re-reads settings and providers,
+  because either may have changed while it was open.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.

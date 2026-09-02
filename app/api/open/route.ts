@@ -10,6 +10,7 @@ import {
   revealInFileManager,
 } from "@/lib/open-target"
 import { expandHome } from "@/lib/fs-paths"
+import { resolveInRoot } from "@/lib/fs-search"
 import { isWithin, isWithinKnownRoot } from "@/lib/fs-roots"
 import { dataDir, readSettings } from "@/lib/settings/server"
 import { getSession } from "@/lib/store/sessions"
@@ -64,8 +65,15 @@ export async function POST(req: Request) {
 
   const session = body.sessionId ? await getSession(body.sessionId) : null
   const root = session?.cwd?.trim() || ""
-  const target = path.isAbsolute(expandHome(requested))
-    ? expandHome(requested)
+  const expanded = expandHome(requested)
+  /**
+   * `path.resolve` is what normalizes the separators, and it has to run on an
+   * absolute path too: the client joins a chat folder with a path an answer
+   * wrote, so `C:\\repo` + `app/globals.css` arrives mixed — and Explorer's
+   * `/select,` silently does nothing with a forward slash in it.
+   */
+  let target = path.isAbsolute(expanded)
+    ? path.resolve(expanded)
     : root
       ? path.resolve(root, requested)
       : ""
@@ -93,7 +101,17 @@ export async function POST(req: Request) {
     )
   }
 
-  const info = await stat(/*turbopackIgnore: true*/ target).catch(() => null)
+  let info = await stat(/*turbopackIgnore: true*/ target).catch(() => null)
+  if (!info && root) {
+    // The name came from an answer, not from a tool: a bare `Messages.tsx` or
+    // a path that is only a suffix of the real one. Same repair the preview
+    // panel does — the folder's own walk, deepest unique suffix wins.
+    const found = await resolveInRoot(root, requested)
+    if (found) {
+      target = found.absolute
+      info = await stat(/*turbopackIgnore: true*/ target).catch(() => null)
+    }
+  }
   if (!info) {
     return NextResponse.json({ error: "No such file or folder" }, { status: 404 })
   }
