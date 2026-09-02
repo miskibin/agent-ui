@@ -298,6 +298,26 @@ export function useAgentConfig({
     [modelGroups]
   )
 
+  /**
+   * Settings can enable a backend or change a model source, and this hook read
+   * both at boot — so the settings panel closing re-reads them. Unlike
+   * `hydrate` it leaves the chat's chosen agent alone.
+   */
+  const refresh = React.useCallback(() => {
+    void api
+      .fetchSettings()
+      .then(setSettings)
+      .catch(() => {
+        /* keep what we had */
+      })
+    void api
+      .fetchProviders()
+      .then(setProviders)
+      .catch(() => {
+        /* keep what we had */
+      })
+  }, [])
+
   return {
     settings,
     providers,
@@ -317,6 +337,7 @@ export function useAgentConfig({
     chooseModel,
     choosePermission,
     hydrate,
+    refresh,
     providerName,
     showEfforts,
     activeProviderName,

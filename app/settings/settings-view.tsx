@@ -34,7 +34,7 @@ import { ProvidersSection } from "./providers-section"
 import { UsageSection } from "./usage-section"
 import { useAppSettings } from "./use-app-settings"
 
-type SectionId =
+export type SettingsSectionId =
   | "appearance"
   | "chat"
   | "providers"
@@ -45,7 +45,7 @@ type SectionId =
   | "data"
 
 type SettingsSection = {
-  id: SectionId
+  id: SettingsSectionId
   label: string
   icon: LucideIcon
   keywords: string
@@ -128,11 +128,17 @@ const SECTION_GROUPS: SettingsGroup[] = [
 ]
 
 const SECTIONS = SECTION_GROUPS.flatMap((group) => group.sections)
-const SECTION_IDS = new Set<SectionId>(SECTIONS.map((section) => section.id))
+const SECTION_IDS = new Set<SettingsSectionId>(SECTIONS.map((section) => section.id))
 
-function readSectionHash(): SectionId {
+const SIDEBAR_BACK =
+  "inline-flex h-8 items-center gap-2 rounded-md px-2 text-[12.5px] text-sidebar-foreground/65 outline-none transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50"
+
+const BACK_TO_CHAT =
+  "inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
+function readSectionHash(): SettingsSectionId {
   if (typeof window === "undefined") return "appearance"
-  const value = window.location.hash.slice(1) as SectionId
+  const value = window.location.hash.slice(1) as SettingsSectionId
   return SECTION_IDS.has(value) ? value : "appearance"
 }
 
@@ -143,7 +149,7 @@ function SectionLink({
 }: {
   section: SettingsSection
   active: boolean
-  onSelect: (section: SectionId) => void
+  onSelect: (section: SettingsSectionId) => void
 }) {
   const Icon = section.icon
 
@@ -171,9 +177,11 @@ function SectionLink({
 function SettingsSidebar({
   active,
   onSelect,
+  onClose,
 }: {
-  active: SectionId
-  onSelect: (section: SectionId) => void
+  active: SettingsSectionId
+  onSelect: (section: SettingsSectionId) => void
+  onClose?: () => void
 }) {
   const [query, setQuery] = React.useState("")
   const normalizedQuery = query.trim().toLocaleLowerCase()
@@ -186,7 +194,7 @@ function SettingsSidebar({
     ),
   })).filter((group) => group.sections.length > 0)
   const selectSection = React.useCallback(
-    (section: SectionId) => {
+    (section: SettingsSectionId) => {
       setQuery("")
       onSelect(section)
     },
@@ -199,13 +207,21 @@ function SettingsSidebar({
       className="hidden w-[236px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground md:flex"
     >
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-3">
-        <Link
-          href="/"
-          className="inline-flex h-8 items-center gap-2 rounded-md px-2 text-[12.5px] text-sidebar-foreground/65 outline-none transition-colors hover:bg-sidebar-accent/60 hover:text-sidebar-foreground focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50"
-        >
-          <ArrowLeft className="size-3.5" />
-          Back to chat
-        </Link>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            className={cn(SIDEBAR_BACK, "cursor-pointer")}
+          >
+            <ArrowLeft className="size-3.5" />
+            Back to chat
+          </button>
+        ) : (
+          <Link href="/" className={SIDEBAR_BACK}>
+            <ArrowLeft className="size-3.5" />
+            Back to chat
+          </Link>
+        )}
 
         <div data-slot="settings-search" className="relative">
           <Search className="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-sidebar-foreground/45" />
@@ -260,8 +276,8 @@ function MobileSectionNav({
   active,
   onSelect,
 }: {
-  active: SectionId
-  onSelect: (section: SectionId) => void
+  active: SettingsSectionId
+  onSelect: (section: SettingsSectionId) => void
 }) {
   return (
     <nav
@@ -300,11 +316,28 @@ function MobileSectionNav({
   )
 }
 
-export function SettingsView({ dataDir }: { dataDir: string }) {
-  const [active, setActive] = React.useState<SectionId>("appearance")
+/**
+ * `onClose` is what tells this it is a panel over the chat rather than the
+ * `/settings` route: the section comes from the caller instead of the hash,
+ * and "Back to chat" closes the panel at every width instead of navigating —
+ * a navigation would unmount the chat, and with it the turn it is streaming.
+ */
+export function SettingsView({
+  dataDir,
+  section,
+  onClose,
+}: {
+  dataDir: string
+  section?: SettingsSectionId
+  onClose?: () => void
+}) {
+  const [active, setActive] = React.useState<SettingsSectionId>(
+    section ?? "appearance"
+  )
   const settings = useAppSettings()
 
   React.useEffect(() => {
+    if (onClose) return
     const syncFromHash = () => setActive(readSectionHash())
     window.addEventListener("hashchange", syncFromHash)
     window.addEventListener("popstate", syncFromHash)
@@ -313,22 +346,41 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
       window.removeEventListener("hashchange", syncFromHash)
       window.removeEventListener("popstate", syncFromHash)
     }
-  }, [])
+  }, [onClose])
 
-  const selectSection = React.useCallback((section: SectionId) => {
+  React.useEffect(() => {
+    if (!onClose) return
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose()
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [onClose])
+
+  const selectSection = React.useCallback((section: SettingsSectionId) => {
     setActive(section)
   }, [])
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <AppHeader>
-        <Link
-          href="/"
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[12px] text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 md:hidden"
-        >
-          <ArrowLeft className="size-3.5" />
-          <span className="hidden sm:inline">Back to chat</span>
-        </Link>
+        {onClose ? (
+          <button
+            type="button"
+            onClick={onClose}
+            /* The panel's own sidebar carries the desktop one, same as the
+               route does. */
+            className={cn(BACK_TO_CHAT, "cursor-pointer md:hidden")}
+          >
+            <ArrowLeft className="size-3.5" />
+            <span className="hidden sm:inline">Back to chat</span>
+          </button>
+        ) : (
+          <Link href="/" className={cn(BACK_TO_CHAT, "md:hidden")}>
+            <ArrowLeft className="size-3.5" />
+            <span className="hidden sm:inline">Back to chat</span>
+          </Link>
+        )}
         <AppHeaderActions>
           <ThemeToggle
             floating={false}
@@ -338,7 +390,11 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
       </AppHeader>
 
       <div className="flex min-h-0 flex-1">
-        <SettingsSidebar active={active} onSelect={selectSection} />
+        <SettingsSidebar
+          active={active}
+          onSelect={selectSection}
+          onClose={onClose}
+        />
 
         <main data-slot="settings-content" className="min-w-0 flex-1 overflow-y-auto">
           <MobileSectionNav active={active} onSelect={selectSection} />

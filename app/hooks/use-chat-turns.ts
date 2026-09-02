@@ -99,7 +99,7 @@ export function useChatTurns({
   regenerateTitle: (id: string) => void
   startRename: (id: string) => void
   openFolder: (action: "editor" | "reveal" | "terminal") => void
-  /** `/settings` — the router push, kept out of this hook. */
+  /** `/settings` — opens the settings panel, kept out of this hook. */
   pushSettings: () => void
 }) {
   const { abortsRef, activeIdRef, drainQueueRef, sessionsRef, threadsRef } = refs

@@ -210,7 +210,15 @@ export function useFilePanel({
             current &&
             current.path === file.path &&
             current.content === undefined
-              ? { ...current, content: data.content }
+              ? {
+                  ...current,
+                  // The route answers with the path it actually read: an
+                  // answer that only said `Messages.tsx` gets the real one
+                  // back, and the header, the menu and "Copy path" all name
+                  // that file.
+                  path: data.path || current.path,
+                  content: data.content,
+                }
               : current
           )
         })

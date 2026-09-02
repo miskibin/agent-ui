@@ -45,6 +45,17 @@ export function fetchSettings(): Promise<AppSettings> {
   return fetch("/api/settings", { cache: "no-store" }).then(json<AppSettings>)
 }
 
+/**
+ * Where this machine keeps the app's JSON. Only the Data section shows it, and
+ * only the settings *route* can read it at render time — the panel over the
+ * chat has to ask.
+ */
+export function fetchDataDir(): Promise<string> {
+  return fetch("/api/settings/data-dir", { cache: "no-store" })
+    .then(json<{ dataDir: string }>)
+    .then((data) => data.dataDir)
+}
+
 /** Read-modify-write of the whole settings object — the file holds one blob. */
 async function updateSettings(
   patch: (current: AppSettings) => AppSettings

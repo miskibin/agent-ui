@@ -66,6 +66,12 @@ export type CommandPaletteProps = {
   onRenameSession?: (id: string) => void
   /** Listed under the built-in actions, in order. */
   actions?: CommandPaletteAction[]
+  /**
+   * Opens settings. Given by a host that shows them as a panel over the chat;
+   * without it the item navigates to `/settings`, which unmounts the chat and
+   * with it any turn it is streaming.
+   */
+  onOpenSettings?: () => void
 }
 
 export function CommandPalette({
@@ -77,6 +83,7 @@ export function CommandPalette({
   onNewChat,
   onRenameSession,
   actions,
+  onOpenSettings,
 }: CommandPaletteProps) {
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
@@ -213,7 +220,11 @@ export function CommandPalette({
               ))}
               <CommandItem
                 value="Open settings"
-                onSelect={() => run(() => router.push("/settings"))}
+                onSelect={() =>
+                  run(() =>
+                    onOpenSettings ? onOpenSettings() : router.push("/settings")
+                  )
+                }
               >
                 <SettingsIcon />
                 <span>Open settings</span>

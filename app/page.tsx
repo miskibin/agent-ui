@@ -1,7 +1,7 @@
 "use client"
 
 import { PanelLeft, Search } from "lucide-react"
-import { useRouter } from "next/navigation"
+import dynamic from "next/dynamic"
 import * as React from "react"
 
 import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
@@ -64,6 +64,18 @@ import { useSidebarItems } from "./hooks/use-sidebar-items"
 import { useThreadView } from "./hooks/use-thread-view"
 import { useThreads } from "./hooks/use-threads"
 import { useTurnRunner } from "./hooks/use-turn-runner"
+import type { SettingsSectionId } from "@/app/settings/settings-view"
+import * as api from "@/lib/api-client"
+
+/**
+ * Settings render over the chat, so they live in this page's tree — but they
+ * are a whole second app's worth of sections, and the chat must not wait for
+ * them. Loaded on the first open, never during the critical path.
+ */
+const SettingsView = dynamic(
+  () => import("@/app/settings/settings-view").then((m) => m.SettingsView),
+  { ssr: false }
+)
 
 /**
  * The chat surface. Deliberately a pure client component: sessions, providers
@@ -77,8 +89,16 @@ import { useTurnRunner } from "./hooks/use-turn-runner"
  * turn itself, then everything derived for the view.
  */
 export default function ChatPage() {
-  const router = useRouter()
   const isDesktop = useIsDesktop()
+  /**
+   * Settings open *over* the chat rather than at `/settings`: this page owns
+   * every in-flight turn, and a route change unmounts it — which aborts the
+   * fetch, which the chat route reads as the client giving up and kills the
+   * run. Null = closed; a section id = open on that section.
+   */
+  const [settingsSection, setSettingsSection] =
+    React.useState<SettingsSectionId | null>(null)
+  const [dataDir, setDataDir] = React.useState("")
   const refs = useChatRefs()
   const { composerRef, sessionsRef } = refs
 
@@ -276,10 +296,41 @@ export default function ChatPage() {
     notificationSounds: settings?.chat.notificationSounds,
   })
 
-  const pushSettings = React.useCallback(
-    () => router.push("/settings"),
-    [router]
+  /**
+   * Opens the settings panel. `dataDir` is read the first time it opens — the
+   * panel has no server render to read `AGENT_UI_DIR` in, and it is only ever
+   * shown as a line of text in the Data section.
+   */
+  const openSettings = React.useCallback(
+    (section: SettingsSectionId = "appearance") => {
+      setSettingsSection(section)
+      setDataDir((current) => {
+        if (!current) {
+          void api
+            .fetchDataDir()
+            .then(setDataDir)
+            .catch(() => {
+              /* the Data section simply shows nothing */
+            })
+        }
+        return current
+      })
+    },
+    []
   )
+  /** Closing re-reads settings and providers: either may have changed. */
+  const { refresh: refreshConfig } = config
+  const closeSettings = React.useCallback(() => {
+    setSettingsSection(null)
+    refreshConfig()
+  }, [refreshConfig])
+  /** The memory notice's "Edit what's remembered". */
+  const openMemorySettings = React.useCallback(
+    () => openSettings("memory"),
+    [openSettings]
+  )
+  /** The sidebar, ⌘K and `/settings`, none of which name a section. */
+  const pushSettings = React.useCallback(() => openSettings(), [openSettings])
   /** The void wrapper the sidebar, the palette and ⌘N all share. */
   const startNewChat = React.useCallback(
     () => void handleNewChat(),
@@ -680,6 +731,7 @@ export default function ChatPage() {
                         changes={memoryNotices[activeId].changes}
                         compacted={memoryNotices[activeId].compacted}
                         onDismiss={() => dismissMemoryNotice(activeId)}
+                        onOpenMemorySettings={openMemorySettings}
                       />
                     ) : null}
                   </MessageList>
@@ -791,6 +843,25 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {settingsSection ? (
+        /* Over the chat, not instead of it: the conversation below stays
+           mounted, so a turn running while settings are open keeps streaming
+           into it and is there when the panel closes. */
+        <div
+          data-slot="settings-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Settings"
+          className="fixed inset-0 z-50 bg-background"
+        >
+          <SettingsView
+            dataDir={dataDir}
+            section={settingsSection}
+            onClose={closeSettings}
+          />
+        </div>
+      ) : null}
+
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -800,6 +871,7 @@ export default function ChatPage() {
         onNewChat={startNewChat}
         onRenameSession={startRename}
         actions={paletteActions}
+        onOpenSettings={openSettings}
       />
     </div>
   )
