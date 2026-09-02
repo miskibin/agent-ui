@@ -26,8 +26,13 @@ const TITLES: Record<AttentionKind, string> = {
   error: "Run failed",
 }
 
-/** Web notifications need a one-time permission; asked lazily, never on load. */
-async function webPermission(): Promise<boolean> {
+/**
+ * Asks the browser for notification permission. Only worth calling from a
+ * click — the Settings switch — because browsers ignore or auto-deny a prompt
+ * raised from a background tab, which is the only time a notification is
+ * ever *sent*. Resolves to whether it is granted now.
+ */
+export async function requestNotificationPermission(): Promise<boolean> {
   if (typeof Notification === "undefined") return false
   if (Notification.permission === "granted") return true
   if (Notification.permission === "denied") return false
@@ -38,6 +43,11 @@ async function webPermission(): Promise<boolean> {
   }
 }
 
+/** Sending never prompts; see `requestNotificationPermission`. */
+function webPermissionGranted() {
+  return typeof Notification !== "undefined" && Notification.permission === "granted"
+}
+
 /**
  * Notifies about one chat, unless the window is focused. `onClick` runs when
  * the user activates a web notification (the desktop plugin has no click
@@ -45,6 +55,8 @@ async function webPermission(): Promise<boolean> {
  */
 export async function notifyAttention(options: {
   kind: AttentionKind
+  /** Keeps one chat's notification from replacing another's. */
+  chatId: string
   chatTitle: string
   body?: string
   onClick?: () => void
@@ -57,11 +69,11 @@ export async function notifyAttention(options: {
     void requestAttention()
     if (await notifyNative(title, body)) return
   }
-  if (!(await webPermission())) return
+  if (!webPermissionGranted()) return
   try {
     const notification = new Notification(title, {
       body,
-      tag: `agent-ui-${options.kind}`,
+      tag: `agent-ui-${options.kind}-${options.chatId}`,
       silent: true,
     })
     notification.onclick = () => {

@@ -1,14 +1,13 @@
 import { createReadStream } from "node:fs"
 import { stat } from "node:fs/promises"
 import { homedir } from "node:os"
-import { extname, isAbsolute, resolve, sep } from "node:path"
+import { extname, isAbsolute } from "node:path"
 import { Readable } from "node:stream"
 
 import { NextResponse } from "next/server"
 
-import type { AppSettings } from "@/lib/settings/schema"
-import { dataDir, readSettings } from "@/lib/settings/server"
-import { listSessions } from "@/lib/store/sessions"
+import { isWithinKnownRoot } from "@/lib/fs-roots"
+import { readSettings } from "@/lib/settings/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -129,20 +128,3 @@ function isAbsolutePath(path: string) {
   return isAbsolute(path) || /^[A-Za-z]:[\\/]/.test(path) || path.startsWith("\\\\")
 }
 
-/** The folders the app already reads and writes on the user's behalf. */
-async function isWithinKnownRoot(path: string, settings: AppSettings) {
-  const sessions = await listSessions().catch(() => [])
-  const roots = [
-    dataDir(),
-    process.cwd(),
-    settings.providers.pi.workspace,
-    ...sessions.map((session) => session.cwd ?? ""),
-  ]
-  return roots.some((root) => root.trim() && isWithin(root, path))
-}
-
-function isWithin(root: string, path: string) {
-  const from = resolve(root)
-  const to = resolve(path)
-  return to === from || to.startsWith(from.endsWith(sep) ? from : `${from}${sep}`)
-}

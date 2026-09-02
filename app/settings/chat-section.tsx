@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import { requestNotificationPermission } from "@/lib/notifications"
 import type { AppSettings } from "@/lib/settings/schema"
 
 import { SettingsRow, SettingsSection } from "./section"
@@ -113,9 +114,12 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
           <Switch
             id="chat-desktop-notifications"
             checked={chat.desktopNotifications}
-            onCheckedChange={(desktopNotifications) =>
+            onCheckedChange={(desktopNotifications) => {
               setChat({ desktopNotifications })
-            }
+              // A browser only grants the permission from a click like this
+              // one; the desktop shell asks through its own plugin.
+              if (desktopNotifications) void requestNotificationPermission()
+            }}
           />
         }
       />

@@ -10,7 +10,8 @@ import {
   revealInFileManager,
 } from "@/lib/open-target"
 import { expandHome } from "@/lib/fs-paths"
-import { readSettings } from "@/lib/settings/server"
+import { isWithin, isWithinKnownRoot } from "@/lib/fs-roots"
+import { dataDir, readSettings } from "@/lib/settings/server"
 import { getSession } from "@/lib/store/sessions"
 
 export const runtime = "nodejs"
@@ -25,6 +26,12 @@ export const dynamic = "force-dynamic"
  * that only knows `src/app.ts` still opens the right file. Cross-site requests
  * are refused: launching programs is not something another origin gets to do
  * through the app.
+ *
+ * The target is what a click chose, but the path may have been named by an
+ * answer — an image an agent pointed at, a chip it wrote — so the same
+ * `files.anyPath` switch that narrows `/api/files` narrows this: off, only the
+ * app's own folders open. The data directory never does, either way: a
+ * terminal there is a terminal in the folder holding the API keys.
  */
 
 type OpenBody = {
@@ -69,12 +76,28 @@ export async function POST(req: Request) {
     )
   }
 
+  const settings = await readSettings()
+  if (isWithin(dataDir(), target)) {
+    return NextResponse.json(
+      { error: "The app's data folder cannot be opened from a chat" },
+      { status: 403 }
+    )
+  }
+  if (!settings.files.anyPath && !(await isWithinKnownRoot(target, settings))) {
+    return NextResponse.json(
+      {
+        error:
+          "Opening paths outside the app's folders is off — turn on Local files in settings.",
+      },
+      { status: 403 }
+    )
+  }
+
   const info = await stat(/*turbopackIgnore: true*/ target).catch(() => null)
   if (!info) {
     return NextResponse.json({ error: "No such file or folder" }, { status: 404 })
   }
   const isDir = info.isDirectory()
-  const settings = await readSettings()
 
   try {
     if (body.action === "reveal") {

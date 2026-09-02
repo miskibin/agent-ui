@@ -22,18 +22,23 @@ type Status = api.GitStatus
 /** One in-flight/last-known status per folder, shared by every mount. */
 const cache = new Map<string, Status>()
 
-export function useFolderStatus(cwd: string) {
+/**
+ * `sessionId` names a chat inside the folder — the route reads the folder
+ * back from it, so the client never hands over a path; `cwd` only keys the
+ * shared cache.
+ */
+export function useFolderStatus(cwd: string, sessionId: string) {
   const [status, setStatus] = React.useState<Status | null>(
     () => cache.get(cwd) ?? null
   )
 
   React.useEffect(() => {
-    if (!cwd) return
+    if (!cwd || !sessionId) return
     let cancelled = false
     const load = () => {
       if (document.hidden) return
       api
-        .fetchGitStatus(cwd)
+        .fetchGitStatus(sessionId)
         .then((next) => {
           if (cancelled) return
           cache.set(cwd, next)
@@ -51,7 +56,7 @@ export function useFolderStatus(cwd: string) {
       clearInterval(timer)
       window.removeEventListener("focus", load)
     }
-  }, [cwd])
+  }, [cwd, sessionId])
 
   return status
 }
@@ -61,12 +66,15 @@ const chip =
 
 export const FolderStatus = React.memo(function FolderStatus({
   cwd,
+  sessionId,
   className,
 }: {
   cwd: string
+  /** Any chat in the folder — the group's newest. */
+  sessionId: string
   className?: string
 }) {
-  const status = useFolderStatus(cwd)
+  const status = useFolderStatus(cwd, sessionId)
   if (!status?.isGitRepo) return null
   const { ahead, behind, dirty, pr } = status
   if (!ahead && !behind && !dirty && !pr) return null

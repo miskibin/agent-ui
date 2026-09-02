@@ -218,13 +218,15 @@ The file panel copies its path on click, shows a diff **unified or side by side*
 scrolls them, and opens on the line a `file.ts:42` reference named. The header's *N files changed*
 lists everything the whole chat touched, not just the last turn.
 
+![Right-click a changed file](.github/screenshots/file-actions.png)
+
 ## The composer
 
 - **Keep typing while the agent works.** Enter queues the message; queued ones are listed above
   the composer, can be edited or dropped, and go out one at a time as turns end.
 - **`@` mentions files** under the chat's folder, fuzzy-matched.
-- **Drafts survive** switching chats and reloading; **⌘S stashes** a prompt (attachments too)
-  to bring back later from the stash button.
+- **Drafts survive** switching chats and reloading; **⌘S stashes** a prompt to bring back
+  later from the stash button (its attachments stay with it until the tab closes).
 - **A long paste** collapses into a `[Pasted text #1 +40 lines]` chip and is sent in full;
   **text files** dropped on the composer are read and sent fenced, other files by name.
 - **Select text in an answer** and a *Quote* pill drops it into the composer as a blockquote.
@@ -232,6 +234,8 @@ lists everything the whole chat touched, not just the last turn.
   / next chat, ⌘1…9 jump to a chat, ⌘K palette.
 - **`/` commands**: `/clear`, `/new`, `/rename <title>`, `/title` (let a model name the chat),
   `/open`, `/reveal`, `/terminal`, `/settings`.
+
+![Queued messages and an @ mention](.github/screenshots/composer-queue.png)
 
 Shell tool rows say what actually ran (`Ran npm test` rather than `/bin/zsh -lc '…'`), a turn's
 details show an **estimated cost** next to its tokens for hosted models, the context ring shows
@@ -256,6 +260,8 @@ behind, uncommitted files, and the branch's pull request when `gh` is logged in.
   The extractor only ever sees what you typed — never the agent's replies, its tool calls, or any file it read — so nothing in a repository you point the agent at can write itself into a file that goes into all your later conversations. Health, ethnicity, religion, politics and gender identity are skipped unless you opt in; identity numbers, payment details and credentials are never stored either way. Needs Ollama; without it the notes are still used, just never updated automatically.
 - **Chat** — default reasoning effort, prompt suggestions, auto-titling, notification sounds for completed runs and questions that need attention, and desktop notifications for the same events when the window is in the background (with the number of chats waiting on you on the dock icon), and the **agent handoff** switch below.
 - **Editor & terminal** — which of the editors found on this machine (VS Code, Cursor, Zed, Windsurf, Sublime Text, the JetBrains IDEs) "Open in editor" uses, and which terminal "Open in terminal" starts.
+
+  ![Editor & terminal settings](.github/screenshots/settings-editor.png)
 
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
 

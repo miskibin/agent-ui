@@ -125,7 +125,9 @@ import type {
   AgentStatusStage,
   AgentStreamEvent,
 } from "@/lib/cursor-agent-types"
+import { isDesktop as isDesktopShell } from "@/lib/desktop"
 import {
+  clearDraft,
   readDrafts,
   readStash,
   writeDraft,
@@ -656,14 +658,18 @@ export default function ChatPage() {
   const waitingCount = React.useMemo(
     () =>
       Object.entries(threads).filter(
-        ([id, thread]) => !runs[id] && findPendingAsk(thread) !== null
+        ([id, thread]) =>
+          id !== activeId && !runs[id] && findPendingAsk(thread) !== null
       ).length,
-    [runs, threads]
+    [activeId, runs, threads]
   )
   /** Every file the chat changed, across its turns — the header's count. */
   const chatChanges = React.useMemo(
-    () => collectChatChanges(listMessages),
-    [listMessages]
+    () =>
+      collectChatChanges(
+        isGenerating ? deferredMessages.slice(0, -1) : deferredMessages
+      ),
+    [deferredMessages, isGenerating]
   )
 
   /* ---------------------------------------------------------------------- */
@@ -1173,6 +1179,9 @@ export default function ChatPage() {
     if (activeIdRef.current === id) setPreview(null)
     abortsRef.current.get(id)?.abort()
     abortsRef.current.delete(id)
+    setQueues((prev) => omit(prev, id))
+    draftsRef.current.delete(id)
+    clearDraft(id)
     setThreads((prev) => {
       if (prev[id] === undefined) return prev
       const next = { ...prev }
@@ -1199,7 +1208,14 @@ export default function ChatPage() {
     for (const id of ids) {
       abortsRef.current.get(id)?.abort()
       abortsRef.current.delete(id)
+      draftsRef.current.delete(id)
+      clearDraft(id)
     }
+    setQueues((prev) => {
+      let next = prev
+      for (const id of ids) next = omit(next, id)
+      return next
+    })
     setThreads((prev) => {
       let changed = false
       const next = { ...prev }
@@ -1454,6 +1470,7 @@ export default function ChatPage() {
           sessionsRef.current.find((item) => item.id === sessionId)?.title ?? ""
         void notifyAttention({
           kind,
+          chatId: sessionId,
           chatTitle: title,
           body,
           onClick: () => selectSessionRef.current(sessionId),
@@ -1679,8 +1696,9 @@ export default function ChatPage() {
         if (!controller.signal.aborted) {
           const message = errorMessage(err, "The agent run failed")
           toast.error(message)
+          // An `error` event already said so, notification included.
+          if (!failed) notify("error", message)
           failAssistant(message)
-          notify("error", message)
         }
       } finally {
         drain()
@@ -1771,6 +1789,18 @@ export default function ChatPage() {
       const detached = !!targetId && targetId !== activeIdRef.current && !!target
       const runProvider = detached ? target.providerId : providerId
       const runModel = detached ? target.model : model
+      /**
+       * Everything else about the run is the *open* chat's — its harness's
+       * capabilities, the effort picked, the permission mode shown — none of
+       * which may leak into another chat's turn: a read-only chat's queued
+       * message must not run under the `full` of the chat now on screen. A
+       * detached run takes the target's own stored mode (the chat route
+       * validates it against that harness), no effort, and no images.
+       */
+      const runPermission: PermissionMode | undefined = detached
+        ? ((target.permissionMode as PermissionMode | undefined) || undefined)
+        : chosenPermission || undefined
+      const runEffort = detached ? undefined : capabilities?.effort ? effort : undefined
 
       const command = parseSlashCommand(trimmed)
       if (command && !detached) {
@@ -1823,7 +1853,8 @@ export default function ChatPage() {
       // Only images can travel as real attachments, and only to a provider
       // and model that can actually look at them — everything else falls
       // back to the original behavior: a plain name mentioned in the text.
-      const visionEligible = !!capabilities?.vision && visionModels.includes(model)
+      const visionEligible =
+        !detached && !!capabilities?.vision && visionModels.includes(model)
       const imageFiles = files.filter(isImageFile)
       const otherFiles = files.filter((file) => !isImageFile(file))
       const oversizedImages = imageFiles.filter(
@@ -1892,7 +1923,8 @@ export default function ChatPage() {
           ? `\n\nAttached: ${namedOnly.map((file) => file.name).join(", ")}`
           : ""
       const content = `${skillPrefix}${text}${fenced}${fileNote}`
-      if (!content.trim()) return
+      // A screenshot on its own is a message; only nothing at all is nothing.
+      if (!content.trim() && attachments.length === 0) return
 
       if (!sessionId) {
         try {
@@ -1934,8 +1966,8 @@ export default function ChatPage() {
         prior,
         providerId: runProvider,
         model: runModel,
-        effort: capabilities?.effort ? effort : undefined,
-        permissionMode: chosenPermission || undefined,
+        effort: runEffort,
+        permissionMode: runPermission,
         attachments,
         animate: prior.length === 0,
         titleFrom:
@@ -1983,6 +2015,13 @@ export default function ChatPage() {
   const handleQueue = React.useCallback((payload: ChatInputPayload) => {
     const sessionId = activeIdRef.current
     if (!sessionId) return
+    // The app's own commands act on the chat now, not on a model later — and
+    // a queued one could drain into another chat's turn. Hand it back.
+    if (parseSlashCommand(payload.text)) {
+      composerRef.current?.setDraft(payload)
+      toast.message("Commands run right away — send it once the turn ends")
+      return
+    }
     const item: QueuedMessage = {
       id: newId(),
       text: payload.text,
@@ -2013,10 +2052,34 @@ export default function ChatPage() {
     [takeQueued]
   )
 
+  /**
+   * Parks whatever is typed before the composer is overwritten — a queued
+   * message pulled back for editing, a stash entry restored — so nothing the
+   * user wrote is lost to a click. Goes to the stash, which is what it is for.
+   */
+  const parkDraft = React.useCallback(() => {
+    const draft = composerRef.current?.getDraft()
+    if (!draft || (!draft.text.trim() && draft.files.length === 0)) return
+    const entry: StashEntry = {
+      id: newId(),
+      text: draft.text,
+      createdAt: nowMs(),
+      fileNames: draft.files.map((file) => file.name),
+      files: draft.files,
+      skills: draft.skills,
+    }
+    setStash((prev) => {
+      const next = [entry, ...prev]
+      writeStash(next)
+      return next
+    })
+  }, [])
+
   const handleQueueEdit = React.useCallback(
     (id: string) => {
       const item = takeQueued(activeIdRef.current, id)
       if (!item) return
+      parkDraft()
       composerRef.current?.setDraft({
         text: item.text,
         files: item.files,
@@ -2024,7 +2087,7 @@ export default function ChatPage() {
       })
       composerRef.current?.focus()
     },
-    [takeQueued]
+    [parkDraft, takeQueued]
   )
 
   /** Sends the next queued message of a chat, if any. Called as a turn ends. */
@@ -2060,19 +2123,23 @@ export default function ChatPage() {
     toast.message("Prompt stashed", { description: "Restore it from the stash button." })
   }, [])
 
-  const restoreStash = React.useCallback((entry: StashEntry) => {
-    composerRef.current?.setDraft({
-      text: entry.text,
-      files: entry.files ?? [],
-      skills: entry.skills,
-    })
-    composerRef.current?.focus()
-    setStash((prev) => {
-      const next = prev.filter((item) => item.id !== entry.id)
-      writeStash(next)
-      return next
-    })
-  }, [])
+  const restoreStash = React.useCallback(
+    (entry: StashEntry) => {
+      parkDraft()
+      composerRef.current?.setDraft({
+        text: entry.text,
+        files: entry.files ?? [],
+        skills: entry.skills,
+      })
+      composerRef.current?.focus()
+      setStash((prev) => {
+        const next = prev.filter((item) => item.id !== entry.id)
+        writeStash(next)
+        return next
+      })
+    },
+    [parkDraft]
+  )
 
   const discardStash = React.useCallback((id: string) => {
     setStash((prev) => {
@@ -2580,6 +2647,7 @@ export default function ChatPage() {
   React.useEffect(
     () =>
       bindAppShortcuts({
+        desktop: isDesktopShell(),
         newChat: () => void handleNewChat(),
         toggleSidebar: () =>
           isDesktop
@@ -3419,7 +3487,9 @@ const SidebarFolderSection = React.memo(function SidebarFolderSection({
           {group.branch ? (
             <SidebarItemBadge branch={group.branch} className="min-w-0" />
           ) : null}
-          {group.cwd ? <FolderStatus cwd={group.cwd} /> : null}
+          {group.cwd && group.items[0] ? (
+            <FolderStatus cwd={group.cwd} sessionId={group.items[0].id} />
+          ) : null}
           {group.running && !open ? (
             <SidebarItemStatusDot status="streaming" />
           ) : null}

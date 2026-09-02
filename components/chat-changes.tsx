@@ -27,16 +27,25 @@ import type { StoredMessage } from "@/lib/store/types"
  * to add; otherwise its card is derived from the mutation tools, the way
  * `Message` derives it, so the two never disagree.
  */
+const derivedChanges = new WeakMap<StoredMessage, ChangeSummaryFile[]>()
+
+/** A settled message's list, parsed once: the union is rebuilt per frame. */
+function changesOf(message: StoredMessage): ChangeSummaryFile[] {
+  if (message.changes) return message.changes
+  const cached = derivedChanges.get(message)
+  if (cached) return cached
+  const changes = fileChangesFromTools(
+    message.tools?.length ? message.tools : toolsFromParts(message.parts ?? [])
+  )
+  derivedChanges.set(message, changes)
+  return changes
+}
+
 export function collectChatChanges(messages: StoredMessage[]): ChangeSummaryFile[] {
   const byPath = new Map<string, ChangeSummaryFile>()
   for (const message of messages) {
     if (message.sender !== "assistant") continue
-    const changes =
-      message.changes ??
-      fileChangesFromTools(
-        message.tools?.length ? message.tools : toolsFromParts(message.parts ?? [])
-      )
-    for (const change of changes) {
+    for (const change of changesOf(message)) {
       const existing = byPath.get(change.path)
       if (existing) {
         existing.additions = (existing.additions ?? 0) + (change.additions ?? 0)

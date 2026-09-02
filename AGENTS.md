@@ -212,8 +212,11 @@ one interface:
   machine (VS Code, Cursor, Zed, Windsurf, Sublime, the JetBrains IDEs; the terminals). The
   vendored components only show the menu (`FileActionItem[]`, threaded through `MessageList`,
   `ChangeSummary`, `FilePreview` and `MessageMarkdown`); `POST /api/open` does the opening,
-  server-side, as a fixed argv with the path as one argument and never through a shell, and
-  resolves a relative path against the chat's stored folder. `Settings → Editor & terminal`
+  server-side, as a fixed argv with the path as one argument — never `shell: true`; a Windows
+  `.cmd` shim or `start` goes through `cmd.exe` with every argument quoted by the app and
+  paths carrying `"`, `%` or a newline refused — resolves a relative path against the chat's
+  stored folder, refuses the data directory, and under `files.anyPath` off is confined to the
+  app's own folders like `/api/files` (`lib/fs-roots.ts`). `Settings → Editor & terminal`
   picks the defaults (`settings.editor`), ⌘O opens the chat's folder. "Revert changes" is
   `POST /api/git/revert` (`git checkout -- <file>`, tracked files only, confirmed through a
   toast action). A `file.ts:42` chip hands its line to `FilePreviewFile.focusLine`. The

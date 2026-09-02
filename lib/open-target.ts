@@ -12,9 +12,11 @@ import { promisify } from "node:util"
  * are installed, and how to hand each one a path.
  *
  * Everything is spawned as a fixed argv with the path as one argument — never
- * through a shell — so a file called `; rm -rf ~` opens like any other. The
- * child is detached and unreferenced: the app server must not wait on an
- * editor window, and closing the app must not close the editor.
+ * `shell: true` — so a file called `; rm -rf ~` opens like any other. The one
+ * place a shell is unavoidable, a Windows `.cmd` shim, gets a command line
+ * quoted here element by element (see `spawnViaCmd`). The child is detached
+ * and unreferenced: the app server must not wait on an editor window, and
+ * closing the app must not close the editor.
  */
 
 const run = promisify(execFile)
@@ -368,16 +370,54 @@ export async function detectOpenTargets(): Promise<DetectedTargets> {
 /* Launching                                                                   */
 /* -------------------------------------------------------------------------- */
 
-function launch(argv: string[], cwd?: string) {
-  const [command, ...args] = argv
-  const child = spawn(command, args, {
+/**
+ * Characters that have no place in an argument handed to `cmd.exe`: a quote
+ * would end the quoting below, `%` triggers variable expansion even inside
+ * quotes, and a newline is a second command line. Refused up front — an
+ * agent-named file is not worth a clever escape.
+ */
+const CMD_UNSAFE = /["%\r\n]/
+
+/**
+ * `cmd.exe` argument quoting. `cmd /d /s /c "…"` strips the outer quotes and
+ * runs the rest; inside, every element is double-quoted, which protects the
+ * shell metacharacters (`& | < > ^`) a path may carry.
+ */
+function cmdQuote(arg: string) {
+  if (CMD_UNSAFE.test(arg)) throw new Error("That path cannot be opened on Windows")
+  return `"${arg}"`
+}
+
+/**
+ * Batch shims (`code.cmd`) and `start` need `cmd.exe`, which parses its own
+ * command line; Node's `shell: true` would join the argv with spaces and no
+ * quoting at all. So the line is quoted here, element by element, and passed
+ * verbatim.
+ */
+function spawnViaCmd(argv: string[], cwd?: string) {
+  const line = argv.map(cmdQuote).join(" ")
+  return spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${line}"`], {
     cwd,
     detached: true,
     stdio: "ignore",
     windowsHide: true,
-    // `.cmd` shims on Windows are batch files, which need a shell to run.
-    shell: process.platform === "win32" && /\.(cmd|bat)$/i.test(command),
+    windowsVerbatimArguments: true,
   })
+}
+
+function launch(argv: string[], cwd?: string) {
+  const [command, ...args] = argv
+  const viaCmd =
+    process.platform === "win32" &&
+    (/\.(cmd|bat)$/i.test(command) || /^cmd(\.exe)?$/i.test(command))
+  const child = viaCmd
+    ? spawnViaCmd(command.toLowerCase().startsWith("cmd") ? args : argv, cwd)
+    : spawn(command, args, {
+        cwd,
+        detached: true,
+        stdio: "ignore",
+        windowsHide: true,
+      })
   child.on("error", () => {
     /* surfaced to the caller as a rejected promise below */
   })
@@ -401,9 +441,16 @@ export async function openInEditor(options: {
   root?: string
 }): Promise<OpenTarget> {
   const { editors } = await detectCached()
-  const editor =
-    editors.find((entry) => entry.id === options.editor) ?? editors[0]
-  if (!editor) throw new Error("No editor found on this machine")
+  const editor = options.editor
+    ? editors.find((entry) => entry.id === options.editor)
+    : editors[0]
+  if (!editor) {
+    throw new Error(
+      options.editor
+        ? `The editor "${options.editor}" was not found on this machine — pick another in Settings → Editor & terminal`
+        : "No editor found on this machine"
+    )
+  }
 
   const { path, line, root } = options
   if (editor.bin) {
@@ -469,4 +516,10 @@ export async function openTerminal(options: {
   if (!terminal) throw new Error("No terminal found on this machine")
   await launch(terminal.argv(terminal.bin, options.dir), options.dir)
   return { id: terminal.id, name: terminal.name }
+}
+
+/** True when `id` names an installed editor — a stale setting is not "the first one". */
+export async function hasEditor(id: string) {
+  const { editors } = await detectCached()
+  return editors.some((editor) => editor.id === id)
 }

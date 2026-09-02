@@ -45,6 +45,8 @@ const SKIP_DIRS = new Set([
 
 type Walk = { at: number; files: string[]; truncated: boolean }
 const walks = new Map<string, Promise<Walk>>()
+/** A few roots at a time; each can hold `MAX_FILES` paths. */
+const MAX_ROOTS = 8
 
 async function walk(root: string): Promise<Walk> {
   const files: string[] = []
@@ -81,6 +83,10 @@ async function walkCached(root: string) {
     if (Date.now() - current.at < CACHE_TTL_MS) return current
   }
   const next = walk(root)
+  if (walks.size >= MAX_ROOTS) {
+    const oldest = walks.keys().next().value
+    if (oldest !== undefined) walks.delete(oldest)
+  }
   walks.set(root, next)
   return next
 }

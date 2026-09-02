@@ -444,8 +444,9 @@ export type GitStatus = {
   }
 }
 
-export function fetchGitStatus(path: string): Promise<GitStatus> {
-  return fetch(`/api/git/status?path=${encodeURIComponent(path)}`, {
+/** The git state of a chat's folder, resolved server-side from the chat. */
+export function fetchGitStatus(sessionId: string): Promise<GitStatus> {
+  return fetch(`/api/git/status?session=${encodeURIComponent(sessionId)}`, {
     cache: "no-store",
   }).then(json<GitStatus>)
 }

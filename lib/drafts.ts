@@ -54,6 +54,14 @@ export function writeDraft(sessionId: string, text: string) {
   write(DRAFTS_KEY, drafts)
 }
 
+/** Drops a deleted chat's draft, so the store does not outgrow the chats. */
+export function clearDraft(sessionId: string) {
+  const drafts = readDrafts()
+  if (!(sessionId in drafts)) return
+  delete drafts[sessionId]
+  write(DRAFTS_KEY, drafts)
+}
+
 export function readStash(): StashEntry[] {
   const entries = read<StashEntry[]>(STASH_KEY)
   if (!Array.isArray(entries)) return []

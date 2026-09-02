@@ -39,6 +39,8 @@ const EMPTY: GitStatus = {
 }
 
 const cache = new Map<string, { at: number; value: Promise<GitStatus> }>()
+/** One entry per folder ever polled would grow for the life of the server. */
+const MAX_CACHED = 64
 
 async function exec(cmd: string, args: string[], cwd: string, timeout: number) {
   try {
@@ -112,6 +114,10 @@ export function gitStatus(cwd: string): Promise<GitStatus> {
   const hit = cache.get(cwd)
   if (hit && Date.now() - hit.at < CACHE_TTL_MS) return hit.value
   const value = readStatus(cwd)
+  if (cache.size >= MAX_CACHED) {
+    const oldest = cache.keys().next().value
+    if (oldest !== undefined) cache.delete(oldest)
+  }
   cache.set(cwd, { at: Date.now(), value })
   return value
 }

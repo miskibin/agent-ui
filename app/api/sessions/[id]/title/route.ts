@@ -27,7 +27,11 @@ const SYSTEM = [
  * a CLI harness's model is not, so the memory extractor's Ollama model is the
  * fallback. Nothing to ask → 409, and the title is left alone.
  */
-export async function POST(_req: Request, ctx: Ctx) {
+export async function POST(req: Request, ctx: Ctx) {
+  // A model call on the user's key, from a page on another origin — no.
+  if (req.headers.get("sec-fetch-site") === "cross-site") {
+    return NextResponse.json({ error: "Cross-site request" }, { status: 403 })
+  }
   const { id } = await ctx.params
   const session = await getSession(id)
   if (!session) {

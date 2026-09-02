@@ -136,10 +136,17 @@ export function buildFileActions(ctx: FileActionsContext): FileActionItem[] {
     onSelect: (path) => {
       const raw = localPathFromUrl(path)
       const root = ctx.cwd?.replace(/[\\/]+$/, "")
-      const relative =
-        root && isLocalPath(raw) && raw.startsWith(root)
-          ? raw.slice(root.length).replace(/^[\\/]+/, "")
-          : raw
+      // Windows paths compare without case: `c:\\Repo` and `C:\\repo` are one folder.
+      const windows = !!root && (root.includes("\\") || /^[A-Za-z]:/.test(root))
+      const inside =
+        !!root &&
+        isLocalPath(raw) &&
+        (windows
+          ? raw.toLowerCase().startsWith(root.toLowerCase())
+          : raw.startsWith(root))
+      const relative = inside
+        ? raw.slice(root.length).replace(/^[\\/]+/, "")
+        : raw
       copyText(relative, "Relative path copied")
     },
   })

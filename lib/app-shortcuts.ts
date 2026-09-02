@@ -9,6 +9,12 @@
  */
 
 export type AppShortcuts = {
+  /**
+   * In a browser tab ⌘N and ⌘1…9 belong to the browser, which does not let a
+   * page cancel them, so there they move to ⌘⇧N and ⌥1…9. The desktop shell
+   * has no such owner and takes the plain keys as well.
+   */
+  desktop?: boolean
   newChat?: () => void
   toggleSidebar?: () => void
   previousChat?: () => void
@@ -40,9 +46,22 @@ export function bindAppShortcuts(handlers: AppShortcuts): () => void {
       const mod = event.metaKey || event.ctrlKey
       const key = event.key
 
+      // ⌥1…9 on the web, ⌘1…9 as well on the desktop.
+      if (
+        event.altKey &&
+        !mod &&
+        /^[1-9]$/.test(key) &&
+        handlers.jumpToChat
+      ) {
+        event.preventDefault()
+        handlers.jumpToChat(Number(key))
+        return
+      }
+
       if (mod && !event.altKey) {
         const lower = key.toLowerCase()
-        if (!event.shiftKey && lower === "n" && handlers.newChat) {
+        const plainNew = handlers.desktop && !event.shiftKey
+        if (lower === "n" && handlers.newChat && (plainNew || event.shiftKey)) {
           event.preventDefault()
           handlers.newChat()
           return
@@ -77,7 +96,12 @@ export function bindAppShortcuts(handlers: AppShortcuts): () => void {
             return
           }
         }
-        if (!event.shiftKey && /^[1-9]$/.test(key) && handlers.jumpToChat) {
+        if (
+          handlers.desktop &&
+          !event.shiftKey &&
+          /^[1-9]$/.test(key) &&
+          handlers.jumpToChat
+        ) {
           event.preventDefault()
           handlers.jumpToChat(Number(key))
           return
@@ -89,7 +113,9 @@ export function bindAppShortcuts(handlers: AppShortcuts): () => void {
       if (
         handlers.typeToFocus &&
         key.length === 1 &&
+        key !== " " &&
         !event.altKey &&
+        !event.isComposing &&
         !isEditable(event.target) &&
         !overlayOpen()
       ) {
