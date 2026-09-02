@@ -658,11 +658,12 @@ export default function ChatPage() {
    * by exactly the zoom factor.
    */
   const chatPaneRef = React.useRef<HTMLDivElement>(null)
-  const composerRef = React.useRef<HTMLDivElement>(null)
+  /** The composer's box, for its height; `composerRef` is the composer's handle. */
+  const composerBoxRef = React.useRef<HTMLDivElement>(null)
 
   React.useEffect(() => {
     const pane = chatPaneRef.current
-    const composer = composerRef.current
+    const composer = composerBoxRef.current
     if (!pane || !composer || typeof ResizeObserver === "undefined") return
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0]
@@ -3272,7 +3273,7 @@ export default function ChatPage() {
                 )}
 
                 <div
-                  ref={composerRef}
+                  ref={composerBoxRef}
                   data-slot="chat-composer"
                   className={cn(
                     "w-full shrink-0",
