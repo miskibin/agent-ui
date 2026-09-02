@@ -6,9 +6,14 @@ export type { AgentStreamEvent }
 /**
  * How much of the machine a harness may touch for one turn, in the app's own
  * vocabulary — each provider maps these onto whatever its backend actually
- * speaks (ACP permission policies, dsh sandbox levels, …).
+ * speaks (ACP permission policies, dsh sandbox levels, cursor-agent's own
+ * ask/plan/agent modes, …).
+ *
+ * `plan` is read-only with an obligation: the harness answers with the change
+ * it would make rather than making it. Only a backend that has such a mode
+ * publishes it — it is not something the app can synthesize out of a policy.
  */
-export type PermissionMode = "read-only" | "edits" | "full"
+export type PermissionMode = "read-only" | "plan" | "edits" | "full"
 
 /** What a provider can do — the UI degrades gracefully per flag. */
 export type ProviderCapabilities = {

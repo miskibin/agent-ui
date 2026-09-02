@@ -1,6 +1,13 @@
 "use client"
 
-import { Check, ChevronDown, Eye, FilePen, ShieldOff } from "lucide-react"
+import {
+  Check,
+  ChevronDown,
+  Eye,
+  FilePen,
+  ListTodo,
+  ShieldOff,
+} from "lucide-react"
 import * as React from "react"
 
 import {
@@ -26,6 +33,11 @@ const PERMISSION_LABELS: Record<
     name: "Read-only",
     description: "Runs read-only tools, refuses the rest",
     icon: Eye,
+  },
+  plan: {
+    name: "Plan",
+    description: "Reads and proposes a plan, changes nothing",
+    icon: ListTodo,
   },
   edits: {
     name: "Edits",

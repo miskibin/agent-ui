@@ -15,7 +15,7 @@ import {
   SquareTerminal,
   Waves,
 } from "lucide-react"
-import { useRouter } from "next/navigation"
+import dynamic from "next/dynamic"
 import * as React from "react"
 import { type Layout } from "react-resizable-panels"
 import { toast } from "sonner"
@@ -41,6 +41,7 @@ import { FolderStatus } from "@/components/folder-status"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
+import type { SettingsSectionId } from "@/app/settings/settings-view"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
 import { ProviderLogo } from "@/components/provider-logo"
@@ -194,6 +195,16 @@ type QueuedMessage = ChatInputQueuedMessage & { files: File[]; skills: string[] 
 
 const EMPTY_QUEUE: ChatInputQueuedMessage[] = []
 const EMPTY_MENTIONS: ChatInputMentionItem[] = []
+/**
+ * Settings render over the chat, so they live in this page's tree — but they
+ * are a whole second app's worth of sections, and the chat must not wait for
+ * them. Loaded on the first open, never during the critical path.
+ */
+const SettingsView = dynamic(
+  () => import("@/app/settings/settings-view").then((m) => m.SettingsView),
+  { ssr: false }
+)
+
 const EMPTY_FILE_ACTIONS: FileActionItem[] = []
 
 /**
@@ -385,7 +396,6 @@ const SIDEBAR_THEME_TOGGLE =
   "size-8 rounded-md border-0 bg-transparent text-muted-foreground shadow-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
 
 export default function ChatPage() {
-  const router = useRouter()
   const isDesktop = useIsDesktop()
   const [collapsed, setCollapsed] = React.useState(false)
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
@@ -468,6 +478,15 @@ export default function ChatPage() {
   const [failures, setFailures] = React.useState<Record<string, boolean>>({})
   /** False until the first `/api/sessions` answer — drives the list skeleton. */
   const [sessionsLoaded, setSessionsLoaded] = React.useState(false)
+  /**
+   * Settings open *over* the chat rather than at `/settings`: this page owns
+   * every in-flight turn, and a route change unmounts it — which aborts the
+   * fetch, which the chat route reads as the client giving up and kills the
+   * run. Null = closed; a section id = open on that section.
+   */
+  const [settingsSection, setSettingsSection] =
+    React.useState<SettingsSectionId | null>(null)
+  const [dataDir, setDataDir] = React.useState("")
   /** The file open in the right-hand panel; null = the panel is closed. */
   const [preview, setPreview] = React.useState<FilePreviewFile | null>(null)
   // Where the divider was last dragged to. Read after mount, not during
@@ -1106,6 +1125,57 @@ export default function ChatPage() {
       aborts.clear()
     }
   }, [])
+
+  /**
+   * Opens the settings panel. `dataDir` is read the first time it opens — the
+   * panel has no server render to read `AGENT_UI_DIR` in, and it is only ever
+   * shown as a line of text in the Data section.
+   */
+  const openSettings = React.useCallback(
+    (section: SettingsSectionId = "appearance") => {
+      setSettingsSection(section)
+      setDataDir((current) => {
+        if (!current) {
+          void api
+            .fetchDataDir()
+            .then(setDataDir)
+            .catch(() => {
+              /* the Data section simply shows nothing */
+            })
+        }
+        return current
+      })
+    },
+    []
+  )
+
+  /**
+   * Settings can enable a backend or change a model source, and this page read
+   * both at boot — so closing re-reads them rather than leaving the composer
+   * describing the app as it was before.
+   */
+  const closeSettings = React.useCallback(() => {
+    setSettingsSection(null)
+    void api
+      .fetchSettings()
+      .then(setSettings)
+      .catch(() => {
+        /* keep what we had */
+      })
+    void api
+      .fetchProviders()
+      .then(setProviders)
+      .catch(() => {
+        /* keep what we had */
+      })
+  }, [])
+
+  /** The memory notice's "Edit what's remembered". */
+  const openMemorySettings = React.useCallback(
+    () => openSettings("memory"),
+    [openSettings]
+  )
+
 
   /* ---------------------------------------------------------------------- */
   /* Session mutations                                                       */
@@ -1877,7 +1947,7 @@ export default function ChatPage() {
             openFolder("terminal")
             return
           case "settings":
-            router.push("/settings")
+            openSettings()
             return
         }
       }
@@ -2013,6 +2083,7 @@ export default function ChatPage() {
       })
     },
     [
+      openSettings,
       activeId,
       capabilities?.effort,
       capabilities?.vision,
@@ -2026,7 +2097,6 @@ export default function ChatPage() {
       providers,
       regenerateTitle,
       renameSession,
-      router,
       runPrompt,
       sessions,
       settings?.chat.autoTitle,
@@ -2354,6 +2424,7 @@ export default function ChatPage() {
 
   const closePreview = React.useCallback(() => setPreview(null), [])
 
+
   /**
    * The saved split rides in on the panes' own `defaultSize` rather than the
    * group's `defaultLayout`: the group mounts before the file pane exists, and
@@ -2430,7 +2501,14 @@ export default function ChatPage() {
       .then((data) => {
         setPreview((current) =>
           current && current.path === file.path && current.content === undefined
-            ? { ...current, content: data.content }
+            ? {
+                ...current,
+                // The route answers with the path it actually read: an answer
+                // that only said `Messages.tsx` gets the real one back, and
+                // the header, the menu and "Copy path" all name that file.
+                path: data.path || current.path,
+                content: data.content,
+              }
             : current
         )
       })
@@ -3026,7 +3104,7 @@ export default function ChatPage() {
               <>
                 <SideIconBtn
                   label="Settings"
-                  onClick={() => router.push("/settings")}
+                  onClick={() => openSettings()}
                 >
                   <SettingsIcon className="size-4" />
                 </SideIconBtn>
@@ -3037,7 +3115,7 @@ export default function ChatPage() {
                 <div className="min-w-0 flex-1">
                   <SideRow
                     icon={<SettingsIcon className="size-4" />}
-                    onClick={() => router.push("/settings")}
+                    onClick={() => openSettings()}
                   >
                     Settings
                   </SideRow>
@@ -3096,6 +3174,7 @@ export default function ChatPage() {
       </ChatSidebarDnd>
     ),
     [
+      openSettings,
       activeId,
       closedSections,
       collapsed,
@@ -3114,7 +3193,6 @@ export default function ChatPage() {
       sessionsLoaded,
       toggleSection,
       togglePin,
-      router,
     ]
   )
 
@@ -3267,6 +3345,7 @@ export default function ChatPage() {
                         changes={memoryNotices[activeId].changes}
                         compacted={memoryNotices[activeId].compacted}
                         onDismiss={() => dismissMemoryNotice(activeId)}
+                        onOpenMemorySettings={openMemorySettings}
                       />
                     ) : null}
                   </MessageList>
@@ -3378,6 +3457,25 @@ export default function ChatPage() {
         </div>
       </div>
 
+      {settingsSection ? (
+        /* Over the chat, not instead of it: the conversation below stays
+           mounted, so a turn running while settings are open keeps streaming
+           into it and is there when the panel closes. */
+        <div
+          data-slot="settings-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Settings"
+          className="fixed inset-0 z-50 bg-background"
+        >
+          <SettingsView
+            dataDir={dataDir}
+            section={settingsSection}
+            onClose={closeSettings}
+          />
+        </div>
+      ) : null}
+
       <CommandPalette
         open={paletteOpen}
         onOpenChange={setPaletteOpen}
@@ -3387,6 +3485,7 @@ export default function ChatPage() {
         onNewChat={() => void handleNewChat()}
         onRenameSession={startRename}
         actions={paletteActions}
+        onOpenSettings={openSettings}
       />
     </div>
   )

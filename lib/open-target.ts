@@ -265,7 +265,25 @@ async function exists(path: string) {
   }
 }
 
-/** First hit on PATH, or "". `where` on Windows, `which` elsewhere. */
+/**
+ * The extensions Windows will actually run. `where.exe code` lists the POSIX
+ * shell script `…\\bin\\code` *before* `…\\bin\\code.cmd`, and spawning the
+ * extension-less one is the `ENOENT` every VS Code user on Windows hit here.
+ */
+function windowsExecutableExtensions() {
+  return (process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD")
+    .split(";")
+    .map((ext) => ext.trim().toLowerCase())
+    .filter((ext) => ext.startsWith("."))
+}
+
+/**
+ * First *runnable* hit on PATH, or "". `where` on Windows, `which` elsewhere.
+ *
+ * A Windows hit carrying no `PATHEXT` extension is not runnable, and returning
+ * it would be worse than returning nothing: nothing lets `findBin` fall
+ * through to the well-known install paths, which name the `.cmd` shim.
+ */
 async function which(bin: string): Promise<string> {
   const finder = process.platform === "win32" ? "where.exe" : "which"
   try {
@@ -273,8 +291,17 @@ async function which(bin: string): Promise<string> {
       timeout: PROBE_TIMEOUT_MS,
       windowsHide: true,
     })
-    const first = stdout.split(/\r?\n/).map((line) => line.trim()).find(Boolean)
-    return first ?? ""
+    const hits = stdout
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+    if (process.platform !== "win32") return hits[0] ?? ""
+    const extensions = windowsExecutableExtensions()
+    return (
+      hits.find((hit) =>
+        extensions.some((ext) => hit.toLowerCase().endsWith(ext))
+      ) ?? ""
+    )
   } catch {
     return ""
   }
@@ -405,19 +432,37 @@ function spawnViaCmd(argv: string[], cwd?: string) {
   })
 }
 
-function launch(argv: string[], cwd?: string) {
+/**
+ * A Windows command line this app writes itself, handed to `CreateProcess`
+ * unchanged. Explorer is why it exists: `explorer /select,<path>` wants the
+ * *path* quoted, not the whole `/select,…` argument — and Node's own quoting
+ * produces exactly the latter as soon as the path holds a space, whereupon
+ * Explorer opens Documents, or nothing, and never says why.
+ */
+function spawnVerbatim(command: string, args: string[]) {
+  return spawn(command, args, {
+    detached: true,
+    stdio: "ignore",
+    windowsHide: true,
+    windowsVerbatimArguments: true,
+  })
+}
+
+function launch(argv: string[], cwd?: string, verbatim = false) {
   const [command, ...args] = argv
   const viaCmd =
     process.platform === "win32" &&
     (/\.(cmd|bat)$/i.test(command) || /^cmd(\.exe)?$/i.test(command))
-  const child = viaCmd
-    ? spawnViaCmd(command.toLowerCase().startsWith("cmd") ? args : argv, cwd)
-    : spawn(command, args, {
-        cwd,
-        detached: true,
-        stdio: "ignore",
-        windowsHide: true,
-      })
+  const child = verbatim
+    ? spawnVerbatim(command, args)
+    : viaCmd
+      ? spawnViaCmd(command.toLowerCase().startsWith("cmd") ? args : argv, cwd)
+      : spawn(command, args, {
+          cwd,
+          detached: true,
+          stdio: "ignore",
+          windowsHide: true,
+        })
   child.on("error", () => {
     /* surfaced to the caller as a rejected promise below */
   })
@@ -475,8 +520,16 @@ export async function revealInFileManager(path: string, isDir: boolean) {
     return
   }
   if (process.platform === "win32") {
+    if (path.includes('"')) {
+      throw new Error("That path cannot be opened on Windows")
+    }
+    // Verbatim, with the quotes exactly here — see `spawnVerbatim`.
     await launch(
-      isDir ? ["explorer.exe", path] : ["explorer.exe", `/select,${path}`]
+      isDir
+        ? ["explorer.exe", `"${path}"`]
+        : ["explorer.exe", `/select,"${path}"`],
+      undefined,
+      true
     )
     return
   }
