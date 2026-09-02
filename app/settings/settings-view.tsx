@@ -59,7 +59,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
         label: "Chat",
         icon: MessageSquare,
         keywords:
-          "reasoning effort suggestions automatic titles conversation notification sounds audio chime",
+          "reasoning effort suggestions automatic titles conversation notification sounds audio chime handoff switching agents",
       },
     ],
   },

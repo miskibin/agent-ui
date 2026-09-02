@@ -4,7 +4,7 @@ import { existsSync } from "node:fs"
 
 import type { ModelOption } from "@/components/ui/model-picker"
 import { hasCursorAgentBinary, isMockForced } from "@/lib/agent-runtime"
-import { withSystemPrefix } from "@/lib/providers/system-prefix"
+import { withPromptContext } from "@/lib/providers/system-prefix"
 import type { CursorAgentSettings } from "@/lib/settings/schema"
 import type {
   AgentProvider,
@@ -131,7 +131,7 @@ export function createCursorProvider(
       const { runCursorAgent } = await import("@/lib/cursor-agent")
       // Resume carries the transcript server-side, so `history` is ignored.
       yield* runCursorAgent({
-        prompt: withSystemPrefix(options.prompt, options.system),
+        prompt: withPromptContext(options.prompt, options),
         model: options.model,
         sessionId: options.sessionId,
         signal: options.signal,

@@ -23,7 +23,7 @@ import type {
   AcpAgentSettings,
   DshSandboxMode,
 } from "@/lib/settings/schema"
-import { withSystemPrefix } from "@/lib/providers/system-prefix"
+import { withPromptContext } from "@/lib/providers/system-prefix"
 import type {
   AgentProvider,
   AgentRunOptions,
@@ -232,7 +232,7 @@ export function createAcpProvider(
       const { runAcpAgent } = await import("@/lib/acp-agent")
       yield* runAcpAgent({
         spawn: spec,
-        prompt: withSystemPrefix(options.prompt, options.system),
+        prompt: withPromptContext(options.prompt, options),
         model: decodeModelId(id, options.model, isDsh),
         effort: options.effort,
         sessionId: options.sessionId,

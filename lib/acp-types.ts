@@ -146,6 +146,12 @@ export type AcpSessionUpdate = {
   kind?: string
   status?: AcpToolCallStatus
   rawInput?: unknown
+  /**
+   * The tool's own structured result. v1 leaves the shape to the agent, so
+   * the app reads exactly one thing out of it: a process exit code, when a
+   * shell-shaped tool published one.
+   */
+  rawOutput?: unknown
   /** plan */
   entries?: AcpPlanEntry[]
 }
