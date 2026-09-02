@@ -26,6 +26,7 @@ import {
   applyAppearance,
   clampZoom,
   DEFAULT_ZOOM,
+  normalizeContrast,
   normalizeRadiusOverride,
   normalizeZoom,
   readAppearanceMirror,
@@ -47,6 +48,7 @@ function normalizeAppearance(
   return {
     theme: findPreset(value.theme).id,
     mode: asMode(value.mode) ?? DEFAULT_SETTINGS.appearance.mode,
+    contrast: normalizeContrast(value.contrast),
     radiusOverride: normalizeRadiusOverride(value.radiusOverride),
     fontSans:
       value.fontSans === undefined
@@ -64,6 +66,7 @@ function isSame(a: AppearanceSettings, b: AppearanceSettings) {
   return (
     a.theme === b.theme &&
     a.mode === b.mode &&
+    a.contrast === b.contrast &&
     a.radiusOverride === b.radiusOverride &&
     a.fontSans === b.fontSans &&
     a.fontMono === b.fontMono &&

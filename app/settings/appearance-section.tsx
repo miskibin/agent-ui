@@ -1,7 +1,7 @@
 "use client"
 
 import * as React from "react"
-import { Check, Monitor, Moon, Sun } from "lucide-react"
+import { Check, Contrast, Monitor, Moon, Sun } from "lucide-react"
 import { useTheme } from "next-themes"
 
 import {
@@ -14,6 +14,7 @@ import {
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
 import type { ThemeMode } from "@/lib/settings/schema"
+import { CONTRAST_LEVELS, type ContrastLevel } from "@/lib/theme/contrast"
 import { MAX_RADIUS, MAX_ZOOM, MIN_RADIUS, MIN_ZOOM, ZOOM_STEP } from "@/lib/theme/apply"
 import {
   FOLLOW_THEME,
@@ -40,6 +41,24 @@ const MODE_OPTIONS: { id: ThemeMode; label: string; icon: typeof Sun }[] = [
   { id: "dark", label: "Dark", icon: Moon },
   { id: "system", label: "System", icon: Monitor },
 ]
+
+const CONTRAST_LABELS: Record<ContrastLevel, string> = {
+  soft: "Soft",
+  standard: "Standard",
+  high: "High",
+}
+
+const CONTRAST_COPY: Record<ContrastLevel, string> = {
+  soft: "Quieter greys and hairlines, still above a readable floor.",
+  standard: "Every text pair held to WCAG AA against its own surface.",
+  high: "AAA for running text, and hairlines you can actually see.",
+}
+
+/** Shared look for the two segmented radio groups below. */
+const SEGMENT_GROUP =
+  "inline-flex h-8 items-center rounded-lg bg-muted p-[3px]"
+const SEGMENT_ITEM =
+  "inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50"
 
 /** Radix Select forbids an empty item value, and `FOLLOW_THEME` is one. */
 const THEME_FONT = " theme"
@@ -203,6 +222,37 @@ function FontSelect({
 }
 
 /**
+ * The four pairs the level actually moves, drawn in live tokens: body text,
+ * the muted second line every list row uses, the ink on a selected row, and a
+ * hairline. Switching level repaints this in place — which is the whole point,
+ * because the numbers mean nothing until you see the greys move.
+ */
+function ContrastPreview() {
+  return (
+    <div
+      aria-hidden
+      className="flex flex-col gap-2 rounded-lg border bg-card px-3 py-2.5"
+    >
+      <span className="text-[13px] text-foreground">
+        Body text on the surface it usually sits on.
+      </span>
+      <span className="text-[11.5px] text-muted-foreground">
+        The muted second line — a model name, a relative time, a branch.
+      </span>
+      <span className="flex items-center gap-2">
+        <span className="rounded-md bg-sidebar-accent px-2 py-1 text-[12px] text-sidebar-accent-foreground">
+          Selected chat
+        </span>
+        <span className="rounded-md bg-accent px-2 py-1 text-[12px] text-accent-foreground">
+          Hovered row
+        </span>
+      </span>
+      <span className="h-px w-full bg-border" />
+    </div>
+  )
+}
+
+/**
  * Reads the live custom properties rather than the option's own stack, so it
  * shows what the document is actually rendering — including the theme's own
  * face when neither override is set.
@@ -296,7 +346,7 @@ export function AppearanceSection() {
           <div
             role="radiogroup"
             aria-label="Color mode"
-            className="inline-flex h-8 items-center rounded-lg bg-muted p-[3px]"
+            className={SEGMENT_GROUP}
           >
             {MODE_OPTIONS.map(({ id, label, icon: Icon }) => {
               const active = appearance.mode === id
@@ -308,8 +358,7 @@ export function AppearanceSection() {
                   aria-checked={active}
                   onClick={() => setAppearance({ mode: id })}
                   className={cn(
-                    "inline-flex h-full items-center gap-1.5 rounded-md px-2.5 text-[12px] font-medium transition-colors outline-none",
-                    "focus-visible:ring-[3px] focus-visible:ring-ring/50",
+                    SEGMENT_ITEM,
                     active
                       ? "bg-background text-foreground shadow-sm"
                       : "text-muted-foreground hover:text-foreground"
@@ -323,6 +372,42 @@ export function AppearanceSection() {
           </div>
         }
       />
+
+      <SettingsRow
+        title="Contrast"
+        description={CONTRAST_COPY[appearance.contrast]}
+        control={
+          <div
+            role="radiogroup"
+            aria-label="Contrast"
+            className={SEGMENT_GROUP}
+          >
+            {CONTRAST_LEVELS.map((level) => {
+              const active = appearance.contrast === level
+              return (
+                <button
+                  key={level}
+                  type="button"
+                  role="radio"
+                  aria-checked={active}
+                  onClick={() => setAppearance({ contrast: level })}
+                  className={cn(
+                    SEGMENT_ITEM,
+                    active
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  )}
+                >
+                  {level === "standard" ? <Contrast className="size-3.5" /> : null}
+                  {CONTRAST_LABELS[level]}
+                </button>
+              )
+            })}
+          </div>
+        }
+      >
+        <ContrastPreview />
+      </SettingsRow>
 
       <SettingsRow
         title="UI size"

@@ -91,6 +91,22 @@ one interface:
   every variable — colors, radius, fonts, shadows, tracking — into one `[data-theme]`
   stylesheet, `app/fonts.ts` loads the typefaces they name, and the app's own surface aliases
   in `globals.css` are `color-mix`ed from those tokens. Do not hand-edit theme data.
+
+  Two token families are *not* taken verbatim, and `lib/theme/contrast.ts` owns both.
+  **`accent` / `sidebar-accent` are derived**: a tint of the theme's own primary over its own
+  surface, with the tint weakened until the surface's own ink reads on it. A registry accent is
+  whatever its author picked, and the app leans on it for every hover and every selected row —
+  `notebook` dark ships one at oklch(0.907) under a foreground of oklch(0.895), which is white
+  on white. Deriving it keeps the theme's hue (and carries more of it than most originals did)
+  while making the hover the same shape everywhere. **Contrast is a setting**, `soft |
+  standard | high` (Settings → Appearance, persisted in `appearance.contrast`): `standard`
+  holds every text pair to WCAG AA against the surface it actually sits on, `high` to AAA,
+  `soft` relaxes the greys down to a floor. Each level is emitted as its own small
+  `[data-contrast]` block carrying only the tokens it moves, and the light half is guarded with
+  `:not(.dark)` — the extra attribute would otherwise outrank the *dark* base block. Repair
+  moves lightness only, never hue or chroma. `tests/theme-contrast.test.ts` is the net: every
+  shipped theme, both modes, all three levels.
+
   The typeface is the one token the user may pin across themes:
   `lib/theme/font-options.ts` lists the choices, and `applyAppearance` writes the picked
   stack inline on `<html>`, which outranks the `[data-theme]` block. A new family needs a

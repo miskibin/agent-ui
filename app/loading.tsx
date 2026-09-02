@@ -17,7 +17,7 @@ export default function Loading() {
       aria-label="Loading"
       className="flex h-full min-h-0 overflow-hidden bg-background"
     >
-      <div className="hidden h-full w-[290px] shrink-0 flex-col gap-2 border-r border-sidebar-border bg-sidebar p-3 md:flex">
+      <div className="hidden h-full w-[290px] shrink-0 flex-col gap-2 border-r border-sidebar-border bg-sidebar p-2 pt-2 md:flex">
         <Skeleton className="h-6 w-20 opacity-60" />
         <Skeleton className="mt-2 h-8 w-full opacity-50" />
         <Skeleton className="h-8 w-full opacity-40" />
@@ -28,16 +28,17 @@ export default function Loading() {
       </div>
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <header className="flex h-12 w-full shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 sm:gap-3 sm:px-4">
+        {/* Mirrors components/app-header.tsx — borderless, 40px tall. */}
+        <header className="flex h-10 w-full shrink-0 items-center gap-2 bg-background px-3 sm:gap-3 sm:px-4">
           <div className="ml-auto flex shrink-0 items-center gap-1">
-            <Skeleton className="size-8 opacity-40" />
-            <Skeleton className="size-8 opacity-40" />
-            <Skeleton className="size-8 opacity-40" />
+            <Skeleton className="size-7 opacity-40" />
+            <Skeleton className="size-7 opacity-40" />
+            <Skeleton className="size-7 opacity-40" />
           </div>
           <div
             aria-hidden
             data-slot="window-controls-reserve"
-            className="-mr-3 ml-2 h-12 w-[140px] shrink-0 self-stretch border-l sm:-mr-4"
+            className="-mr-3 ml-2 h-10 w-[126px] shrink-0 self-stretch sm:-mr-4"
           />
         </header>
 

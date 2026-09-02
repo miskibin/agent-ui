@@ -14,6 +14,12 @@
  * that never gets a `data-theme` (no stored preference, JS off) still paints a
  * finished palette. Every shipped theme overrides these through
  * `:root[data-theme="…"]` / `.dark[data-theme="…"]`; see lib/theme/apply.ts.
+ *
+ * The `accent` pairs below are not the registry item's own: like every theme,
+ * they are the primary tinted over the surface, so a hover or a selected row
+ * carries the theme's hue and always reads against its ink. Keep them in step
+ * with `vividAccents()` in lib/theme/contrast.ts — this block is the one place
+ * that is not generated.
  * ------------------------------------------------------------------------- */
 
 :root {
@@ -29,8 +35,8 @@
   --secondary-foreground: oklch(0.45 0.03 256.80);
   --muted: oklch(0.98 0.00 247.84);
   --muted-foreground: oklch(0.55 0.02 264.36);
-  --accent: oklch(0.95 0.03 236.82);
-  --accent-foreground: oklch(0.38 0.14 265.52);
+  --accent: oklch(0.9435 0.0282 259.81);
+  --accent-foreground: oklch(0.32 0 0);
   --destructive: oklch(0.64 0.21 25.33);
   --destructive-foreground: oklch(1.00 0 0);
   --border: oklch(0.93 0.01 264.53);
@@ -45,8 +51,8 @@
   --sidebar-foreground: oklch(0.32 0 0);
   --sidebar-primary: oklch(0.62 0.19 259.81);
   --sidebar-primary-foreground: oklch(1.00 0 0);
-  --sidebar-accent: oklch(0.95 0.03 236.82);
-  --sidebar-accent-foreground: oklch(0.38 0.14 265.52);
+  --sidebar-accent: oklch(0.9195 0.0352 259.34);
+  --sidebar-accent-foreground: oklch(0.32 0 0);
   --sidebar-border: oklch(0.93 0.01 264.53);
   --sidebar-ring: oklch(0.62 0.19 259.81);
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, -apple-system,
@@ -109,8 +115,8 @@
   --secondary-foreground: oklch(0.92 0 0);
   --muted: oklch(0.27 0 0);
   --muted-foreground: oklch(0.72 0 0);
-  --accent: oklch(0.38 0.14 265.52);
-  --accent-foreground: oklch(0.88 0.06 254.13);
+  --accent: oklch(0.3050 0.0451 259.81);
+  --accent-foreground: oklch(0.92 0 0);
   --destructive: oklch(0.64 0.21 25.33);
   --destructive-foreground: oklch(1.00 0 0);
   --border: oklch(0.37 0 0);
@@ -125,8 +131,8 @@
   --sidebar-foreground: oklch(0.92 0 0);
   --sidebar-primary: oklch(0.62 0.19 259.81);
   --sidebar-primary-foreground: oklch(1.00 0 0);
-  --sidebar-accent: oklch(0.38 0.14 265.52);
-  --sidebar-accent-foreground: oklch(0.88 0.06 254.13);
+  --sidebar-accent: oklch(0.3301 0.0564 259.81);
+  --sidebar-accent-foreground: oklch(0.92 0 0);
   --sidebar-border: oklch(0.37 0 0);
   --sidebar-ring: oklch(0.62 0.19 259.81);
   --shadow-2xs: 0 1px 3px 0px hsl(0 0% 0% / 0.05);

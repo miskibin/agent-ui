@@ -2177,6 +2177,10 @@ export default function ChatPage() {
             isDesktop ? setCollapsed(next) : closeDrawer()
           }
           edgeZones
+          // No rules anywhere in the panel (`dividers` defaults off): the
+          // sections are told apart by their uppercase headers and the space
+          // between them, which is what this gap is for.
+          classNames={{ content: "flex flex-col gap-2 pt-2" }}
           brand={
             <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
               Chats
