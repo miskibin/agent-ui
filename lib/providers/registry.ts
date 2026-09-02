@@ -7,6 +7,10 @@ import {
   acpProviderId,
   createAcpProvider,
 } from "@/lib/providers/acp"
+import {
+  CLAUDE_CODE_PROVIDER_ID,
+  createClaudeCodeProvider,
+} from "@/lib/providers/claude-code"
 import { CURSOR_PROVIDER_ID, createCursorProvider } from "@/lib/providers/cursor"
 import { MOCK_PROVIDER_ID, createMockProvider } from "@/lib/providers/mock"
 import { OLLAMA_PROVIDER_ID, createOllamaProvider } from "@/lib/providers/ollama"
@@ -29,6 +33,7 @@ export const PROVIDER_IDS = [
   CURSOR_PROVIDER_ID,
   OLLAMA_PROVIDER_ID,
   PI_PROVIDER_ID,
+  CLAUDE_CODE_PROVIDER_ID,
   OPENAI_CHAT_PROVIDER_ID,
 ] as const
 
@@ -59,6 +64,9 @@ function build(id: string, settings: AppSettings): AgentProvider | null {
   if (id === PI_PROVIDER_ID) {
     return createPiProvider(providers.pi, providers.ollama.baseUrl, settings)
   }
+  if (id === CLAUDE_CODE_PROVIDER_ID) {
+    return createClaudeCodeProvider(providers.claudeCode)
+  }
   // Not a backend of its own: it exists exactly as long as some model provider
   // under `settings.modelProviders` is switched on.
   if (id === OPENAI_CHAT_PROVIDER_ID) return createOpenAiChatProvider(settings)
@@ -73,6 +81,7 @@ function isEnabled(id: string, settings: AppSettings) {
   if (id === CURSOR_PROVIDER_ID) return providers.cursorAgent.enabled
   if (id === OLLAMA_PROVIDER_ID) return providers.ollama.enabled
   if (id === PI_PROVIDER_ID) return providers.pi.enabled
+  if (id === CLAUDE_CODE_PROVIDER_ID) return providers.claudeCode.enabled
   if (id === OPENAI_CHAT_PROVIDER_ID) {
     return Object.values(settings.modelProviders).some((entry) => entry.enabled)
   }

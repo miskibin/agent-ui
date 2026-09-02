@@ -121,16 +121,41 @@ function longestPrefix(table: Record<string, ModelPrice>, model: string) {
 const FREE: ModelPrice = { input: 0, output: 0 }
 
 /**
+ * The `claude` CLI takes a tier alias as readily as a full id, and an alias
+ * carries no price of its own — it means "the latest of this tier", so it is
+ * resolved to whatever that is today. A pinned id needs no entry here: the
+ * table already matches it by prefix.
+ */
+const CLAUDE_CODE_ALIASES: Record<string, string> = {
+  fable: "claude-fable-5-1",
+  opus: "claude-opus-5",
+  sonnet: "claude-sonnet-5",
+  haiku: "claude-haiku-4-5",
+}
+
+/**
  * The price of a model id, or `null` when it is not one this table knows.
  * `ollama/…` is a local model, as is any bare id run by the Ollama harness;
  * a bare id from another harness (`cursor` running `gpt-5`) is priced by
  * that harness, not here, so it stays unknown rather than reading as free.
+ *
+ * `claudeCode` is the exception to that last rule, because unlike Cursor it
+ * does not resell anything: its bare ids *are* Anthropic ids billed at
+ * Anthropic's own rates, which is exactly what this table holds. The number
+ * is still an estimate and still shown as one — a subscription run has no
+ * per-token bill at all — but it is the same estimate the CLI itself prints
+ * as `total_cost_usd`, and it beats showing nothing.
  */
 export function priceForModel(modelId: string, providerId?: string): ModelPrice | null {
   const id = modelId.trim()
   if (!id) return null
   const cut = id.indexOf("/")
-  if (cut <= 0) return providerId === "ollama" ? FREE : null
+  if (cut <= 0) {
+    if (providerId === "ollama") return FREE
+    if (providerId !== "claudeCode") return null
+    const bare = id.toLowerCase()
+    return longestPrefix(ANTHROPIC, CLAUDE_CODE_ALIASES[bare] ?? bare)
+  }
   const source = id.slice(0, cut)
   const model = id.slice(cut + 1).toLowerCase()
   if (source === "ollama") return FREE

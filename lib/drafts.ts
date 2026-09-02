@@ -41,7 +41,9 @@ function write(key: string, value: unknown) {
 
 export function readDrafts(): Record<string, string> {
   const drafts = read<Record<string, string>>(DRAFTS_KEY)
-  return drafts && typeof drafts === "object" ? drafts : {}
+  // An array is an object too, and one stored here would be handed to the
+  // composer as its map of drafts.
+  return drafts && typeof drafts === "object" && !Array.isArray(drafts) ? drafts : {}
 }
 
 /** Writes one chat's draft; an empty draft removes the key. */

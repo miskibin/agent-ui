@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import type { PermissionMode } from "@/lib/providers/types"
 import type { AppSettings } from "@/lib/settings/schema"
 
 import { AcpAgentRows } from "./acp-agents"
@@ -27,6 +28,14 @@ const BUILT_IN_PROVIDERS = [
   { id: "ollama", label: "Ollama" },
   { id: "pi", label: "pi" },
   { id: "cursorAgent", label: "Cursor Agent" },
+  { id: "claudeCode", label: "Claude Code" },
+] as const
+
+/** Each label is what the CLI's flags actually enforce, not a suggestion. */
+const CLAUDE_CODE_MODES = [
+  { id: "read-only", label: "Read only" },
+  { id: "edits", label: "Edit files" },
+  { id: "full", label: "Full access" },
 ] as const
 
 export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
@@ -251,6 +260,101 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
             })
           }
         />
+      </SettingsRow>
+
+      <SettingsRow
+        title="Claude Code"
+        htmlFor="provider-claude-code"
+        description="Agentic harness: the claude CLI with its full tool set, your project's CLAUDE.md, hooks and MCP servers."
+        control={
+          <>
+            <StatusBadge phase={phase} status={map[statusKey("claudeCode")]} />
+            <Switch
+              id="provider-claude-code"
+              checked={providers.claudeCode.enabled}
+              onCheckedChange={(enabled) =>
+                setProviders({
+                  claudeCode: { ...providers.claudeCode, enabled },
+                })
+              }
+            />
+          </>
+        }
+      >
+        <div className="grid gap-2">
+          <Input
+            aria-label="Claude Code binary path"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Leave empty to autodetect claude on PATH"
+            className="h-8 font-mono text-[12px]"
+            value={providers.claudeCode.binPath}
+            onChange={(event) =>
+              setProviders({
+                claudeCode: {
+                  ...providers.claudeCode,
+                  binPath: event.target.value,
+                },
+              })
+            }
+          />
+          <Input
+            aria-label="Claude Code workspace"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Workspace directory — leave empty to use the app's cwd"
+            className="h-8 font-mono text-[12px]"
+            value={providers.claudeCode.workspace}
+            onChange={(event) =>
+              setProviders({
+                claudeCode: {
+                  ...providers.claudeCode,
+                  workspace: event.target.value,
+                },
+              })
+            }
+          />
+          <div className="flex items-center justify-between gap-2">
+            <label
+              htmlFor="claude-code-permission"
+              className="text-[11.5px] text-muted-foreground"
+            >
+              Default permission for new chats
+            </label>
+            <Select
+              value={providers.claudeCode.permissionMode}
+              onValueChange={(mode) =>
+                setProviders({
+                  claudeCode: {
+                    ...providers.claudeCode,
+                    permissionMode: mode as PermissionMode,
+                  },
+                })
+              }
+            >
+              <SelectTrigger
+                id="claude-code-permission"
+                size="sm"
+                className="w-36 shrink-0 text-[12.5px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CLAUDE_CODE_MODES.map((mode) => (
+                  <SelectItem key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            Read only genuinely blocks the editing and shell tools; the other
+            two let Claude write files — and, on full access, run commands —
+            without an approval prompt. A chat can pick its own mode.
+          </p>
+        </div>
       </SettingsRow>
 
       <AcpAgentRows

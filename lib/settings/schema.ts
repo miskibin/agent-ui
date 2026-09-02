@@ -3,6 +3,7 @@ import {
   MODEL_PROVIDER_SLUG_RE,
   RESERVED_MODEL_PROVIDER_SLUGS,
 } from "@/lib/model-providers/presets"
+import type { PermissionMode } from "@/lib/providers/types"
 import {
   DEFAULT_CONTRAST,
   isContrastLevel,
@@ -72,6 +73,20 @@ export type CursorAgentSettings = {
   binPath: string
 }
 
+export type ClaudeCodeSettings = {
+  enabled: boolean
+  /** Absolute path to the `claude` binary; empty = autodetect on PATH. */
+  binPath: string
+  /** Directory the agent may read and write; empty = the app's cwd. */
+  workspace: string
+  /**
+   * What a turn may do when the chat has not picked a mode of its own. Unlike
+   * the other harnesses this one can enforce all three, so the default is a
+   * real safety setting rather than a label.
+   */
+  permissionMode: PermissionMode
+}
+
 export type MockSettings = {
   enabled: boolean
 }
@@ -133,6 +148,7 @@ export type ProviderSettings = {
   ollama: OllamaSettings
   pi: PiSettings
   cursorAgent: CursorAgentSettings
+  claudeCode: ClaudeCodeSettings
   mock: MockSettings
   acp: AcpSettings
 }
@@ -314,6 +330,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
     ollama: { enabled: true, baseUrl: "http://localhost:11434" },
     pi: { enabled: true, binPath: "", workspace: "" },
     cursorAgent: { enabled: true, binPath: "" },
+    claudeCode: {
+      enabled: true,
+      binPath: "",
+      workspace: "",
+      // The harness can enforce all three, so the shipped default is the
+      // middle one: files yes, arbitrary shell only when a chat asks for it.
+      permissionMode: "edits",
+    },
     mock: { enabled: true },
     acp: { agents: { dsh: DEFAULT_DSH_AGENT } },
   },
@@ -396,6 +420,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
         ...DEFAULT_SETTINGS.providers.cursorAgent,
         ...asObject(asObject(value.providers).cursorAgent),
       },
+      claudeCode: normalizeClaudeCode(asObject(value.providers).claudeCode),
       mock: {
         ...DEFAULT_SETTINGS.providers.mock,
         ...asObject(asObject(value.providers).mock),
@@ -422,6 +447,24 @@ export function normalizeSettings(raw: unknown): AppSettings {
       enabled: asObject(value.handoff).enabled !== false,
     },
     recentFolders: asFolderList(value.recentFolders),
+  }
+}
+
+const PERMISSION_MODES = new Set<PermissionMode>(["read-only", "edits", "full"])
+
+/**
+ * The mode becomes CLI permission flags, so a value an older build or a
+ * hand-edited file left behind falls back to the default rather than being
+ * passed through to `--permission-mode` as-is.
+ */
+function normalizeClaudeCode(raw: unknown): ClaudeCodeSettings {
+  const fallback = DEFAULT_SETTINGS.providers.claudeCode
+  const merged = { ...fallback, ...asObject(raw) }
+  return {
+    ...merged,
+    permissionMode: PERMISSION_MODES.has(merged.permissionMode as PermissionMode)
+      ? (merged.permissionMode as PermissionMode)
+      : fallback.permissionMode,
   }
 }
 
