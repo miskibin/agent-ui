@@ -280,6 +280,17 @@ behind, uncommitted files, and the branch's pull request when `gh` is logged in.
 
   ![Editor & terminal settings](.github/screenshots/settings-editor.png)
 
+- **Usage** — what the agents have cost, over the last 7 days, the last 30, or all time:
+  tokens in and out, an estimated total, then a table per model and one per working folder.
+  Aggregated by `GET /api/usage`, which walks the stored sessions server-side and answers with
+  grouped rows — no transcript is ever shipped to the page for this. The same numbers back the
+  per-chat total in the header, so the two can never disagree. Cost is an estimate from the
+  same list-price table the per-message details use: a local model is free, and a model whose
+  price the app does not know is counted in tokens but kept out of the cost and reported as
+  "N turns not counted" rather than quietly summed as zero.
+
+  ![Usage settings](.github/screenshots/settings-usage.png)
+
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
 
 ## Architecture

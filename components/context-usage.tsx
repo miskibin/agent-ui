@@ -2,7 +2,7 @@
 
 import * as React from "react"
 
-import { estimateCost, formatCost } from "@/lib/model-pricing"
+import { formatCost } from "@/lib/model-pricing"
 import type { StoredMessage } from "@/lib/store/types"
 import { ContextMeter, formatTokens } from "@/components/ui/context-meter"
 import {
@@ -93,30 +93,6 @@ export function contextTurnUsage(messages: StoredMessage[]): TurnUsage {
   return NO_USAGE
 }
 
-/**
- * What the chat has spent so far, summed over the turns that reported their
- * tokens and ran on a model with a known list price. `null` when no turn is
- * priceable — a local model reads as 0, an unknown one as nothing at all.
- */
-export function chatCost(messages: StoredMessage[]): number | null {
-  let total = 0
-  let priced = false
-  for (const { metadata } of messages) {
-    if (!metadata?.model) continue
-    if (metadata.inputTokens == null && metadata.outputTokens == null) continue
-    const cost = estimateCost(
-      metadata.model,
-      metadata.inputTokens ?? 0,
-      metadata.outputTokens ?? 0,
-      metadata.providerId
-    )
-    if (cost == null) continue
-    priced = true
-    total += cost
-  }
-  return priced ? total : null
-}
-
 export function ContextUsage({
   store,
   input,
@@ -131,7 +107,7 @@ export function ContextUsage({
   output: number
   /** The selected model's window; falsy hides the meter entirely. */
   total: number | undefined
-  /** Dollars the chat has spent so far, per `chatCost`; null = unknown. */
+  /** Dollars the chat has spent so far, per `lib/usage`; null = unknown. */
   cost?: number | null
 }) {
   const draft = React.useSyncExternalStore(
