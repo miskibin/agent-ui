@@ -41,7 +41,8 @@ export default function RootLayout({
           id={THEME_STYLE_ID}
           dangerouslySetInnerHTML={{ __html: themePresetCss() }}
         />
-        {/* Stamps the stored preset + radius on <html> before first paint. */}
+        {/* Stamps the stored preset, contrast level and radius on <html>
+            before first paint. */}
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_BOOTSTRAP_SCRIPT }} />
       </head>
       <body className="h-full" suppressHydrationWarning>

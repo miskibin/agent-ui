@@ -86,7 +86,7 @@ export function AppHeaderActions({
 }
 
 const HEADER_BUTTON_CLASS =
-  "inline-flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
+  "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
 
 export type AppHeaderButtonProps = React.ComponentProps<"button"> & {
   /** Accessible name; also the native tooltip. */
@@ -141,7 +141,7 @@ export function AppHeaderButton({
 /* -------------------------------------------------------------------------- */
 
 const WINDOW_BUTTON_CLASS =
-  "inline-grid h-12 w-[46px] shrink-0 place-items-center rounded-none text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:-outline-offset-2 [&_svg]:size-3.5 [&_svg]:shrink-0"
+  "inline-grid h-10 w-[42px] shrink-0 place-items-center rounded-none text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:-outline-offset-2 [&_svg]:size-3.5 [&_svg]:shrink-0"
 
 function WindowControls() {
   const [maximized, setMaximized] = React.useState(false)
@@ -167,7 +167,7 @@ function WindowControls() {
   return (
     <div
       data-slot="window-controls"
-      className="-mr-3 ml-2 flex h-12 shrink-0 items-stretch self-stretch border-l pl-2 sm:-mr-4"
+      className="-mr-3 ml-2 flex h-10 shrink-0 items-stretch self-stretch sm:-mr-4"
     >
       <button
         type="button"
@@ -219,7 +219,7 @@ function WindowControlsReserve() {
     <div
       aria-hidden
       data-slot="window-controls-reserve"
-      className="-mr-3 ml-2 h-12 w-[140px] shrink-0 self-stretch border-l sm:-mr-4"
+      className="-mr-3 ml-2 h-10 w-[126px] shrink-0 self-stretch sm:-mr-4"
     />
   )
 }
@@ -255,7 +255,11 @@ export function AppHeader({
       data-tauri-drag-region
       onDoubleClick={handleDoubleClick}
       className={cn(
-        "flex h-12 w-full shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3 sm:gap-3 sm:px-4",
+        // No rule under the bar. It sits on the same surface as the
+        // conversation, so a line here only draws a box around content that
+        // is already obviously below it — and it is the first thing that
+        // makes the window look busy.
+        "flex h-10 w-full shrink-0 items-center gap-2 bg-background px-3 sm:gap-3 sm:px-4",
         desktop && "select-none",
         // Clear the macOS traffic lights.
         native && "pl-[78px]",

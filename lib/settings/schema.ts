@@ -4,6 +4,11 @@ import {
   RESERVED_MODEL_PROVIDER_SLUGS,
 } from "@/lib/model-providers/presets"
 import {
+  DEFAULT_CONTRAST,
+  isContrastLevel,
+  type ContrastLevel,
+} from "@/lib/theme/contrast"
+import {
   FOLLOW_THEME,
   findFont,
   type FontRole,
@@ -22,6 +27,12 @@ export type AppearanceSettings = {
   /** Theme preset id — the presets themselves live in the theme registry. */
   theme: string
   mode: ThemeMode
+  /**
+   * How hard the theme's own tokens are pushed apart. `standard` holds every
+   * text pair to WCAG AA, `high` to AAA, `soft` relaxes the greys (with a
+   * floor). It is a *level*, not a palette: see `lib/theme/contrast.ts`.
+   */
+  contrast: ContrastLevel
   /**
    * Corner radius in rem, overriding the one the theme ships with.
    * `null` (the default) means "follow the theme" — which is why the pre-0.2
@@ -273,6 +284,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   appearance: {
     theme: "modern-minimal",
     mode: "system",
+    contrast: DEFAULT_CONTRAST,
     radiusOverride: null,
     // The themes disagree about the UI face; the app does not have to. This
     // is the one people recognise, and every theme still keeps its palette.
@@ -325,6 +337,9 @@ export function normalizeSettings(raw: unknown): AppSettings {
       mode: isMode(appearance.mode)
         ? appearance.mode
         : DEFAULT_SETTINGS.appearance.mode,
+      contrast: isContrastLevel(appearance.contrast)
+        ? appearance.contrast
+        : DEFAULT_SETTINGS.appearance.contrast,
       // Pre-0.2 files carry a plain `radius`; dropping it hands the themes
       // back their own rounding instead of freezing the old slider value.
       radiusOverride:
