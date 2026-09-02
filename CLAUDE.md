@@ -26,6 +26,31 @@ Need app-specific behavior a generic component shouldn't carry? Compose around t
 edit the vendored file. If composition genuinely can't express it, that's the signal the
 upstream component needs a new prop or slot: go through steps 1–4.
 
+### The copies must never drift
+
+`npm run vendor:check` (`scripts/check-vendored.mjs`) diffs every vendored file against a
+sibling `../chat-components` checkout — override with `--repo <path>` or `CHAT_COMPONENTS_DIR`
+— and fails on any byte that differs, on a file in `components/ui` with no upstream twin, and
+on one upstream has that this app has lost. It skips silently when the checkout is absent, so
+it is a check you run beside a clone, not something CI can do for you. **Run it after any sync,
+and before opening a PR that touches `components/ui`.**
+
+Drift is not a tidiness problem. It is how a fix lands in one repo and silently misses the
+other, and how the next `cp` from upstream deletes a feature nobody remembers adding here.
+Three features once lived only in this repo's copies — the `--ui-scale` portal fix,
+`resolveFileUrl` for image tool rows, and `FilePreviewFile.imageSrc` — and every one of them
+was one careless overwrite from being lost.
+
+**This app is the product; the registry follows it.** So when the two disagree, the answer is
+almost never "patch it here": it is to take *this* repo's behaviour, land it in
+`chat-components` with docs, an example and a registry rebuild, and copy back. Changing a
+vendored file here without doing that is the one thing that is always wrong, however small the
+change looks.
+
+The eight stock shadcn primitives this app installed directly — `badge`, `card`, `input`,
+`label`, `select`, `skeleton`, `slider`, `switch` — are the documented exception: the registry
+does not ship them, so they have no upstream to match. They are listed in the check.
+
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
 `components/command-palette.tsx`, `components/folder-picker.tsx`, `components/handoff-notice.tsx`,
 `components/memory-notice.tsx`, `components/message-actions.tsx`,
@@ -262,7 +287,8 @@ every push. `release.yml` builds Win/macOS/Linux installers on `v*` tags.
 
 ## Definition of done
 
-`lint`, `typecheck`, `test`, `build` clean — and for anything user-visible, run the app
+`lint`, `typecheck`, `test`, `build` clean — plus `vendor:check` whenever `components/ui/**`
+or a shared `lib/` module was touched — and for anything user-visible, run the app
 (`AGENT_UI_DIR=/tmp/agent-ui-test node .next/standalone/server.js` after a build) and exercise
 the flow for real; there is a Playwright-style flow suite precedent in the repo history. If the
 UI changed visibly, refresh the screenshots in `.github/screenshots/` and keep `README.md`

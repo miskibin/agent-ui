@@ -560,6 +560,39 @@ export default function ChatPage() {
     (activeSession?.messageCount ?? 0) > 0
   const isEmptyChat = messages.length === 0 && !threadLoading
   const drawerOpen = mobileNavOpen && !isDesktop
+
+  /**
+   * The composer is an island: once a chat has messages it floats over the
+   * transcript instead of sitting in a full-width band under it, so the
+   * conversation keeps running to the bottom of the window and slides beneath
+   * it. That only works if the list reserves exactly as much room as the
+   * island takes — and it grows and shrinks, with a todo line, with chips, with
+   * a textarea that has been typed into. One observer writes the measured
+   * height onto the pane and the list pads by that variable.
+   *
+   * `borderBoxSize`, not a bounding rect: the pane may live inside the
+   * `--ui-scale` wrapper, where a rect comes back in visual pixels while the
+   * padding it feeds is resolved in the element's own — the two would disagree
+   * by exactly the zoom factor.
+   */
+  const chatPaneRef = React.useRef<HTMLDivElement>(null)
+  const composerRef = React.useRef<HTMLDivElement>(null)
+
+  React.useEffect(() => {
+    const pane = chatPaneRef.current
+    const composer = composerRef.current
+    if (!pane || !composer || typeof ResizeObserver === "undefined") return
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0]
+      if (!entry) return
+      const height =
+        entry.borderBoxSize?.[0]?.blockSize ??
+        entry.target.getBoundingClientRect().height
+      pane.style.setProperty("--composer-height", `${Math.round(height)}px`)
+    })
+    observer.observe(composer)
+    return () => observer.disconnect()
+  }, [])
   // The file panel is a resizable pane on desktop and an overlay below md.
   // Derived, so exactly one FilePreview is ever mounted.
   const dockedPreview = isDesktop ? preview : null
@@ -2386,8 +2419,9 @@ export default function ChatPage() {
               style={{ overflow: "hidden" }}
             >
               <div
+                ref={chatPaneRef}
                 className={cn(
-                  "flex min-h-0 flex-1 flex-col overflow-x-hidden",
+                  "relative flex min-h-0 flex-1 flex-col overflow-x-hidden",
                   isEmptyChat && "justify-center"
                 )}
               >
@@ -2404,6 +2438,10 @@ export default function ChatPage() {
                   </div>
                 ) : (
                   <MessageList
+                    /* Room for the island above, inside the scroller — so the
+                       last turn settles just clear of it and everything above
+                       still scrolls the whole height of the pane. */
+                    className="pb-[calc(var(--composer-height,7rem)+0.5rem)]"
                     messages={listMessages}
                     isGenerating={isGenerating}
                     generationStage={activeRun?.stage ?? "idle"}
@@ -2455,7 +2493,19 @@ export default function ChatPage() {
                   </MessageList>
                 )}
 
-                <div data-slot="chat-composer" className="w-full shrink-0">
+                <div
+                  ref={composerRef}
+                  data-slot="chat-composer"
+                  className={cn(
+                    "w-full shrink-0",
+                    // An island over the conversation, not a band beside it:
+                    // the wrapper spans the pane so the composer stays centred,
+                    // but only its children take the pointer, which leaves the
+                    // transcript scrollable right up to the window's edge.
+                    !isEmptyChat &&
+                      "pointer-events-none absolute inset-x-0 bottom-0 z-20 [&>*]:pointer-events-auto"
+                  )}
+                >
                   {isEmptyChat ? (
                     /* Aligned with the composer card's own measure, so the two
                        read as one control rather than two stacked ones. */
