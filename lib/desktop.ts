@@ -213,3 +213,135 @@ function downloadProgress(): (event: TauriDownloadEvent) => number | null {
     return Math.min(1, received / total)
   }
 }
+
+/* -------------------------------------------------------------------------- */
+/* Attention: notifications, badge, focus                                      */
+/* -------------------------------------------------------------------------- */
+
+type TauriNotification = {
+  isPermissionGranted(): Promise<boolean>
+  requestPermission(): Promise<"granted" | "denied" | "default">
+  sendNotification(options: { title: string; body?: string }): void
+}
+
+type TauriAttentionWindow = {
+  isFocused(): Promise<boolean>
+  setFocus(): Promise<void>
+  setBadgeCount(count?: number): Promise<void>
+  requestUserAttention(kind: number | null): Promise<void>
+}
+
+function attentionWindow(): TauriAttentionWindow | null {
+  const current = tauri()?.window?.getCurrentWindow() as
+    | (TauriWindow & Partial<TauriAttentionWindow>)
+    | undefined
+  if (!current || typeof current.isFocused !== "function") return null
+  return current as TauriAttentionWindow
+}
+
+function notificationApi(): TauriNotification | null {
+  const api = (tauri() as { notification?: TauriNotification } | null)
+    ?.notification
+  return api && typeof api.sendNotification === "function" ? api : null
+}
+
+/**
+ * True when the desktop window is the one the user is looking at. In a
+ * browser tab the document's own focus is the answer.
+ */
+export async function isWindowFocused(): Promise<boolean> {
+  const current = attentionWindow()
+  if (current) {
+    try {
+      return await current.isFocused()
+    } catch {
+      /* fall through to the document */
+    }
+  }
+  return typeof document !== "undefined" && document.hasFocus()
+}
+
+/** Brings the window to the front — a click on a notification lands here. */
+export async function focusWindow(): Promise<void> {
+  const current = attentionWindow()
+  if (current) {
+    try {
+      await current.setFocus()
+      return
+    } catch {
+      /* not fatal */
+    }
+  }
+  if (typeof window !== "undefined") window.focus()
+}
+
+/**
+ * Posts an OS notification through the shell's plugin. Resolves `false` when
+ * there is no shell or the user refused, so the caller can fall back to the
+ * browser's own `Notification`.
+ */
+export async function notifyNative(
+  title: string,
+  body?: string
+): Promise<boolean> {
+  const api = notificationApi()
+  if (!api) return false
+  try {
+    let granted = await api.isPermissionGranted()
+    if (!granted) granted = (await api.requestPermission()) === "granted"
+    if (!granted) return false
+    api.sendNotification(body ? { title, body } : { title })
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Number on the dock / taskbar icon; 0 clears it. macOS and Linux docks
+ * carry a count; Windows has no badge, so the taskbar is flashed instead
+ * (see {@link requestAttention}). No-op outside the shell.
+ */
+export async function setBadgeCount(count: number): Promise<void> {
+  const current = attentionWindow()
+  if (!current) return
+  try {
+    await current.setBadgeCount(count > 0 ? count : undefined)
+  } catch {
+    /* the platform has no badge */
+  }
+}
+
+/**
+ * Bounces the dock icon / flashes the taskbar once. `informational` — the
+ * gentle kind — rather than `critical`, which keeps bouncing until clicked.
+ */
+export async function requestAttention(): Promise<void> {
+  const current = attentionWindow()
+  if (!current) return
+  try {
+    // Tauri's UserAttentionType: 1 = Critical, 2 = Informational.
+    await current.requestUserAttention(2)
+  } catch {
+    /* unsupported here */
+  }
+}
+
+/**
+ * Opens a URL in the system browser. The shell plugin's `open` does it from
+ * the desktop app, where a `target="_blank"` anchor has no window to open
+ * into; a browser tab just opens a tab.
+ */
+export async function openExternal(url: string): Promise<void> {
+  const shell = (tauri() as { shell?: { open(path: string): Promise<void> } } | null)
+    ?.shell
+  if (shell && typeof shell.open === "function") {
+    try {
+      await shell.open(url)
+      return
+    } catch {
+      /* fall through */
+    }
+  }
+  if (typeof window !== "undefined") window.open(url, "_blank", "noopener")
+}

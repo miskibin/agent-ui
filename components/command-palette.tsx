@@ -45,6 +45,15 @@ export type CommandPaletteSession = {
   meta?: string
 }
 
+/** An app-level entry the page adds — open the folder, regenerate the title. */
+export type CommandPaletteAction = {
+  id: string
+  label: string
+  icon: React.ReactNode
+  shortcut?: string
+  onSelect: () => void
+}
+
 export type CommandPaletteProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -55,6 +64,8 @@ export type CommandPaletteProps = {
   onNewChat?: () => void
   /** Opens the sidebar's inline rename for `activeId`. */
   onRenameSession?: (id: string) => void
+  /** Listed under the built-in actions, in order. */
+  actions?: CommandPaletteAction[]
 }
 
 export function CommandPalette({
@@ -65,6 +76,7 @@ export function CommandPalette({
   onSelectSession,
   onNewChat,
   onRenameSession,
+  actions,
 }: CommandPaletteProps) {
   const router = useRouter()
   const { resolvedTheme, setTheme } = useTheme()
@@ -174,6 +186,7 @@ export function CommandPalette({
                 >
                   <Plus />
                   <span>New chat</span>
+                  <CommandShortcut>⌘N</CommandShortcut>
                 </CommandItem>
               ) : null}
               {activeId && onRenameSession ? (
@@ -185,6 +198,19 @@ export function CommandPalette({
                   <span>Rename current chat</span>
                 </CommandItem>
               ) : null}
+              {actions?.map((action) => (
+                <CommandItem
+                  key={action.id}
+                  value={action.label}
+                  onSelect={() => run(action.onSelect)}
+                >
+                  {action.icon}
+                  <span>{action.label}</span>
+                  {action.shortcut ? (
+                    <CommandShortcut>{action.shortcut}</CommandShortcut>
+                  ) : null}
+                </CommandItem>
+              ))}
               <CommandItem
                 value="Open settings"
                 onSelect={() => run(() => router.push("/settings"))}

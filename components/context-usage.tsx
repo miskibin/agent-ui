@@ -2,6 +2,7 @@
 
 import * as React from "react"
 
+import { estimateCost, formatCost } from "@/lib/model-pricing"
 import type { StoredMessage } from "@/lib/store/types"
 import { ContextMeter, formatTokens } from "@/components/ui/context-meter"
 import {
@@ -92,11 +93,36 @@ export function contextTurnUsage(messages: StoredMessage[]): TurnUsage {
   return NO_USAGE
 }
 
+/**
+ * What the chat has spent so far, summed over the turns that reported their
+ * tokens and ran on a model with a known list price. `null` when no turn is
+ * priceable — a local model reads as 0, an unknown one as nothing at all.
+ */
+export function chatCost(messages: StoredMessage[]): number | null {
+  let total = 0
+  let priced = false
+  for (const { metadata } of messages) {
+    if (!metadata?.model) continue
+    if (metadata.inputTokens == null && metadata.outputTokens == null) continue
+    const cost = estimateCost(
+      metadata.model,
+      metadata.inputTokens ?? 0,
+      metadata.outputTokens ?? 0,
+      metadata.providerId
+    )
+    if (cost == null) continue
+    priced = true
+    total += cost
+  }
+  return priced ? total : null
+}
+
 export function ContextUsage({
   store,
   input,
   output,
   total,
+  cost,
 }: {
   store: DraftStore
   /** Prompt tokens the last reporting turn carried. */
@@ -105,6 +131,8 @@ export function ContextUsage({
   output: number
   /** The selected model's window; falsy hides the meter entirely. */
   total: number | undefined
+  /** Dollars the chat has spent so far, per `chatCost`; null = unknown. */
+  cost?: number | null
 }) {
   const draft = React.useSyncExternalStore(
     store.subscribe,
@@ -144,6 +172,14 @@ export function ContextUsage({
         {drafted > 0 ? (
           <dl className="mt-1 grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
             <Row label="Draft" value={drafted} approximate />
+          </dl>
+        ) : null}
+        {cost != null ? (
+          <dl className="mt-3 grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
+            <dt className="text-muted-foreground">Spent so far</dt>
+            <dd className="text-right" title="Estimated from list prices">
+              ≈ {formatCost(cost)}
+            </dd>
           </dl>
         ) : null}
         <p className="mt-3 text-[11px] leading-snug text-muted-foreground">

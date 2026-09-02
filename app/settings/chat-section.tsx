@@ -98,6 +98,21 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
           />
         }
       />
+
+      <SettingsRow
+        title="Desktop notifications"
+        htmlFor="chat-desktop-notifications"
+        description="Notify through the system when an agent finishes or asks a question while this window is in the background, and count waiting chats on the app icon."
+        control={
+          <Switch
+            id="chat-desktop-notifications"
+            checked={chat.desktopNotifications}
+            onCheckedChange={(desktopNotifications) =>
+              setChat({ desktopNotifications })
+            }
+          />
+        }
+      />
     </SettingsSection>
   )
 }

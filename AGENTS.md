@@ -28,14 +28,17 @@ upstream component needs a new prop or slot: go through steps 1–4.
 
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
 `components/command-palette.tsx`, `components/folder-picker.tsx`, `components/memory-notice.tsx`,
-`components/message-actions.tsx`,
+`components/message-actions.tsx`, `components/stash-menu.tsx`, `components/folder-status.tsx`,
+`components/chat-changes.tsx`, `components/context-usage.tsx`,
 `components/provider-picker.tsx`, `components/provider-logo.tsx`, `components/permission-picker.tsx`,
 `components/theme-provider.tsx`, `app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
 `lib/theme/`, `lib/memory/`,
 `lib/api-client.ts`, `lib/message-stream.ts`, `lib/turn-files.ts`, `lib/session-groups.ts`,
-`lib/desktop.ts`, `lib/folder.ts`,
-`lib/fs-paths.ts`, `src-tauri/`.
+`lib/desktop.ts`, `lib/folder.ts`, `lib/fs-paths.ts`, `lib/open-target.ts`, `lib/git-status.ts`,
+`lib/completion.ts`, `lib/model-pricing.ts`, `lib/file-actions.tsx`, `lib/drafts.ts`,
+`lib/slash-commands.ts`, `lib/app-shortcuts.ts`, `lib/notifications.ts`, `lib/attachments.ts`,
+`lib/local-media.ts`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
 as the rest of `components/ui/**`.
@@ -153,6 +156,45 @@ one interface:
   root is the chat's stored folder, else the provider's workspace, and it is resolved server-side
   from the session id — the client never names a root. Anything outside it, or inside the app's
   data directory, is a 403; the panel falls back to the diff alone on any failure.
+- Quality of life around files: every file the chat names — a change-card row, the file
+  panel's header, a path chip or an image in an answer, a chat row's folder — carries one
+  right-click menu, built by `lib/file-actions.tsx` from what `GET /api/open` detected on this
+  machine (VS Code, Cursor, Zed, Windsurf, Sublime, the JetBrains IDEs; the terminals). The
+  vendored components only show the menu (`FileActionItem[]`, threaded through `MessageList`,
+  `ChangeSummary`, `FilePreview` and `MessageMarkdown`); `POST /api/open` does the opening,
+  server-side, as a fixed argv with the path as one argument and never through a shell, and
+  resolves a relative path against the chat's stored folder. `Settings → Editor & terminal`
+  picks the defaults (`settings.editor`), ⌘O opens the chat's folder. "Revert changes" is
+  `POST /api/git/revert` (`git checkout -- <file>`, tracked files only, confirmed through a
+  toast action). A `file.ts:42` chip hands its line to `FilePreviewFile.focusLine`. The
+  panel's split/unified and wrap choices persist under `agent-ui:preview-prefs`; the header's
+  "N files changed in this chat" (`components/chat-changes.tsx`) is the union of every turn's
+  card, for the whole-thread scope next to the per-turn one.
+- Composer conveniences, all app-owned state over the vendored composer's handle
+  (`ChatInputHandle`): messages typed mid-turn are queued per chat (`queues` in `app/page.tsx`)
+  and sent one at a time as turns end — a stopped turn keeps its queue; `@` lists files under
+  the chat's folder through `GET /api/fs/search` (a bounded, briefly cached walk that skips
+  `node_modules`-style directories); each chat's draft is parked in memory on switch (files
+  included) and its text under `agent-ui:drafts` (`lib/drafts.ts`); ⌘S stashes the draft into
+  a global list (`agent-ui:stash`, text only across reloads) restored from
+  `components/stash-menu.tsx`; a long paste becomes a `[Pasted text #1 +40 lines]` chip
+  inside the composer; text attachments are read and fenced into the prompt
+  (`lib/attachments.ts`, `MAX_TEXT_ATTACHMENT_BYTES`), other non-images are named; the app's
+  own `/` commands live in `lib/slash-commands.ts` and are handled in `send` before anything
+  reaches a model; selecting text in an answer offers "Quote", which drops a blockquote at the
+  caret. Global keys are one listener in `lib/app-shortcuts.ts` — ⌘N, ⌘B, ⌘⇧[ / ⌘⇧], ⌘1…9,
+  ⌘O, and type-to-focus — bound from an effect because the handlers read refs.
+- Attention: `lib/notifications.ts` posts an OS notification when a turn ends, asks or fails
+  while the window is not in front (the shell's `tauri-plugin-notification`, else the web
+  `Notification` API, whose click reopens the chat), bounces the dock, and mirrors the count
+  of chats waiting on an answer onto the dock badge (`setBadgeCount`) and the tab title.
+  `settings.chat.desktopNotifications` switches it off. Sidebar folder headers poll
+  `GET /api/git/status` (`lib/git-status.ts`: ahead/behind, dirty count, the branch's PR via
+  `gh` when present) once a minute and on focus. "Regenerate title" (`POST
+  /api/sessions/<id>/title`, `lib/completion.ts`) asks the chat's own model when it is one the
+  app can reach directly, else the memory model. Token counts get an estimated price from
+  `lib/model-pricing.ts` — list prices by `<source>/<model>`; Ollama is free, a CLI harness's
+  bare id is unknown rather than free.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.

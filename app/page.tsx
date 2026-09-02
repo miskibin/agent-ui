@@ -2,6 +2,8 @@
 
 import { arrayMove } from "@dnd-kit/sortable"
 import {
+  ExternalLink,
+  FolderOpen,
   HelpCircle,
   Palette,
   PanelLeft,
@@ -10,6 +12,7 @@ import {
   Search,
   Settings as SettingsIcon,
   Sparkles,
+  SquareTerminal,
   Waves,
 } from "lucide-react"
 import { useRouter } from "next/navigation"
@@ -22,27 +25,40 @@ import {
   AppHeaderActions,
   AppHeaderButton,
 } from "@/components/app-header"
+import { ChatChanges, collectChatChanges } from "@/components/chat-changes"
 import {
   CommandPalette,
+  type CommandPaletteAction,
   type CommandPaletteSession,
 } from "@/components/command-palette"
 import {
   ContextUsage,
+  chatCost,
   contextTurnUsage,
   useDraftStore,
 } from "@/components/context-usage"
+import { FolderStatus } from "@/components/folder-status"
 import { FolderPicker } from "@/components/folder-picker"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
 import { ProviderLogo } from "@/components/provider-logo"
 import { ProviderPicker } from "@/components/provider-picker"
+import { StashMenu } from "@/components/stash-menu"
 import {
   formatAskQuestionOutput,
   isOpenAskTool,
   type AskQuestionResult,
 } from "@/components/ui/ask-question"
-import { ChatInput, type ChatInputPayload } from "@/components/ui/chat-input"
+import type { FileActionItem } from "@/components/ui/change-summary"
+import {
+  ChatInput,
+  type ChatInputDraft,
+  type ChatInputHandle,
+  type ChatInputMentionItem,
+  type ChatInputPayload,
+  type ChatInputQueuedMessage,
+} from "@/components/ui/chat-input"
 import {
   ChatSidebar,
   ChatSidebarDnd,
@@ -55,10 +71,12 @@ import {
   SidebarItemBadge,
   SidebarItemStatusDot,
   type ChatSidebarItemData,
+  type SidebarItemMenuAction,
 } from "@/components/ui/chat-sidebar"
 import {
   FilePreview,
   filePreviewFromTool,
+  type FilePreviewDiffLayout,
   type FilePreviewFile,
 } from "@/components/ui/file-preview"
 import type { GenerationStage } from "@/components/ui/generation-status"
@@ -95,15 +113,27 @@ import {
 import * as api from "@/lib/api-client"
 import {
   MAX_IMAGE_BYTES,
+  MAX_TEXT_ATTACHMENT_BYTES,
+  fenceTextAttachment,
   isImageFile,
+  isTextFile,
   readFileAsDataUrl,
+  readFileAsText,
 } from "@/lib/attachments"
 import type {
   AgentStatusStage,
   AgentStreamEvent,
 } from "@/lib/cursor-agent-types"
+import {
+  readDrafts,
+  readStash,
+  writeDraft,
+  writeStash,
+  type StashEntry,
+} from "@/lib/drafts"
+import { buildFileActions } from "@/lib/file-actions"
 import { runLayoutTransition } from "@/lib/layout-transition"
-import { localFileUrlFrom } from "@/lib/local-media"
+import { localFileUrlFrom, resolveLocalPath } from "@/lib/local-media"
 import {
   applyStreamEvent,
   deriveSessionTitle,
@@ -120,6 +150,13 @@ import {
 } from "@/lib/session-groups"
 import { turnFiles } from "@/lib/turn-files"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
+import {
+  badgePrefix,
+  notifyAttention,
+  updateAttentionBadge,
+} from "@/lib/notifications"
+import { APP_SLASH_COMMANDS, parseSlashCommand } from "@/lib/slash-commands"
+import { bindAppShortcuts } from "@/lib/app-shortcuts"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
 import type {
@@ -139,6 +176,20 @@ const MAX_CACHED_THREADS = 4
 
 /** Where the dragged file-panel width is remembered, as a percentage. */
 const CACHE_SPLIT_KEY = "agent-ui:preview-size"
+/** The file panel's own preferences: split or unified diff, wrapped lines. */
+const CACHE_PREVIEW_PREFS_KEY = "agent-ui:preview-prefs"
+/** How long the composer waits after a keystroke before saving the draft. */
+const DRAFT_SAVE_MS = 300
+
+type PreviewPrefs = { layout: FilePreviewDiffLayout; wrap: boolean }
+const DEFAULT_PREVIEW_PREFS: PreviewPrefs = { layout: "unified", wrap: true }
+
+/** A message typed while a turn streamed, waiting for that turn to end. */
+type QueuedMessage = ChatInputQueuedMessage & { files: File[]; skills: string[] }
+
+const EMPTY_QUEUE: ChatInputQueuedMessage[] = []
+const EMPTY_MENTIONS: ChatInputMentionItem[] = []
+const EMPTY_FILE_ACTIONS: FileActionItem[] = []
 
 /**
  * Which sidebar folder sections the user closed, keyed by group id. Only the
@@ -418,8 +469,32 @@ export default function ChatPage() {
   // render: the pane it sizes is not on screen yet, and localStorage does not
   // exist while the page prerenders.
   const [previewSize, setPreviewSize] = React.useState(DEFAULT_PREVIEW_SIZE)
+  const [previewPrefs, setPreviewPrefs] =
+    React.useState<PreviewPrefs>(DEFAULT_PREVIEW_PREFS)
+  /** Messages typed during a turn, per chat, sent one by one as turns end. */
+  const [queues, setQueues] = React.useState<Record<string, QueuedMessage[]>>(
+    {}
+  )
+  /** Prompts parked with ⌘S — global, not per chat, like a git stash. */
+  const [stash, setStash] = React.useState<StashEntry[]>([])
+  /** What "open in editor" can reach on this machine; asked for once. */
+  const [openTargets, setOpenTargets] = React.useState<api.OpenTargets | null>(
+    null
+  )
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const composerRef = React.useRef<ChatInputHandle>(null)
+  /** Each chat's composer state while it is not the open one (files included). */
+  const draftsRef = React.useRef(new Map<string, ChatInputDraft>())
+  const draftTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
+    undefined
+  )
+  const queuesRef = React.useRef(queues)
+  /** Sidebar order, for ⌘⇧[ / ⌘⇧] and ⌘1…9. */
+  const orderedIdsRef = React.useRef<string[]>([])
+  /** Set once `send` exists; `runPrompt` is defined before it. */
+  const drainQueueRef = React.useRef<(sessionId: string) => void>(() => {})
+  const selectSessionRef = React.useRef<(id: string) => void>(() => {})
   const abortsRef = React.useRef(new Map<string, AbortController>())
   const threadsRef = React.useRef(threads)
   const activeIdRef = React.useRef(activeId)
@@ -451,6 +526,7 @@ export default function ChatPage() {
     providerIdRef.current = providerId
     modelRef.current = model
     settingsRef.current = settings
+    queuesRef.current = queues
   })
 
   /**
@@ -526,6 +602,10 @@ export default function ChatPage() {
   const activeSession = sessions.find((session) => session.id === activeId)
   const activeRun = runs[activeId]
   const isGenerating = !!activeRun
+  const activeCost = React.useMemo(
+    () => chatCost(deferredMessages),
+    [deferredMessages]
+  )
   /**
    * The transcript as the list sees it: same objects, except where a turn's
    * file card needs the media it produced folded in (`lib/turn-files`). The
@@ -555,6 +635,23 @@ export default function ChatPage() {
   const pendingAsk = React.useMemo(
     () => findPendingAsk(messages) !== null,
     [messages]
+  )
+  /**
+   * Chats waiting on an answer, across every loaded thread — what the dock
+   * badge counts. Only loaded threads can be checked; a chat that has never
+   * been opened this session cannot be waiting on anything.
+   */
+  const waitingCount = React.useMemo(
+    () =>
+      Object.entries(threads).filter(
+        ([id, thread]) => !runs[id] && findPendingAsk(thread) !== null
+      ).length,
+    [runs, threads]
+  )
+  /** Every file the chat changed, across its turns — the header's count. */
+  const chatChanges = React.useMemo(
+    () => collectChatChanges(listMessages),
+    [listMessages]
   )
 
   /* ---------------------------------------------------------------------- */
@@ -818,6 +915,68 @@ export default function ChatPage() {
     writeCache(CACHE_INDEX_KEY, sessions)
   }, [sessions])
 
+  // What this machine can open a file in. Once: installed apps do not change
+  // mid-session, and the answer only decorates a menu.
+  React.useEffect(() => {
+    let cancelled = false
+    api
+      .fetchOpenTargets()
+      .then((targets) => {
+        if (!cancelled) setOpenTargets(targets)
+      })
+      .catch(() => {
+        /* the menu falls back to a generic "Open in editor" */
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  // The stash and the panel preferences, read back after mount — same
+  // microtask deferral as the sidebar seed.
+  React.useEffect(() => {
+    let cancelled = false
+    queueMicrotask(() => {
+      if (cancelled) return
+      const entries = readStash()
+      if (entries.length > 0) setStash(entries)
+      const prefs = readCache<Partial<PreviewPrefs>>(CACHE_PREVIEW_PREFS_KEY)
+      if (prefs) {
+        setPreviewPrefs({
+          layout: prefs.layout === "split" ? "split" : "unified",
+          wrap: prefs.wrap !== false,
+        })
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  /**
+   * The composer follows the chat: leaving one parks its draft (files
+   * included) in memory, opening one restores what it had — from memory this
+   * session, else the text saved to localStorage by `handleTextChange`.
+   */
+  React.useEffect(() => {
+    const composer = composerRef.current
+    if (!composer) return
+    const id = activeId
+    const drafts = draftsRef.current
+    const parked = drafts.get(id)
+    composer.setDraft(
+      parked ?? { text: id ? (readDrafts()[id] ?? "") : "", files: [], skills: [] }
+    )
+    return () => {
+      drafts.set(id, composer.getDraft())
+    }
+  }, [activeId])
+
+  // The dock badge and the tab title both count the chats waiting on you.
+  React.useEffect(() => {
+    updateAttentionBadge(waitingCount)
+  }, [waitingCount])
+
   React.useEffect(() => {
     if (activeId) writeCache(CACHE_ACTIVE_KEY, activeId)
   }, [activeId])
@@ -879,11 +1038,14 @@ export default function ChatPage() {
     return () => window.removeEventListener("keydown", onKey)
   }, [closeDrawer, drawerOpen])
 
-  // The tab title follows the open chat.
+  // The tab title follows the open chat, prefixed by the waiting count where
+  // there is no dock icon to badge.
   const activeTitle = activeSession?.title?.trim() ?? ""
   React.useEffect(() => {
-    document.title = activeTitle ? `${activeTitle} — Agent UI` : "Agent UI"
-  }, [activeTitle])
+    document.title = `${badgePrefix(waitingCount)}${
+      activeTitle ? `${activeTitle} — Agent UI` : "Agent UI"
+    }`
+  }, [activeTitle, waitingCount])
 
   React.useEffect(() => {
     const aborts = abortsRef.current
@@ -928,6 +1090,9 @@ export default function ChatPage() {
     },
     [adoptAgent, cacheThread, loadThread]
   )
+  React.useEffect(() => {
+    selectSessionRef.current = selectSession
+  }, [selectSession])
 
   const renameSession = React.useCallback(
     (id: string, title: string) => {
@@ -1266,6 +1431,23 @@ export default function ChatPage() {
         setFailures((prev) => ({ ...prev, [sessionId]: true }))
       }
 
+      /**
+       * The OS notification for a turn that ended while the window was not
+       * in front. `notifyAttention` itself stays quiet when it is; clicking
+       * the notification (where the platform passes clicks on) opens the chat.
+       */
+      const notify = (kind: "completion" | "question" | "error", body?: string) => {
+        if (!(settingsRef.current?.chat.desktopNotifications ?? true)) return
+        const title =
+          sessionsRef.current.find((item) => item.id === sessionId)?.title ?? ""
+        void notifyAttention({
+          kind,
+          chatTitle: title,
+          body,
+          onClick: () => selectSessionRef.current(sessionId),
+        })
+      }
+
       const notifiedAskTools = new Set<string>()
 
       /**
@@ -1364,6 +1546,7 @@ export default function ChatPage() {
         if (event.type === "error") {
           toast.error(event.message)
           failAssistant(event.message)
+          notify("error", event.message)
           return
         }
         if (event.type === "done") {
@@ -1413,6 +1596,12 @@ export default function ChatPage() {
           ) {
             playAgentNotificationSound("completion")
           }
+          if (!failed) {
+            const answer = threadsRef.current[sessionId]
+              ?.find((message) => message.id === assistantId)
+              ?.content.trim()
+            notify(needsAttention ? "question" : "completion", answer)
+          }
           return
         }
         if (event.type === "status") {
@@ -1458,6 +1647,7 @@ export default function ChatPage() {
           const message = errorMessage(err, "The agent run failed")
           toast.error(message)
           failAssistant(message)
+          notify("error", message)
         }
       } finally {
         drain()
@@ -1472,35 +1662,127 @@ export default function ChatPage() {
            one is usually about to be re-sent, and a failed one would spend a
            model call to stack a second toast under the failure's own. */
         if (!controller.signal.aborted && !failed) void runMemoryUpdate(sessionId)
+        /* A message queued during the turn goes next — a stopped turn keeps
+           its queue, since Stop usually means "let me rephrase". */
+        if (!controller.signal.aborted) drainQueueRef.current(sessionId)
       }
     },
     [patchLocal, runMemoryUpdate, settings?.chat.notificationSounds]
   )
 
-  const send = React.useCallback(
-    async (text: string, files: File[], skills: string[]) => {
-      const trimmed = text.trim()
-      if (!trimmed) return
+  /** Palette → the sidebar's inline rename input for that chat. */
+  const startRename = React.useCallback(
+    (id: string) => {
+      if (isDesktop) setCollapsed(false)
+      else setMobileNavOpen(true)
+      const session = sessionsRef.current.find((item) => item.id === id)
+      // The rename input has to be on screen: open the section holding it.
+      if (session) openSection(groupIdForSession(session))
+      setRenameRequest((prev) => ({ id, token: prev.token + 1 }))
+    },
+    [isDesktop, openSection]
+  )
 
-      let sessionId = activeId
+  /**
+   * Opens the chat's folder in the editor, the file manager or a terminal.
+   * Reads state, not the refs: it is handed to the command palette's memoized
+   * action list, which is built during render.
+   */
+  const activeFolder = activeSession?.cwd?.trim() ?? ""
+  const openFolder = React.useCallback(
+    (action: "editor" | "reveal" | "terminal") => {
+      if (!activeId || !activeFolder) {
+        toast.message("This chat has no working folder yet")
+        return
+      }
+      void api
+        .openPath({ action, path: activeFolder, sessionId: activeId })
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not open the folder"))
+        )
+    },
+    [activeFolder, activeId]
+  )
+
+  /** `/title` and the sidebar's "Regenerate title" — a model names the chat. */
+  const regenerateTitle = React.useCallback(
+    (id: string) => {
+      const toastId = `title-${id}`
+      toast.loading("Naming the chat…", { id: toastId })
+      void api
+        .regenerateTitle(id)
+        .then((result) => {
+          patchLocal(id, { title: result.title })
+          toast.success(`Renamed to “${result.title}”`, { id: toastId })
+        })
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not generate a title"), {
+            id: toastId,
+          })
+        )
+    },
+    [patchLocal]
+  )
+
+  const send = React.useCallback(
+    async (text: string, files: File[], skills: string[], targetId?: string) => {
+      const trimmed = text.trim()
+      if (!trimmed && files.length === 0) return
+
+      let sessionId = targetId ?? activeId
       let prior = threadsRef.current[sessionId] ?? EMPTY_MESSAGES
 
-      if (trimmed === "/clear") {
-        if (!sessionId) return
-        abortsRef.current.get(sessionId)?.abort()
-        setRuns((prev) => omit(prev, sessionId))
-        setFailures((prev) => omit(prev, sessionId))
-        runLayoutTransition(() =>
-          setThreads((prev) => ({ ...prev, [sessionId]: [] }))
-        )
-        patchLocal(sessionId, { messageCount: 0, providerSessionId: "" })
-        void api
-          .putMessages(sessionId, [])
-          .then(() => api.patchSession(sessionId, { providerSessionId: "" }))
-          .catch((err: unknown) =>
-            toast.error(errorMessage(err, "Could not clear the chat"))
-          )
-        return
+      // A queued message may land after the user has moved to another chat;
+      // it runs with the agent its own chat remembers, not the one on screen.
+      const target = sessionsRef.current.find((item) => item.id === sessionId)
+      const detached = !!targetId && targetId !== activeIdRef.current && !!target
+      const runProvider = detached ? target.providerId : providerId
+      const runModel = detached ? target.model : model
+
+      const command = parseSlashCommand(trimmed)
+      if (command && !detached) {
+        switch (command.name) {
+          case "clear": {
+            if (!sessionId) return
+            abortsRef.current.get(sessionId)?.abort()
+            setRuns((prev) => omit(prev, sessionId))
+            setFailures((prev) => omit(prev, sessionId))
+            runLayoutTransition(() =>
+              setThreads((prev) => ({ ...prev, [sessionId]: [] }))
+            )
+            patchLocal(sessionId, { messageCount: 0, providerSessionId: "" })
+            void api
+              .putMessages(sessionId, [])
+              .then(() => api.patchSession(sessionId, { providerSessionId: "" }))
+              .catch((err: unknown) =>
+                toast.error(errorMessage(err, "Could not clear the chat"))
+              )
+            return
+          }
+          case "new":
+            void handleNewChat()
+            return
+          case "rename":
+            if (!sessionId) return
+            if (command.arg) renameSession(sessionId, command.arg)
+            else startRename(sessionId)
+            return
+          case "title":
+            if (sessionId) regenerateTitle(sessionId)
+            return
+          case "open":
+            openFolder("editor")
+            return
+          case "reveal":
+            openFolder("reveal")
+            return
+          case "terminal":
+            openFolder("terminal")
+            return
+          case "settings":
+            router.push("/settings")
+            return
+        }
       }
 
       const skillPrefix = skills.length > 0 ? `[skills: ${skills.join(", ")}] ` : ""
@@ -1528,7 +1810,24 @@ export default function ChatPage() {
       }
 
       let attachments: MessageAttachmentData[] = []
-      let namedOnly = [...otherFiles, ...oversizedImages]
+      let namedOnly = [...oversizedImages]
+
+      // A text file rides along in full, fenced and named, so the model reads
+      // it the way it would a pasted snippet. Anything else is mentioned by
+      // name — a PDF has no text to lift without a parser.
+      let fenced = ""
+      for (const file of otherFiles) {
+        if (!isTextFile(file) || file.size > MAX_TEXT_ATTACHMENT_BYTES) {
+          namedOnly.push(file)
+          continue
+        }
+        try {
+          fenced += fenceTextAttachment(file.name, await readFileAsText(file))
+        } catch {
+          toast.error(`Could not read ${file.name} — attaching the name only`)
+          namedOnly.push(file)
+        }
+      }
 
       if (sizedImages.length > 0) {
         if (visionEligible) {
@@ -1547,7 +1846,7 @@ export default function ChatPage() {
           }
         } else {
           const activeName =
-            providers.find((item) => item.id === providerId)?.name ?? providerId
+            providers.find((item) => item.id === runProvider)?.name ?? runProvider
           toast.message(
             `${activeName || "This provider"} can't see images — attaching the name only`
           )
@@ -1559,7 +1858,8 @@ export default function ChatPage() {
         namedOnly.length > 0
           ? `\n\nAttached: ${namedOnly.map((file) => file.name).join(", ")}`
           : ""
-      const content = `${skillPrefix}${text}${fileNote}`
+      const content = `${skillPrefix}${text}${fenced}${fileNote}`
+      if (!content.trim()) return
 
       if (!sessionId) {
         try {
@@ -1599,8 +1899,8 @@ export default function ChatPage() {
         sessionId,
         prompt: content,
         prior,
-        providerId,
-        model,
+        providerId: runProvider,
+        model: runModel,
         effort: capabilities?.effort ? effort : undefined,
         permissionMode: chosenPermission || undefined,
         attachments,
@@ -1619,13 +1919,19 @@ export default function ChatPage() {
       capabilities?.vision,
       chosenPermission,
       effort,
+      handleNewChat,
       model,
+      openFolder,
       patchLocal,
       providerId,
       providers,
+      regenerateTitle,
+      renameSession,
+      router,
       runPrompt,
       sessions,
       settings?.chat.autoTitle,
+      startRename,
       visionModels,
     ]
   )
@@ -1636,6 +1942,156 @@ export default function ChatPage() {
     },
     [send]
   )
+
+  /* ---------------------------------------------------------------------- */
+  /* Composer: queue, stash, drafts, mentions                                */
+  /* ---------------------------------------------------------------------- */
+
+  const handleQueue = React.useCallback((payload: ChatInputPayload) => {
+    const sessionId = activeIdRef.current
+    if (!sessionId) return
+    const item: QueuedMessage = {
+      id: newId(),
+      text: payload.text,
+      files: payload.files,
+      skills: payload.skills,
+      fileCount: payload.files.length || undefined,
+    }
+    setQueues((prev) => ({
+      ...prev,
+      [sessionId]: [...(prev[sessionId] ?? []), item],
+    }))
+  }, [])
+
+  const takeQueued = React.useCallback((sessionId: string, id: string) => {
+    const item = queuesRef.current[sessionId]?.find((entry) => entry.id === id)
+    if (!item) return null
+    setQueues((prev) => {
+      const rest = (prev[sessionId] ?? []).filter((entry) => entry.id !== id)
+      return rest.length > 0 ? { ...prev, [sessionId]: rest } : omit(prev, sessionId)
+    })
+    return item
+  }, [])
+
+  const handleQueueRemove = React.useCallback(
+    (id: string) => {
+      takeQueued(activeIdRef.current, id)
+    },
+    [takeQueued]
+  )
+
+  const handleQueueEdit = React.useCallback(
+    (id: string) => {
+      const item = takeQueued(activeIdRef.current, id)
+      if (!item) return
+      composerRef.current?.setDraft({
+        text: item.text,
+        files: item.files,
+        skills: item.skills,
+      })
+      composerRef.current?.focus()
+    },
+    [takeQueued]
+  )
+
+  /** Sends the next queued message of a chat, if any. Called as a turn ends. */
+  const drainQueue = React.useCallback(
+    (sessionId: string) => {
+      const next = queuesRef.current[sessionId]?.[0]
+      if (!next) return
+      takeQueued(sessionId, next.id)
+      void send(next.text, next.files, next.skills, sessionId)
+    },
+    [send, takeQueued]
+  )
+  React.useEffect(() => {
+    drainQueueRef.current = drainQueue
+  }, [drainQueue])
+
+  const queueItems = queues[activeId] ?? EMPTY_QUEUE
+
+  const handleStash = React.useCallback((payload: ChatInputPayload) => {
+    const entry: StashEntry = {
+      id: newId(),
+      text: payload.text,
+      createdAt: nowMs(),
+      fileNames: payload.files.map((file) => file.name),
+      files: payload.files,
+      skills: payload.skills,
+    }
+    setStash((prev) => {
+      const next = [entry, ...prev]
+      writeStash(next)
+      return next
+    })
+    toast.message("Prompt stashed", { description: "Restore it from the stash button." })
+  }, [])
+
+  const restoreStash = React.useCallback((entry: StashEntry) => {
+    composerRef.current?.setDraft({
+      text: entry.text,
+      files: entry.files ?? [],
+      skills: entry.skills,
+    })
+    composerRef.current?.focus()
+    setStash((prev) => {
+      const next = prev.filter((item) => item.id !== entry.id)
+      writeStash(next)
+      return next
+    })
+  }, [])
+
+  const discardStash = React.useCallback((id: string) => {
+    setStash((prev) => {
+      const next = prev.filter((item) => item.id !== id)
+      writeStash(next)
+      return next
+    })
+  }, [])
+
+  /** The draft feeds the context meter now and localStorage a beat later. */
+  const handleTextChange = React.useCallback(
+    (text: string) => {
+      draftStore.set(text)
+      const sessionId = activeIdRef.current
+      if (!sessionId) return
+      if (draftTimerRef.current !== undefined) clearTimeout(draftTimerRef.current)
+      draftTimerRef.current = setTimeout(() => {
+        draftTimerRef.current = undefined
+        writeDraft(sessionId, text)
+      }, DRAFT_SAVE_MS)
+    },
+    [draftStore]
+  )
+
+  /** `@` in the composer → files under the chat's folder. */
+  const handleMentions = React.useCallback(async (query: string) => {
+    const session = sessionsRef.current.find(
+      (item) => item.id === activeIdRef.current
+    )
+    if (!session?.cwd) return EMPTY_MENTIONS
+    try {
+      const { files } = await api.searchFiles(session.id, query)
+      return files.map<ChatInputMentionItem>((file) => ({
+        id: file,
+        label: file,
+        insert: `@${file}`,
+      }))
+    } catch {
+      return EMPTY_MENTIONS
+    }
+  }, [])
+
+  /** "Quote" over a selection in an answer → a blockquote in the composer. */
+  const handleQuote = React.useCallback((_messageId: string, text: string) => {
+    const quoted = text
+      .trim()
+      .split("\n")
+      .map((line) => `> ${line}`)
+      .join("\n")
+    composerRef.current?.insertText(`${quoted}\n\n`)
+    composerRef.current?.focus()
+  }, [])
 
   const handleStop = React.useCallback(() => {
     abortsRef.current.get(activeId)?.abort()
@@ -1781,6 +2237,33 @@ export default function ChatPage() {
     writeCache(CACHE_SPLIT_KEY, size)
   }, [])
 
+  const setDiffLayout = React.useCallback((layout: FilePreviewDiffLayout) => {
+    setPreviewPrefs((prev) => {
+      const next = { ...prev, layout }
+      writeCache(CACHE_PREVIEW_PREFS_KEY, next)
+      return next
+    })
+  }, [])
+
+  const setWrap = React.useCallback((wrap: boolean) => {
+    setPreviewPrefs((prev) => {
+      const next = { ...prev, wrap }
+      writeCache(CACHE_PREVIEW_PREFS_KEY, next)
+      return next
+    })
+  }, [])
+
+  /** The panel's path is whatever the tool said; the clipboard gets it absolute. */
+  const handleCopyPath = React.useCallback((path: string) => {
+    const session = sessionsRef.current.find(
+      (item) => item.id === activeIdRef.current
+    )
+    void navigator.clipboard
+      ?.writeText(resolveLocalPath(path, session?.cwd))
+      .then(() => toast.success("Path copied"))
+      .catch(() => toast.error("Could not write to the clipboard"))
+  }, [])
+
   /**
    * Opens the panel from what the transcript already holds, then fills in the
    * file's text from disk when that arrives. The fetch is strictly an
@@ -1821,6 +2304,59 @@ export default function ChatPage() {
         /* the panel degrades to the diff on its own */
       })
   }, [])
+
+  /**
+   * After `git checkout -- <file>`, the open panel is showing the state the
+   * revert just discarded. Re-read it so the File view says what is on disk.
+   */
+  const revertProvider = activeSession?.providerId || providerId
+  const handleReverted = React.useCallback(
+    (path: string) => {
+      if (!activeId || !revertProvider) return
+      void api
+        .fetchFile(path, revertProvider, activeId)
+        .then((data) => {
+          setPreview((latest) =>
+            latest && latest.path === path
+              ? { ...latest, content: data.content }
+              : latest
+          )
+        })
+        .catch(() => {
+          /* the panel keeps the diff */
+        })
+    },
+    [activeId, revertProvider]
+  )
+
+  /**
+   * The right-click menu on every file in the chat. Rebuilt only when the
+   * chat, its folder, the detected editors or the editor setting change —
+   * the rows it reaches are memoized on the array's identity.
+   */
+  const activeCwd = activeSession?.cwd
+  const defaultEditor = settings?.editor.defaultEditor ?? ""
+  const fileActions = React.useMemo<FileActionItem[]>(
+    () =>
+      activeId
+        ? buildFileActions({
+            sessionId: activeId,
+            cwd: activeCwd,
+            platform: openTargets?.platform ?? "",
+            editors: openTargets?.editors ?? [],
+            defaultEditor,
+            onReverted: handleReverted,
+          })
+        : EMPTY_FILE_ACTIONS,
+    [
+      activeCwd,
+      activeId,
+      defaultEditor,
+      handleReverted,
+      openTargets?.editors,
+      openTargets?.platform,
+    ]
+  )
 
   /**
    * A path a tool named → a URL this page can load it from. Images only: the
@@ -1885,16 +2421,43 @@ export default function ChatPage() {
   )
 
   /**
-   * The badge hands over the path with any `:line` suffix already dropped;
-   * stripped again here because a host, not the component, decides what a
-   * location means.
+   * The badge hands over the path with any `:line` suffix already dropped and
+   * the line beside it; stripped again here because a host, not the
+   * component, decides what a location means. The line becomes the panel's
+   * focus, so `app/page.tsx:120` opens on line 120.
    */
   const handleFileReferenceClick = React.useCallback(
-    (messageId: string, reference: string) => {
+    (messageId: string, reference: string, line?: number) => {
       const path = reference.replace(/:\d+(?::\d+)?$/, "")
-      openPreview(previewFromTurn(messageId, path) ?? { path })
+      const file = previewFromTurn(messageId, path) ?? { path }
+      openPreview(line ? { ...file, focusLine: line } : file)
     },
     [openPreview, previewFromTurn]
+  )
+
+  /** A row of the whole-chat change list: the last tool that touched the path. */
+  const handleChatChangeClick = React.useCallback(
+    (change: ChangeSummaryFile) => {
+      const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
+      let match: FilePreviewFile | null = null
+      for (const message of thread) {
+        const tools = message.tools?.length
+          ? message.tools
+          : toolsFromParts(message.parts ?? [])
+        for (const tool of tools) {
+          const file = filePreviewFromTool(tool)
+          if (file?.path === change.path) match = file
+        }
+      }
+      openPreview(
+        match ?? {
+          path: change.path,
+          added: change.additions,
+          removed: change.deletions,
+        }
+      )
+    },
+    [openPreview]
   )
 
   const handleReviewChanges = React.useCallback(
@@ -1963,6 +2526,79 @@ export default function ChatPage() {
     () => groupSessions(sessions, sessionItems),
     [sessionItems, sessions]
   )
+  React.useEffect(() => {
+    orderedIdsRef.current = [
+      ...pinnedItems,
+      ...folderGroups.flatMap((group) => group.items),
+    ].map((item) => item.id)
+  }, [folderGroups, pinnedItems])
+
+  const stepChat = React.useCallback((delta: number) => {
+    const ids = orderedIdsRef.current
+    if (ids.length === 0) return
+    const index = ids.indexOf(activeIdRef.current)
+    const next = ids[(index + delta + ids.length) % ids.length]
+    if (next && next !== activeIdRef.current) selectSessionRef.current(next)
+  }, [])
+
+  // Bound in an effect rather than through a hook that takes the handlers:
+  // they read refs, and a closure handed to a function during render is
+  // something the compiler rightly refuses to reason about.
+  React.useEffect(
+    () =>
+      bindAppShortcuts({
+        newChat: () => void handleNewChat(),
+        toggleSidebar: () =>
+          isDesktop
+            ? setCollapsed((current) => !current)
+            : setMobileNavOpen((current) => !current),
+        previousChat: () => stepChat(-1),
+        nextChat: () => stepChat(1),
+        jumpToChat: (index) => {
+          const id = orderedIdsRef.current[index - 1]
+          if (id) selectSessionRef.current(id)
+        },
+        openInEditor: () => openFolder("editor"),
+        typeToFocus: () => composerRef.current?.focus(),
+      }),
+    [handleNewChat, isDesktop, openFolder, stepChat]
+  )
+
+  const paletteActions = React.useMemo<CommandPaletteAction[]>(() => {
+    if (!activeId) return []
+    const actions: CommandPaletteAction[] = [
+      {
+        id: "title",
+        label: "Regenerate chat title",
+        icon: <Sparkles />,
+        onSelect: () => regenerateTitle(activeId),
+      },
+    ]
+    if (activeSession?.cwd) {
+      actions.push(
+        {
+          id: "open-folder",
+          label: "Open folder in editor",
+          icon: <ExternalLink />,
+          shortcut: "⌘O",
+          onSelect: () => openFolder("editor"),
+        },
+        {
+          id: "reveal-folder",
+          label: "Reveal folder",
+          icon: <FolderOpen />,
+          onSelect: () => openFolder("reveal"),
+        },
+        {
+          id: "terminal-folder",
+          label: "Open terminal in folder",
+          icon: <SquareTerminal />,
+          onSelect: () => openFolder("terminal"),
+        }
+      )
+    }
+    return actions
+  }, [activeId, activeSession?.cwd, openFolder, regenerateTitle])
 
   const paletteSessions = React.useMemo<CommandPaletteSession[]>(
     () =>
@@ -1976,17 +2612,54 @@ export default function ChatPage() {
     [providerName, sessions]
   )
 
-  /** Palette → the sidebar's inline rename input for that chat. */
-  const startRename = React.useCallback(
-    (id: string) => {
-      if (isDesktop) setCollapsed(false)
-      else setMobileNavOpen(true)
-      const session = sessionsRef.current.find((item) => item.id === id)
-      // The rename input has to be on screen: open the section holding it.
-      if (session) openSection(groupIdForSession(session))
-      setRenameRequest((prev) => ({ id, token: prev.token + 1 }))
+  /**
+   * Extra entries on a chat row's right-click menu. Built per row by the
+   * list, which memoizes on this callback and the row's item.
+   */
+  const sessionMenuActions = React.useCallback(
+    (item: ChatSidebarItemData): SidebarItemMenuAction[] => {
+      const session = sessionsRef.current.find((entry) => entry.id === item.id)
+      const actions: SidebarItemMenuAction[] = [
+        {
+          id: "title",
+          label: "Regenerate title",
+          icon: <Sparkles className="size-3.5" />,
+          onSelect: () => regenerateTitle(item.id),
+        },
+      ]
+      const cwd = session?.cwd?.trim()
+      if (cwd) {
+        const open = (action: "editor" | "reveal" | "terminal") =>
+          void api
+            .openPath({ action, path: cwd, sessionId: item.id })
+            .catch((err: unknown) =>
+              toast.error(errorMessage(err, "Could not open the folder"))
+            )
+        actions.push(
+          {
+            id: "open-folder",
+            label: "Open folder in editor",
+            icon: <ExternalLink className="size-3.5" />,
+            onSelect: () => open("editor"),
+            separatorBefore: true,
+          },
+          {
+            id: "reveal-folder",
+            label: "Reveal folder",
+            icon: <FolderOpen className="size-3.5" />,
+            onSelect: () => open("reveal"),
+          },
+          {
+            id: "terminal-folder",
+            label: "Open in terminal",
+            icon: <SquareTerminal className="size-3.5" />,
+            onSelect: () => open("terminal"),
+          }
+        )
+      }
+      return actions
     },
-    [isDesktop, openSection]
+    [regenerateTitle]
   )
 
   const showEfforts =
@@ -2017,16 +2690,26 @@ export default function ChatPage() {
   const composer = React.useMemo(
     () => (
       <ChatInput
+        ref={composerRef}
         onSend={handleSend}
         onStop={handleStop}
-        onTextChange={draftStore.set}
+        onTextChange={handleTextChange}
+        onQueue={handleQueue}
+        queue={queueItems}
+        onQueueRemove={handleQueueRemove}
+        onQueueEdit={handleQueueEdit}
+        onStash={handleStash}
+        mentions={handleMentions}
+        slashCommands={APP_SLASH_COMMANDS}
         isGenerating={isGenerating}
         placeholder={
-          pendingAsk
-            ? "Add more optional details…"
-            : activeProviderName
-              ? `Ask ${activeProviderName}…`
-              : "Ask anything"
+          isGenerating
+            ? undefined
+            : pendingAsk
+              ? "Add more optional details…"
+              : activeProviderName
+                ? `Ask ${activeProviderName}…`
+                : "Ask anything"
         }
         /* The composer already measures like the message column; the empty
            chat only closes the gap under it, since the suggestions land there. */
@@ -2066,12 +2749,19 @@ export default function ChatPage() {
               input={contextTurn.input}
               output={contextTurn.output}
               total={contextTotal}
+              cost={activeCost}
+            />
+            <StashMenu
+              entries={stash}
+              onRestore={restoreStash}
+              onDiscard={discardStash}
             />
           </>
         }
       />
     ),
     [
+      activeCost,
       activeProviderName,
       chooseModel,
       choosePermission,
@@ -2080,11 +2770,18 @@ export default function ChatPage() {
       contextTotal,
       contextTurn.input,
       contextTurn.output,
+      discardStash,
       draftStore,
       effectivePermission,
       effort,
+      handleMentions,
+      handleQueue,
+      handleQueueEdit,
+      handleQueueRemove,
       handleSend,
+      handleStash,
       handleStop,
+      handleTextChange,
       isEmptyChat,
       isGenerating,
       model,
@@ -2094,7 +2791,10 @@ export default function ChatPage() {
       pickerGroups,
       providerId,
       providers,
+      queueItems,
+      restoreStash,
       showEfforts,
+      stash,
     ]
   )
 
@@ -2231,6 +2931,7 @@ export default function ChatPage() {
               onTogglePin={togglePin}
               onDelete={removeSession}
               onDeleteMany={removeSessions}
+              getMenuActions={sessionMenuActions}
             />
           ) : null}
 
@@ -2247,6 +2948,7 @@ export default function ChatPage() {
               onTogglePin={togglePin}
               onDelete={removeSession}
               onDeleteMany={removeSessions}
+              getMenuActions={sessionMenuActions}
             />
           ))}
         </ChatSidebar>
@@ -2267,6 +2969,7 @@ export default function ChatPage() {
       renameSession,
       selectSession,
       sessionItems,
+      sessionMenuActions,
       sessionsLoaded,
       toggleSection,
       togglePin,
@@ -2310,6 +3013,11 @@ export default function ChatPage() {
             <PanelLeft />
           </button>
           <AppHeaderActions>
+            <ChatChanges
+              files={chatChanges}
+              fileActions={fileActions}
+              onFileClick={handleChatChangeClick}
+            />
             <AppHeaderButton
               label="Search chats and commands"
               hint="⌘K"
@@ -2376,6 +3084,8 @@ export default function ChatPage() {
                     onFileReferenceClick={handleFileReferenceClick}
                     onReviewChanges={handleReviewChanges}
                     resolveFileUrl={resolveFileUrl}
+                    fileActions={fileActions}
+                    onQuote={handleQuote}
                     renderActions={(message) =>
                       message.sender === "assistant" ? (
                         <MessageActions
@@ -2445,6 +3155,12 @@ export default function ChatPage() {
                   <FilePreview
                     file={dockedPreview}
                     onClose={closePreview}
+                    actions={fileActions}
+                    onCopyPath={handleCopyPath}
+                    diffLayout={previewPrefs.layout}
+                    onDiffLayoutChange={setDiffLayout}
+                    wrap={previewPrefs.wrap}
+                    onWrapChange={setWrap}
                     className="border-l"
                   />
                 </ResizablePanel>
@@ -2478,6 +3194,12 @@ export default function ChatPage() {
               <FilePreview
                 file={overlayPreview}
                 onClose={closePreview}
+                actions={fileActions}
+                onCopyPath={handleCopyPath}
+                diffLayout={previewPrefs.layout}
+                onDiffLayoutChange={setDiffLayout}
+                wrap={previewPrefs.wrap}
+                onWrapChange={setWrap}
                 className="border-l"
               />
             ) : null}
@@ -2493,6 +3215,7 @@ export default function ChatPage() {
         onSelectSession={selectSession}
         onNewChat={() => void handleNewChat()}
         onRenameSession={startRename}
+        actions={paletteActions}
       />
     </div>
   )
@@ -2579,6 +3302,7 @@ type SidebarSectionProps = {
   onTogglePin: (id: string, pinned: boolean) => void
   onDelete: (id: string) => void
   onDeleteMany: (ids: string[]) => void
+  getMenuActions?: (item: ChatSidebarItemData) => SidebarItemMenuAction[]
 }
 
 const SidebarSessionSection = React.memo(function SidebarSessionSection({
@@ -2620,6 +3344,7 @@ const SidebarSessionSection = React.memo(function SidebarSessionSection({
         onTogglePin={rest.onTogglePin}
         onDelete={rest.onDelete}
         onDeleteMany={rest.onDeleteMany}
+        getMenuActions={rest.getMenuActions}
       />
     </SidebarCollapsibleSection>
   )
@@ -2646,6 +3371,7 @@ const SidebarFolderSection = React.memo(function SidebarFolderSection({
           {group.branch ? (
             <SidebarItemBadge branch={group.branch} className="min-w-0" />
           ) : null}
+          {group.cwd ? <FolderStatus cwd={group.cwd} /> : null}
           {group.running && !open ? (
             <SidebarItemStatusDot status="streaming" />
           ) : null}

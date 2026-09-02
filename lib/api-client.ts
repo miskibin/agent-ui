@@ -359,3 +359,98 @@ export function updateMemory(sessionId: string): Promise<MemoryUpdateResult> {
     body: JSON.stringify({ sessionId }),
   }).then(json<MemoryUpdateResult>)
 }
+
+/* -------------------------------------------------------------------------- */
+/* Open in editor / reveal / terminal                                          */
+/* -------------------------------------------------------------------------- */
+
+export type OpenTarget = { id: string; name: string }
+
+export type OpenTargets = {
+  platform: string
+  editors: OpenTarget[]
+  terminals: OpenTarget[]
+}
+
+/** The editors and terminals installed on the machine the server runs on. */
+export function fetchOpenTargets(): Promise<OpenTargets> {
+  return fetch("/api/open", { cache: "no-store" }).then(json<OpenTargets>)
+}
+
+export type OpenRequest = {
+  action: "editor" | "reveal" | "terminal"
+  /** Absolute, or relative to the chat's folder when `sessionId` is given. */
+  path: string
+  line?: number
+  editor?: string
+  terminal?: string
+  sessionId?: string
+}
+
+/** Opens a path in an editor or terminal, or reveals it in the file manager. */
+export function openPath(
+  request: OpenRequest
+): Promise<{ ok: true; target?: OpenTarget }> {
+  return fetch("/api/open", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  }).then(json<{ ok: true; target?: OpenTarget }>)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Files and git                                                               */
+/* -------------------------------------------------------------------------- */
+
+/** Files under the chat's folder matching `query`, for the `@` menu. */
+export function searchFiles(
+  sessionId: string,
+  query: string,
+  signal?: AbortSignal
+): Promise<{ files: string[]; truncated: boolean }> {
+  const params = new URLSearchParams({ session: sessionId, q: query })
+  return fetch(`/api/fs/search?${params}`, { cache: "no-store", signal }).then(
+    json<{ files: string[]; truncated: boolean }>
+  )
+}
+
+export type GitStatus = {
+  isGitRepo: boolean
+  branch: string
+  ahead: number
+  behind: number
+  dirty: number
+  pr?: {
+    number: number
+    url: string
+    state: "OPEN" | "MERGED" | "CLOSED"
+    title: string
+  }
+}
+
+export function fetchGitStatus(path: string): Promise<GitStatus> {
+  return fetch(`/api/git/status?path=${encodeURIComponent(path)}`, {
+    cache: "no-store",
+  }).then(json<GitStatus>)
+}
+
+/** `git checkout -- <path>` inside the chat's folder. */
+export function revertFile(
+  sessionId: string,
+  path: string
+): Promise<{ ok: true; path: string }> {
+  return fetch("/api/git/revert", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, path }),
+  }).then(json<{ ok: true; path: string }>)
+}
+
+/** Asks a model to name the chat, and stores the answer. */
+export function regenerateTitle(
+  sessionId: string
+): Promise<{ session: SessionMeta; title: string }> {
+  return fetch(`/api/sessions/${encodeURIComponent(sessionId)}/title`, {
+    method: "POST",
+  }).then(json<{ session: SessionMeta; title: string }>)
+}

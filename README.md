@@ -171,6 +171,40 @@ Everything is local JSON under `~/.agent-ui` (override with `AGENT_UI_DIR`):
 
 The agent backends keep their own conversation context (Cursor, pi and ACP sessions resume by id); this store owns what they don't — your rendered transcripts and sidebar state.
 
+## Working with files
+
+Every file a chat names is something you can act on. Right-click a row of a turn's *Files
+Changed* card, the file panel's header, a `path/to/file.ts:42` chip in an answer, an image the
+agent produced, or a chat in the sidebar (for its folder) and you get one menu: **Open in** each
+editor found on this machine, **Reveal** in Finder / Explorer / your file manager, **Open in
+terminal**, **Copy path** (absolute) or **Copy relative path**, and **Revert changes**, which runs
+`git checkout -- <file>` after a confirmation. ⌘O opens the chat's folder in your default editor;
+the command palette and `/open`, `/reveal`, `/terminal` do the same.
+
+The file panel copies its path on click, shows a diff **unified or side by side**, wraps lines or
+scrolls them, and opens on the line a `file.ts:42` reference named. The header's *N files changed*
+lists everything the whole chat touched, not just the last turn.
+
+## The composer
+
+- **Keep typing while the agent works.** Enter queues the message; queued ones are listed above
+  the composer, can be edited or dropped, and go out one at a time as turns end.
+- **`@` mentions files** under the chat's folder, fuzzy-matched.
+- **Drafts survive** switching chats and reloading; **⌘S stashes** a prompt (attachments too)
+  to bring back later from the stash button.
+- **A long paste** collapses into a `[Pasted text #1 +40 lines]` chip and is sent in full;
+  **text files** dropped on the composer are read and sent fenced, other files by name.
+- **Select text in an answer** and a *Quote* pill drops it into the composer as a blockquote.
+- **Type anywhere** and the composer takes the keys. ⌘N new chat, ⌘B sidebar, ⌘⇧[ / ⌘⇧] previous
+  / next chat, ⌘1…9 jump to a chat, ⌘K palette.
+- **`/` commands**: `/clear`, `/new`, `/rename <title>`, `/title` (let a model name the chat),
+  `/open`, `/reveal`, `/terminal`, `/settings`.
+
+Shell tool rows say what actually ran (`Ran npm test` rather than `/bin/zsh -lc '…'`), a turn's
+details show an **estimated cost** next to its tokens for hosted models, the context ring shows
+what the chat has spent so far, and sidebar folders carry their git state — commits ahead and
+behind, uncommitted files, and the branch's pull request when `gh` is logged in.
+
 ## Settings
 
 `/settings` applies everything instantly and persists to `settings.json`:
@@ -187,7 +221,8 @@ The agent backends keep their own conversation context (Cursor, pi and ACP sessi
   The whole store is capped (2000 characters by default), which is the design: at that size every fact fits in the prompt, so there is no retrieval step, no embeddings and no vector store — and going over the cap makes the extractor merge and shorten what it already has instead of piling on more. It rewrites whole categories rather than appending lines, so contradictions get replaced rather than accumulated.
 
   The extractor only ever sees what you typed — never the agent's replies, its tool calls, or any file it read — so nothing in a repository you point the agent at can write itself into a file that goes into all your later conversations. Health, ethnicity, religion, politics and gender identity are skipped unless you opt in; identity numbers, payment details and credentials are never stored either way. Needs Ollama; without it the notes are still used, just never updated automatically.
-- **Chat** — default reasoning effort, prompt suggestions, auto-titling, and notification sounds for completed runs and questions that need attention.
+- **Chat** — default reasoning effort, prompt suggestions, auto-titling, notification sounds for completed runs and questions that need attention, and desktop notifications for the same events when the window is in the background (with the number of chats waiting on you on the dock icon).
+- **Editor & terminal** — which of the editors found on this machine (VS Code, Cursor, Zed, Windsurf, Sublime Text, the JetBrains IDEs) "Open in editor" uses, and which terminal "Open in terminal" starts.
 
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
 

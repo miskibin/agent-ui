@@ -95,6 +95,9 @@ impl LogTail {
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
+        // OS notifications for "the agent finished while you were elsewhere";
+        // driven from lib/notifications.ts through `window.__TAURI__.notification`.
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_shell::init())
         // Auto-update. The frontend drives it through the injected

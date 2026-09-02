@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { folderName } from "@/lib/folder"
+import { estimateCost, formatCost } from "@/lib/model-pricing"
 import type { StoredMessage } from "@/lib/store/types"
 import { cn } from "@/lib/utils"
 
@@ -184,6 +185,15 @@ function metadataRows(message: StoredMessage, providerName?: string): Row[] {
   } else if (meta?.tokens != null) {
     // Turns stored before the split, and backends that only report a total.
     rows.push({ label: "Tokens", value: formatCount(meta.tokens), mono: true })
+  }
+
+  // An estimate off a list-price table, and said to be one: the hosted
+  // providers' own bills apply caching and batch rates this cannot see.
+  if (meta?.model && (input != null || output != null)) {
+    const cost = estimateCost(meta.model, input ?? 0, output ?? 0, meta.providerId)
+    if (cost != null) {
+      rows.push({ label: "Cost", value: `≈ ${formatCost(cost)}`, mono: true })
+    }
   }
 
   if (meta?.tokensPerSecond != null) {
