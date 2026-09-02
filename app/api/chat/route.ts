@@ -3,11 +3,10 @@ import { NextResponse } from "next/server"
 import type { MessageAttachmentData } from "@/components/ui/message"
 import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
 import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
-import { toolJournalEvent, userJournalText } from "@/lib/handoff/journal"
+import { createToolJournal, userJournalText } from "@/lib/handoff/journal"
 import { commitTurn, prepareTurn } from "@/lib/handoff/server"
 import type {
   AgentSessionState,
-  JournalTool,
   NewJournalEvent,
   TurnStateFrame,
 } from "@/lib/handoff/types"
@@ -196,7 +195,7 @@ export async function POST(req: Request) {
    * returning agent needs, not a second transcript. Tool calls are keyed by
    * id because every harness reports one twice — the terminal state wins.
    */
-  const toolEvents = new Map<string, Omit<JournalTool, "kind">>()
+  const toolJournal = createToolJournal()
   let sawError = false
   /**
    * Whether the backend actually took the prompt. `status` lines are the app
@@ -246,10 +245,7 @@ export async function POST(req: Request) {
           if (event.type !== "status" && event.type !== "error") {
             runStarted = true
           }
-          if (event.type === "tool") {
-            const journaled = toolJournalEvent(event)
-            if (journaled) toolEvents.set(event.id, journaled)
-          }
+          if (event.type === "tool") toolJournal.record(event)
           assistant = applyStreamEvent(assistant, event)
           send(event)
         }
@@ -297,7 +293,7 @@ export async function POST(req: Request) {
         : "ok"
     const journalEvents: NewJournalEvent[] = [
       { kind: "user-message", providerId, text: userJournalText(userMessage.content) },
-      ...[...toolEvents.values()].map(
+      ...toolJournal.events().map(
         (tool): NewJournalEvent => ({ kind: "tool", providerId, ...tool })
       ),
       {

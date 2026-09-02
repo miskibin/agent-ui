@@ -27,12 +27,12 @@ edit the vendored file. If composition genuinely can't express it, that's the si
 upstream component needs a new prop or slot: go through steps 1–4.
 
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
-`components/command-palette.tsx`, `components/folder-picker.tsx`, `components/memory-notice.tsx`,
-`components/message-actions.tsx`,
+`components/command-palette.tsx`, `components/folder-picker.tsx`, `components/handoff-notice.tsx`,
+`components/memory-notice.tsx`, `components/message-actions.tsx`,
 `components/provider-picker.tsx`, `components/provider-logo.tsx`, `components/permission-picker.tsx`,
 `components/theme-provider.tsx`, `app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
-`lib/theme/`, `lib/memory/`,
+`lib/theme/`, `lib/memory/`, `lib/handoff/`,
 `lib/api-client.ts`, `lib/message-stream.ts`, `lib/turn-files.ts`, `lib/session-groups.ts`,
 `lib/desktop.ts`, `lib/folder.ts`,
 `lib/fs-paths.ts`, `src-tauri/`.
@@ -50,7 +50,8 @@ one interface:
   `AgentStreamEvent` (`session · status · thinking · tool · text · done · error`).
   `status` is progress that is *not* message content (a cold model being loaded, a CLI
   being spawned); the UI shows the latest one while the turn is still empty and drops it
-  when real output arrives. `done` carries the turn's token usage, which the chat route
+  when real output arrives. A `tool` event may carry an `exitCode`, and only ever one the
+  backend actually published — absent is not zero. `done` carries the turn's token usage, which the chat route
   persists as message metadata. Reasoning effort is offered wherever the backend can carry
   it, not only where it is native: Ollama walks a `think` ladder (graded level → boolean →
   off) on the 400s that tell those cases apart, ACP sets a `reasoning_effort` session config
@@ -95,16 +96,20 @@ one interface:
   stack inline on `<html>`, which outranks the `[data-theme]` block. A new family needs a
   `next/font` loader in `app/fonts.ts` as well as an entry there.
 - Persistence: JSON under `~/.agent-ui` (`AGENT_UI_DIR` override) via `lib/store/` —
-  `sessions/index.json` (sidebar metadata) separate from `sessions/<id>.json` (transcripts).
+  `sessions/index.json` (sidebar metadata) separate from `sessions/<id>.json` (transcripts)
+  and `sessions/<id>.journal.json` (the handoff journal).
   Settings in `settings.json` via `lib/settings/` (`GET/PUT /api/settings`, deep-merged over
   defaults so old files keep loading).
 - User memory (`lib/memory/`, off by default): durable preferences in
   `memory/<category>.md`, one markdown file per category — a directory rather than a key in
   settings.json precisely so it can be read, edited, exported and shredded on its own.
   `context.ts` builds the block a turn is handed, which reaches the backend through the
-  `system` field of `AgentRunOptions`: Ollama sends it as a real system role, the CLI harnesses
-  (one prompt string each) get it fenced in front of the prompt by `withSystemPrefix`, and a
-  provider with `capabilities.resume` is sent it only on the first turn of its conversation.
+  `standingContext` field of `AgentRunOptions`: Ollama and the OpenAI-compatible paths send it
+  as a real system role, the CLI harnesses (one prompt string each) get it fenced as
+  `<context>` in front of the prompt by `withPromptContext`, and a provider with
+  `capabilities.resume` is sent it only on the first turn of its conversation. It is the
+  *standing* half of the two-context split — see `lib/handoff/` for the other half, and for
+  why the two must not blur together.
   `extract.ts` is the write path and runs *outside* the chat turn, on `POST /api/memory/update`
   after the answer has settled, against a small Ollama model — so a slow or broken extraction
   can never delay an answer. It rewrites whole categories rather than patching lines (that is
@@ -117,6 +122,51 @@ one interface:
   content the agent merely read cannot write itself into every future prompt; and category
   ids are validated against a separator-free alphabet rather than escaped, because they
   become file names.
+- Handing one agent's work to the next (`lib/handoff/`, on by default): a chat is one
+  conversation, but each backend in it is a different one. `SessionMeta.agentSessions` keys a
+  small record by provider id — `{ providerSessionId, cwd, lastSeenSeq, lastWroteSeq,
+  lastActiveAt, snapshot }` — so switching agents mid-chat no longer throws the other one's
+  resumable session away. An index written before this migrates on read from the single
+  `providerSessionId` field (still written, for whichever provider ran last). A stored id is
+  only reused when the chat's folder still matches the one it was minted in; the model is not
+  part of that identity.
+
+  Beside the transcript, each chat keeps `sessions/<id>.journal.json`: an append-only log of
+  *semantic* events — `user-message` (truncated), `tool` (name, done/error, paths, command,
+  published `exitCode`) and `turn-end` (model, ok/error/aborted) — each with a monotonic `seq`
+  and the provider that wrote it, capped at the newest 500. No streamed text, no thinking, no
+  tool output: a transcript already exists, and this is the far smaller thing a returning agent
+  needs. Seqs survive the cap, because they are what the cursors index. `build.ts` turns the
+  events an agent has not seen (`seq > lastSeenSeq`, and never its own) into one deterministic
+  block — requests, files changed (tool paths plus `git diff --stat` against the head it last
+  saw, else the current dirty list), commands with exit codes, test runs, errors and unfinished
+  work — inside an 8k budget that sheds oldest-first and never sheds the stale-worktree warning
+  or the newest errors. `snapshot.ts` is the cheap worktree read behind that: one `rev-parse`
+  and one `--no-optional-locks status --porcelain`, 1.5s each, undefined on any failure — it
+  never stages, writes a tree or takes a lock, so running it after every turn cannot disturb
+  what the user has staged.
+
+  Two cursors, deliberately separate (`cursor.ts`): an agent's own turn advances `lastSeenSeq`
+  to the end of that turn — but only once the backend actually spoke (a `session` id, a token,
+  a tool call, a completed turn), so a spawn failure, a refused connection or a stop before any
+  output re-offers the same handoff instead of swallowing it. `lastWroteSeq` is the other one,
+  and exists so the composer can say "handoff pending" without opening the journal.
+
+  **The division with `lib/memory` is load-bearing and must not blur.** Memory is durable,
+  cross-chat and about the *user*; a handoff is ephemeral, single-chat and about the *other
+  agents*. They travel in two different fields (`standingContext` / `turnContext`), are fenced
+  once each in one fixed order by the single builder in `lib/providers/system-prefix.ts`, and
+  never feed each other: no memory fact is ever put in a handoff, and nothing here is written
+  to `memory/` or shown to the extractor — which keeps seeing only the stored user messages,
+  and the stored user message stays exactly what the user typed. `turnContext` is the one that
+  rides in front of the prompt on *every* turn, resumed sessions included, because a backend
+  that has been away is precisely the one that does not know what changed.
+
+  It is visible, not implicit: the block is stored on the assistant message
+  (`metadata.handoff`) and rendered by `components/handoff-notice.tsx` through `MessageList`'s
+  `renderActions` slot, and the composer's provider list says which agents resume, when they
+  last ran, and which are owed a handoff. `handoff.enabled` (Settings → Chat) turns the journal,
+  the git reads and the block off together; per-provider session ids are kept either way.
 - Local files an answer points at: `lib/message-stream.ts` rewrites markdown image targets that
   name a path on this machine (`lib/local-media.ts`) to `GET /api/files`, which streams the file
   back on the app's own origin — a browser will not load `file://` from an http page. The route
@@ -183,18 +233,20 @@ one interface:
 npm run dev          # web dev server
 npm run lint         # eslint (CI)
 npm run typecheck    # tsc --noEmit (CI)
+npm run test         # node --test over tests/*.test.ts (no runner dependency:
+                     #   Node strips the types, tests/register.mjs resolves `@/`)
 npm run build        # next build, standalone output (CI)
 
 npm run desktop:dev                            # Tauri shell; stages the Node sidecar if missing
 npm run desktop:build                          # platform installer
 ```
 
-CI: `ci.yml` (lint + typecheck + build) and `desktop.yml` (`cargo check` of src-tauri) run on
+CI: `ci.yml` (lint + typecheck + test + build) and `desktop.yml` (`cargo check` of src-tauri) run on
 every push. `release.yml` builds Win/macOS/Linux installers on `v*` tags.
 
 ## Definition of done
 
-`lint`, `typecheck`, `build` clean — and for anything user-visible, run the app
+`lint`, `typecheck`, `test`, `build` clean — and for anything user-visible, run the app
 (`AGENT_UI_DIR=/tmp/agent-ui-test node .next/standalone/server.js` after a build) and exercise
 the flow for real; there is a Playwright-style flow suite precedent in the repo history. If the
 UI changed visibly, refresh the screenshots in `.github/screenshots/` and keep `README.md`

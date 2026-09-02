@@ -4,6 +4,7 @@ import { test } from "node:test"
 import {
   appendEvents,
   capJournal,
+  createToolJournal,
   looksLikeTestCommand,
   normalizeJournal,
   toolJournalEvent,
@@ -134,4 +135,43 @@ test("test-run detection covers the usual runners and not ordinary commands", ()
   for (const command of ["npm run build", "git status", "ls tests"]) {
     assert.equal(looksLikeTestCommand(command), false, command)
   }
+})
+
+test("a call's opening arguments survive into the terminal event", () => {
+  const journal = createToolJournal()
+  // pi's shape: args on the start event, outcome on the end event.
+  journal.record({
+    type: "tool",
+    id: "t1",
+    name: "bash",
+    status: "running",
+    input: JSON.stringify({ command: "npm test" }),
+  })
+  journal.record({
+    type: "tool",
+    id: "t1",
+    name: "bash",
+    status: "error",
+    output: "…",
+    exitCode: 1,
+  })
+  journal.record({
+    type: "tool",
+    id: "t2",
+    name: "edit",
+    status: "running",
+    input: JSON.stringify({ path: "lib/a.ts" }),
+  })
+  journal.record({ type: "tool", id: "t2", name: "edit", status: "done" })
+
+  assert.deepEqual(journal.events(), [
+    { name: "bash", status: "error", command: "npm test", exitCode: 1 },
+    { name: "edit", status: "done", paths: ["lib/a.ts"] },
+  ])
+})
+
+test("a call that never settles is not journaled", () => {
+  const journal = createToolJournal()
+  journal.record({ type: "tool", id: "t1", name: "bash", status: "running" })
+  assert.deepEqual(journal.events(), [])
 })

@@ -140,6 +140,35 @@ export function toolJournalEvent(
   }
 }
 
+/**
+ * Collects a turn's tool calls as they stream.
+ *
+ * Every harness reports a call at least twice, and the halves carry different
+ * things: the opening event has the arguments, the closing one has the
+ * outcome. pi is the plain case — `tool_execution_end` has no `args` at all —
+ * so journaling the terminal event alone would record a shell call with no
+ * command and an edit with no path. The opening input is remembered here and
+ * folded into whichever event finally settles the call.
+ */
+export function createToolJournal() {
+  const inputs = new Map<string, string>()
+  const done = new Map<string, Omit<JournalTool, "kind">>()
+  return {
+    record(event: Extract<AgentStreamEvent, { type: "tool" }>) {
+      if (event.input) inputs.set(event.id, event.input)
+      const merged = event.input
+        ? event
+        : { ...event, ...(inputs.has(event.id) ? { input: inputs.get(event.id) } : null) }
+      const journaled = toolJournalEvent(merged)
+      // Keyed by id, so the terminal state replaces anything seen before it.
+      if (journaled) done.set(event.id, journaled)
+    },
+    events(): Array<Omit<JournalTool, "kind">> {
+      return [...done.values()]
+    },
+  }
+}
+
 /** The user's own words, trimmed to the journal's budget. */
 export function userJournalText(prompt: string) {
   return clip(prompt, MAX_JOURNAL_TEXT)

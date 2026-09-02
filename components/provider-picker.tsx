@@ -169,9 +169,17 @@ export const ProviderPicker = React.memo(function ProviderPicker({
                       className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground/80"
                     >
                       <span>
-                        {session.resumes ? "Resumes" : "Fresh session"}
+                        {/* Only a harness that resumes server-side has a
+                            conversation to come back to; a stateless one is
+                            replayed the transcript and has nothing to say
+                            here beyond when it last ran. */}
+                        {provider.capabilities.resume
+                          ? session.resumes
+                            ? "Resumes"
+                            : "Fresh session"
+                          : "Ran here"}
                         {session.lastActiveAt > 0
-                          ? ` · last ran ${relativeTime(session.lastActiveAt)}`
+                          ? ` · last ${relativeTime(session.lastActiveAt)}`
                           : ""}
                       </span>
                       {session.handoffPending ? (
