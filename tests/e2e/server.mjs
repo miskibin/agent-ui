@@ -40,7 +40,8 @@ export async function loadPlaywright() {
       // A bare specifier resolves against this file; an absolute path is used
       // as it stands, which is how a global install is reached.
       const target = candidate.startsWith("/") ? candidate : require.resolve(candidate)
-      return await import(target.startsWith("file:") ? target : `file://${target}`)
+      const loaded = await import(target.startsWith("file:") ? target : `file://${target}`)
+      return loaded.default ?? loaded
     } catch {
       /* try the next one */
     }

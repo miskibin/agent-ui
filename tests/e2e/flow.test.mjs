@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
-import { writeFile } from "node:fs/promises"
+import { rm, writeFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, describe, test } from "node:test"
 
@@ -116,6 +117,58 @@ describe("a chat with the mock agent", () => {
       .waitFor({ timeout: UI_TIMEOUT })
   })
 
+  test("a turn keeps streaming while another chat is open", async () => {
+    const composer = page.locator('[data-slot="chat-input-textarea"]')
+    await composer.fill("stream another markdown answer in the background")
+    await composer.press("Enter")
+
+    await page
+      .getByText("Let me look at how a message is assembled", { exact: false })
+      .first()
+      .waitFor({ timeout: UI_TIMEOUT })
+
+    const [source] = await sessions()
+    await page.getByText("New chat", { exact: true }).click()
+
+    await page
+      .getByText("How can I help?", { exact: true })
+      .waitFor({ timeout: UI_TIMEOUT })
+
+    // Wait on persistence rather than on the hidden React tree. This proves
+    // the server, stream reducer and store all reached the end while another
+    // chat occupied the conversation pane.
+    let stored = []
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      const response = await fetch(`${app.baseUrl}/api/sessions/${source.id}`)
+      stored = (await response.json()).messages
+      if (
+        stored.at(-1)?.sender === "assistant" &&
+        stored.at(-1)?.content.includes(
+          "Appending to the tail part keeps each chunk"
+        )
+      ) {
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100))
+    }
+
+    assert.equal(stored.length, 4)
+    assert.ok(
+      stored.at(-1).content.includes(
+        "Appending to the tail part keeps each chunk"
+      ),
+      "the hidden chat persisted the completed answer"
+    )
+
+    await page
+      .locator('[data-slot="sidebar-item"]', { hasText: source.title })
+      .locator('[data-slot="sidebar-item-button"]')
+      .click()
+    await page
+      .getByText("Appending to the tail part keeps each chunk", { exact: false })
+      .waitFor({ timeout: UI_TIMEOUT })
+  })
+
   test("/rename retitles the chat and the sidebar row follows", async () => {
     const composer = page.locator('[data-slot="chat-input-textarea"]')
     await composer.fill("/rename Renamed by the flow suite")
@@ -128,9 +181,12 @@ describe("a chat with the mock agent", () => {
 
     // The composer ran the command instead of sending it to the agent.
     assert.equal(await composer.inputValue(), "")
-    const [session] = await sessions()
+    const session = (await sessions()).find(
+      (item) => item.title === "Renamed by the flow suite"
+    )
+    assert.ok(session)
     assert.equal(session.title, "Renamed by the flow suite")
-    assert.equal(session.messageCount, 2)
+    assert.equal(session.messageCount, 4)
   })
 })
 
@@ -198,33 +254,39 @@ describe("the file routes as the server applies them", () => {
   })
 
   test("/api/files serves an absolute path, and only relative to the switch", async () => {
-    const outside = "/etc/hostname"
+    const outside = path.join(tmpdir(), `agent-ui-e2e-outside-${process.pid}.txt`)
+    await writeFile(outside, "outside the app's known roots\n", "utf8")
+    const outsideUrl = `${app.baseUrl}/api/files?path=${encodeURIComponent(outside)}`
     const inside = `${app.baseUrl}/api/files?path=${encodeURIComponent(readable)}`
 
-    // anyPath is on by default: the point of the route is showing a file the
-    // agent wrote, wherever it wrote it.
-    assert.equal((await fetch(inside)).status, 200)
-    assert.equal((await fetch(`${app.baseUrl}/api/files?path=${outside}`)).status, 200)
-
-    const settings = await (await fetch(`${app.baseUrl}/api/settings`)).json()
-    await fetch(`${app.baseUrl}/api/settings`, {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ ...settings, files: { anyPath: false } }),
-    })
     try {
-      // Off, it is narrowed to the folders the app already works in — the
-      // chat's own folder stays readable, everything else does not.
+      // anyPath is on by default: the point of the route is showing a file the
+      // agent wrote, wherever it wrote it.
       assert.equal((await fetch(inside)).status, 200)
-      const refused = await fetch(`${app.baseUrl}/api/files?path=${outside}`)
-      assert.equal(refused.status, 403)
-      assert.match((await refused.json()).error, /Local files/)
-    } finally {
+      assert.equal((await fetch(outsideUrl)).status, 200)
+
+      const settings = await (await fetch(`${app.baseUrl}/api/settings`)).json()
       await fetch(`${app.baseUrl}/api/settings`, {
         method: "PUT",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(settings),
+        body: JSON.stringify({ ...settings, files: { anyPath: false } }),
       })
+      try {
+        // Off, it is narrowed to the folders the app already works in — the
+        // chat's own folder stays readable, everything else does not.
+        assert.equal((await fetch(inside)).status, 200)
+        const refused = await fetch(outsideUrl)
+        assert.equal(refused.status, 403)
+        assert.match((await refused.json()).error, /Local files/)
+      } finally {
+        await fetch(`${app.baseUrl}/api/settings`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(settings),
+        })
+      }
+    } finally {
+      await rm(outside, { force: true })
     }
   })
 
