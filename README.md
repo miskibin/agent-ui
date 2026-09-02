@@ -48,6 +48,39 @@ Every harness that isn't tied to one model source draws from this same list: `pi
 
 Permission is one concept across every harness that supports it: **read-only**, **edits**, or **full access**. A provider that can enforce a mode advertises which ones, and only then does the composer show a per-chat picker next to the model — ACP's generic client offers read-only/full, the DeepSeek Harness maps all three onto its own sandbox setting. The choice is remembered per session.
 
+### Switching agents mid-chat
+
+A chat is one conversation; each backend in it is a different one. Every provider keeps **its own
+backend session per chat**, so moving from Cursor Agent to pi and back resumes each side where it
+left off instead of throwing one away — the composer's provider list says which agents will
+resume, when each last ran, and which one is owed a handoff. A stored session is only reused in
+the folder it was started in (a different checkout is a different working context); changing the
+*model* keeps it.
+
+The agent coming back is then told what it missed. Each chat keeps a small journal of what
+actually happened — requests, tool calls with their paths and commands, how each turn ended — and
+the events an agent has not seen are folded into one deterministic block in front of its next
+prompt: the last few requests, the files that changed (a `git diff --stat` against the commit it
+last saw, and the dirty files around it), the commands that ran with their exit codes, which of
+them were test runs, and any errors or unfinished work. If the working tree moved under it, the
+block says so in one sentence that no truncation can drop: *re-read affected files before
+editing.*
+
+Nothing about it is implicit. The block is shown as a collapsible **Handed off** marker under the
+turn it was sent with, and opening it shows the exact text the agent received.
+
+![A handoff, opened](.github/screenshots/handoff.png)
+
+It is capped at 8000 characters and sheds the oldest detail first. The worktree read behind it is deliberately
+cheap and strictly read-only — one `rev-parse`, one `git status --porcelain --no-optional-locks`,
+1.5 seconds each — so it can never disturb what you have staged, and a missing git, a timeout or
+a folder that is not a repository simply leaves that part unsaid.
+
+This is not memory, and the two never mix: memory is durable, spans chats and is about *you*; a
+handoff is thrown away with the chat and is about the *other agents in it*. Nothing a handoff says
+is ever written to your memory files, and the memory extractor never sees it. On by default,
+under **Settings → Chat**.
+
 ### One folder per chat
 
 The picker sits directly above the composer on a new chat, where choosing where the agent works is the next thing to do. Once the conversation starts it steps out of the way, and the folder becomes how the sidebar is organised: the chats of one checkout are one section, headed by the folder and the branch, with the pinned chats above them and the folderless ones last. Providers that spawn a CLI (Cursor, pi) run in it, so two chats can work in two checkouts at once. Nothing is checked out for you — the branch is what you record, not what the app switches to.
@@ -221,7 +254,7 @@ behind, uncommitted files, and the branch's pull request when `gh` is logged in.
   The whole store is capped (2000 characters by default), which is the design: at that size every fact fits in the prompt, so there is no retrieval step, no embeddings and no vector store — and going over the cap makes the extractor merge and shorten what it already has instead of piling on more. It rewrites whole categories rather than appending lines, so contradictions get replaced rather than accumulated.
 
   The extractor only ever sees what you typed — never the agent's replies, its tool calls, or any file it read — so nothing in a repository you point the agent at can write itself into a file that goes into all your later conversations. Health, ethnicity, religion, politics and gender identity are skipped unless you opt in; identity numbers, payment details and credentials are never stored either way. Needs Ollama; without it the notes are still used, just never updated automatically.
-- **Chat** — default reasoning effort, prompt suggestions, auto-titling, notification sounds for completed runs and questions that need attention, and desktop notifications for the same events when the window is in the background (with the number of chats waiting on you on the dock icon).
+- **Chat** — default reasoning effort, prompt suggestions, auto-titling, notification sounds for completed runs and questions that need attention, and desktop notifications for the same events when the window is in the background (with the number of chats waiting on you on the dock icon), and the **agent handoff** switch below.
 - **Editor & terminal** — which of the editors found on this machine (VS Code, Cursor, Zed, Windsurf, Sublime Text, the JetBrains IDEs) "Open in editor" uses, and which terminal "Open in terminal" starts.
 
 - **Data** — data directory, a clear-all-chats action, and **Local files**: whether an answer may show an image by absolute path from anywhere on the machine (on by default) or only from the app's folder, a chat's working folder and the agent workspace.
@@ -248,6 +281,8 @@ app/page.tsx ── SSE ──► POST /api/chat ──► AgentProvider.run()
 ```bash
 npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
+npm run test        # node --test over tests/*.test.ts — no test runner to install:
+                    #   Node strips the types, tests/register.mjs resolves `@/`
 npm run build       # next build (standalone output)
 ```
 

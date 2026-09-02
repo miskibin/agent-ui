@@ -4,6 +4,9 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { dataDir } from "@/lib/settings/server"
+import { migrateAgentSessions } from "@/lib/handoff/cursor"
+import { appendEvents, normalizeJournal } from "@/lib/handoff/journal"
+import type { JournalEvent, NewJournalEvent } from "@/lib/handoff/types"
 import type {
   CreateSessionInput,
   SessionMeta,
@@ -14,8 +17,9 @@ import type {
 /**
  * A tiny JSON store under `~/.agent-ui` (or `$AGENT_UI_DIR`).
  *
- *   sessions/index.json   — every thread's metadata, in sidebar order
- *   sessions/<id>.json    — one thread's messages
+ *   sessions/index.json        — every thread's metadata, in sidebar order
+ *   sessions/<id>.json         — one thread's messages
+ *   sessions/<id>.journal.json — one thread's semantic event journal
  *
  * Metadata is deliberately split from message bodies: the sidebar, the chat
  * route and the settings page only ever read the small index, and a thread's
@@ -36,6 +40,16 @@ function indexPath() {
 
 function messagesPath(id: string) {
   return join(sessionsDir(), `${id}.json`)
+}
+
+/**
+ * The journal is its own file, not a key in the index and not a field on the
+ * transcript: the sidebar reads the index on every page load and must not
+ * carry an agent's tool history, and a chat's messages are rewritten on every
+ * streamed turn while the journal is only ever appended to.
+ */
+function journalPath(id: string) {
+  return join(sessionsDir(), `${id}.journal.json`)
 }
 
 /** Ids end up in a file path — keep them to a known-safe alphabet. */
@@ -84,6 +98,13 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
   const id = typeof value.id === "string" ? value.id : ""
   if (!isValidSessionId(id)) return null
   const now = Date.now()
+  const agentSessions = migrateAgentSessions(value.agentSessions, {
+    providerId: typeof value.providerId === "string" ? value.providerId : "",
+    providerSessionId:
+      typeof value.providerSessionId === "string" ? value.providerSessionId : "",
+    ...(typeof value.cwd === "string" ? { cwd: value.cwd } : null),
+    updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
+  })
   return {
     id,
     title: typeof value.title === "string" ? value.title : "New chat",
@@ -102,6 +123,7 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
       typeof value.permissionMode === "string"
         ? value.permissionMode
         : undefined,
+    ...(agentSessions ? { agentSessions } : null),
     createdAt: typeof value.createdAt === "number" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
     messageCount:
@@ -124,6 +146,9 @@ function applyPatch(meta: SessionMeta, patch: SessionPatch): SessionMeta {
     ...(patch.model !== undefined ? { model: patch.model } : null),
     ...(patch.providerSessionId !== undefined
       ? { providerSessionId: patch.providerSessionId }
+      : null),
+    ...(patch.agentSessions !== undefined
+      ? { agentSessions: patch.agentSessions }
       : null),
     ...(patch.cwd !== undefined ? { cwd: patch.cwd.trim() } : null),
     ...(patch.gitBranch !== undefined
@@ -229,6 +254,7 @@ export function deleteSession(id: string): Promise<boolean> {
     if (!sessions.some((session) => session.id === id)) return false
     await writeIndex(reindex(sessions.filter((session) => session.id !== id)))
     await rm(messagesPath(id), { force: true })
+    await rm(journalPath(id), { force: true })
     return true
   })
 }
@@ -239,7 +265,10 @@ export function clearSessions(): Promise<number> {
     const sessions = await readIndex()
     await writeIndex([])
     await Promise.all(
-      sessions.map((session) => rm(messagesPath(session.id), { force: true }))
+      sessions.flatMap((session) => [
+        rm(messagesPath(session.id), { force: true }),
+        rm(journalPath(session.id), { force: true }),
+      ])
     )
     return sessions.length
   })
@@ -273,6 +302,44 @@ export async function writeMessages(
     }
     sessions[index] = next
     await writeIndex(sessions)
+    return next
+  })
+}
+
+/* -------------------------------------------------------------------------- */
+/* Journal                                                                     */
+/* -------------------------------------------------------------------------- */
+
+let journalQueue: Promise<unknown> = Promise.resolve()
+
+/** Serializes journal read-modify-writes the way the index has its own lock. */
+function withJournalLock<T>(task: () => Promise<T>): Promise<T> {
+  const run = journalQueue.then(task, task)
+  journalQueue = run.catch(() => {})
+  return run
+}
+
+export async function readJournal(id: string): Promise<JournalEvent[]> {
+  if (!isValidSessionId(id)) return []
+  return normalizeJournal(await readJson<unknown>(journalPath(id), []))
+}
+
+/**
+ * Appends a turn's events and returns the journal as it now stands. Seqs are
+ * only ever handed out here, so they stay monotonic per chat even when the
+ * cap drops the front of the file.
+ */
+export function appendJournal(
+  id: string,
+  events: NewJournalEvent[]
+): Promise<JournalEvent[]> {
+  if (!isValidSessionId(id) || events.length === 0) return readJournal(id)
+  return withJournalLock(async () => {
+    const existing = normalizeJournal(
+      await readJson<unknown>(journalPath(id), [])
+    )
+    const next = appendEvents(existing, events)
+    await writeJsonAtomic(journalPath(id), next)
     return next
   })
 }

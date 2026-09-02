@@ -1,4 +1,8 @@
 import type { ChatMessageData } from "@/components/ui/message-list"
+import type {
+  AgentSessionState,
+  HandoffMarker,
+} from "@/lib/handoff/types"
 
 /**
  * Wire + on-disk shapes for the session store. Types only, so the client
@@ -26,6 +30,12 @@ export type MessageMetadata = {
   /** Working folder and branch the run actually used. */
   cwd?: string
   gitBranch?: string
+  /**
+   * The handoff block this turn was sent, when another agent had worked in
+   * the chat since this one last ran. Kept on the message so the block is
+   * inspectable in the thread rather than something the user has to trust.
+   */
+  handoff?: HandoffMarker
 }
 
 /** Exactly what the UI renders: `ChatMessageData` plus provenance. */
@@ -49,8 +59,20 @@ export type SessionMeta = {
   order: number
   providerId: string
   model: string
-  /** Provider-side conversation id, for providers with `capabilities.resume`. */
+  /**
+   * Provider-side conversation id — the pre-handoff, single-backend field.
+   * Still read (an index written before `agentSessions` existed is migrated
+   * from it on read) and still written for whichever provider ran last, so a
+   * downgrade keeps working; `agentSessions` is what the chat route resumes
+   * from.
+   */
   providerSessionId?: string
+  /**
+   * One backend conversation per provider, keyed by provider id. Switching
+   * agents inside a chat no longer throws the other one's session away: each
+   * keeps its own id, its own journal cursor and its own worktree snapshot.
+   */
+  agentSessions?: Record<string, AgentSessionState>
   /**
    * Absolute path the agent works in for this chat, overriding the workspace
    * from settings. Empty / absent = the app's own cwd.
@@ -79,6 +101,7 @@ export type SessionPatch = Partial<
     | "providerId"
     | "model"
     | "providerSessionId"
+    | "agentSessions"
     | "cwd"
     | "gitBranch"
     | "permissionMode"

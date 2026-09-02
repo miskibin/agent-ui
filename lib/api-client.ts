@@ -1,6 +1,7 @@
 import type { MessageAttachmentData } from "@/components/ui/message"
 import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker"
 import type { FolderInfo, FolderListing } from "@/lib/folder"
+import type { TurnStateFrame } from "@/lib/handoff/types"
 import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type {
@@ -263,7 +264,17 @@ export type ChatRequest = {
 /** Streams `POST /api/chat`, handing every SSE event to `onEvent`. */
 export async function streamChat(
   body: ChatRequest,
-  handlers: { onEvent: (event: AgentStreamEvent) => void; signal: AbortSignal }
+  handlers: {
+    onEvent: (event: AgentStreamEvent) => void
+    /**
+     * The chat route's own frame, sent once the turn has settled: the handoff
+     * the turn was given and the per-agent sessions the chat now holds. It is
+     * not part of the vendored stream protocol, so it is peeled off here
+     * rather than folded into the message reducer.
+     */
+    onTurnState?: (state: TurnStateFrame) => void
+    signal: AbortSignal
+  }
 ) {
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -293,7 +304,12 @@ export async function streamChat(
         .trim()
       eventLines = []
       if (!data || data === "[DONE]") continue
-      handlers.onEvent(JSON.parse(data) as AgentStreamEvent)
+      const frame = JSON.parse(data) as AgentStreamEvent | TurnStateFrame
+      if (frame.type === "turn-state") {
+        handlers.onTurnState?.(frame)
+        continue
+      }
+      handlers.onEvent(frame)
     }
   }
 

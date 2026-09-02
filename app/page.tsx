@@ -39,6 +39,7 @@ import {
 } from "@/components/context-usage"
 import { FolderStatus } from "@/components/folder-status"
 import { FolderPicker } from "@/components/folder-picker"
+import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
@@ -157,6 +158,8 @@ import {
 } from "@/lib/notifications"
 import { APP_SLASH_COMMANDS, parseSlashCommand } from "@/lib/slash-commands"
 import { bindAppShortcuts } from "@/lib/app-shortcuts"
+import { providerSessionHints } from "@/lib/handoff/types"
+import type { TurnStateFrame } from "@/lib/handoff/types"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { AppSettings } from "@/lib/settings/schema"
 import type {
@@ -600,6 +603,15 @@ export default function ChatPage() {
     [model, models]
   )
   const activeSession = sessions.find((session) => session.id === activeId)
+  /**
+   * What each agent already holds in this chat, for the composer's provider
+   * list. Left to the compiler to memoize — a hand-written `useMemo` over a
+   * value derived from `sessions` is exactly the shape it refuses to preserve.
+   */
+  const sessionHints = providerSessionHints(
+    activeSession?.agentSessions,
+    activeSession?.cwd
+  )
   const activeRun = runs[activeId]
   const isGenerating = !!activeRun
   const activeCost = React.useMemo(
@@ -1627,6 +1639,27 @@ export default function ChatPage() {
         enqueue(event)
       }
 
+      /**
+       * The app's own end-of-turn frame: which agents now hold a session in
+       * this chat, and the handoff this turn was actually sent. Folding the
+       * marker into the message here is what makes it survive a reload
+       * unchanged — the chat route persisted the identical object.
+       */
+      const onTurnState = (state: TurnStateFrame) => {
+        if (state.agentSessions) {
+          patchLocal(sessionId, { agentSessions: state.agentSessions })
+        }
+        if (!state.handoff) return
+        patchAssistant((message) =>
+          message.id === state.messageId
+            ? {
+                ...message,
+                metadata: { ...message.metadata, handoff: state.handoff },
+              }
+            : message
+        )
+      }
+
       try {
         await api.streamChat(
           {
@@ -1640,7 +1673,7 @@ export default function ChatPage() {
             assistantMessageId: assistantId,
             attachments: args.attachments,
           },
-          { onEvent, signal: controller.signal }
+          { onEvent, onTurnState, signal: controller.signal }
         )
       } catch (err) {
         if (!controller.signal.aborted) {
@@ -2723,6 +2756,7 @@ export default function ChatPage() {
               providers={providers}
               value={providerId}
               onChange={chooseProvider}
+              sessions={sessionHints}
               onConfigure={configureProvider}
             />
             <ModelPicker
@@ -2793,6 +2827,7 @@ export default function ChatPage() {
       providers,
       queueItems,
       restoreStash,
+      sessionHints,
       showEfforts,
       stash,
     ]
@@ -3088,14 +3123,27 @@ export default function ChatPage() {
                     onQuote={handleQuote}
                     renderActions={(message) =>
                       message.sender === "assistant" ? (
-                        <MessageActions
-                          message={message as StoredMessage}
-                          providerName={providerName(
-                            (message as StoredMessage).metadata?.providerId ?? ""
-                          )}
-                          onRegenerate={handleRegenerate}
-                          onDelete={handleDeleteMessage}
-                        />
+                        <>
+                          {/* Attached to the turn it explains, through the
+                              list's own render slot — the vendored component
+                              knows nothing about handoffs. */}
+                          {(message as StoredMessage).metadata?.handoff ? (
+                            <HandoffNotice
+                              handoff={
+                                (message as StoredMessage).metadata!.handoff!
+                              }
+                            />
+                          ) : null}
+                          <MessageActions
+                            message={message as StoredMessage}
+                            providerName={providerName(
+                              (message as StoredMessage).metadata?.providerId ??
+                                ""
+                            )}
+                            onRegenerate={handleRegenerate}
+                            onDelete={handleDeleteMessage}
+                          />
+                        </>
                       ) : null
                     }
                   >

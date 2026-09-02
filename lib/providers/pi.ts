@@ -11,7 +11,7 @@ import {
   type ModelSource,
 } from "@/lib/model-providers/server"
 import { hasPiBinary } from "@/lib/pi-runtime"
-import { withSystemPrefix } from "@/lib/providers/system-prefix"
+import { withPromptContext } from "@/lib/providers/system-prefix"
 import {
   fetchOllamaContextLengths,
   fetchOllamaModels,
@@ -214,7 +214,7 @@ export function createPiProvider(
       }
       const { runPiAgent } = await import("@/lib/pi-agent")
       yield* runPiAgent({
-        prompt: withSystemPrefix(options.prompt, options.system),
+        prompt: withPromptContext(options.prompt, options),
         // pi addresses models exactly the way a composite id spells them.
         model: joinModelId(selected.source, selected.model),
         sessionId: options.sessionId,

@@ -192,6 +192,20 @@ export type MemorySettings = {
 }
 
 /**
+ * The per-chat agent handoff (`lib/handoff`). On by default, unlike memory:
+ * nothing here leaves the chat it was collected in, nothing is written to a
+ * durable store, and the block it produces describes only what other agents
+ * already did in the very conversation the user is looking at.
+ *
+ * Deliberately one switch and no knobs. It is not a second memory: memory is
+ * durable, cross-chat and about the user; this is ephemeral, single-chat and
+ * about the other agents.
+ */
+export type HandoffSettings = {
+  enabled: boolean
+}
+
+/**
  * One OpenAI-compatible model source, keyed in `modelProviders` by a slug that
  * becomes the `<slug>/<model>` prefix of every composite model id it serves.
  * Every preset ships disabled and keyless: a provider only appears in the
@@ -222,6 +236,7 @@ export type AppSettings = {
   files: FileSettings
   editor: EditorSettings
   memory: MemorySettings
+  handoff: HandoffSettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
   recentFolders: string[]
 }
@@ -313,6 +328,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
     includeSensitive: false,
     maxChars: DEFAULT_MEMORY_BUDGET,
   },
+  handoff: {
+    enabled: true,
+  },
   recentFolders: [],
 }
 
@@ -385,6 +403,9 @@ export function normalizeSettings(raw: unknown): AppSettings {
         DEFAULT_SETTINGS.editor.terminal,
     },
     memory: normalizeMemory(value.memory),
+    handoff: {
+      enabled: asObject(value.handoff).enabled !== false,
+    },
     recentFolders: asFolderList(value.recentFolders),
   }
 }

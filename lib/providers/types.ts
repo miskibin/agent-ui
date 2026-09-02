@@ -64,16 +64,27 @@ export type AgentRunOptions = {
   prompt: string
   model: string
   /**
-   * Out-of-band context for this turn — today, the user memory block from
-   * `lib/memory`. Providers with a real system role (Ollama) send it as one;
-   * the CLI harnesses, which accept a single prompt string, fence it in front
-   * of the prompt via `withSystemPrefix`.
+   * Durable, cross-chat context about the user — the memory block from
+   * `lib/memory`. Providers with a real system role (Ollama, the
+   * OpenAI-compatible paths) send it as one; the CLI harnesses, which accept a
+   * single prompt string, fence it in front of the prompt via
+   * `withPromptContext`.
    *
    * The chat route sends it once per backend conversation for providers with
    * `capabilities.resume` — repeating it every turn would re-send context the
    * backend already has — and on every turn for the stateless ones.
    */
-  system?: string
+  standingContext?: string
+  /**
+   * Context about *this turn* — the handoff block from `lib/handoff`: what
+   * other agents did in this chat while the one about to run was away.
+   *
+   * Unlike `standingContext` this rides in front of the current prompt on
+   * every turn it exists, resumed sessions included: a backend that has been
+   * away is precisely the one that does not know what changed. It is never
+   * part of the stored user message.
+   */
+  turnContext?: string
   /** Provider-side session to resume, if capabilities.resume. */
   sessionId?: string
   effort?: string

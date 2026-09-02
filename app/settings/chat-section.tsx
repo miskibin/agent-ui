@@ -26,6 +26,12 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
     [update]
   )
 
+  const setHandoff = React.useCallback(
+    (enabled: boolean) =>
+      update((current) => ({ ...current, handoff: { enabled } })),
+    [update]
+  )
+
   return (
     <SettingsSection
       id="chat"
@@ -110,6 +116,23 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
             onCheckedChange={(desktopNotifications) =>
               setChat({ desktopNotifications })
             }
+          />
+        }
+      />
+
+      {/* Lives here, not under Memory: this is per-chat behaviour, and the
+          two are deliberately different mechanisms — memory is durable and
+          about the user, a handoff is ephemeral and about the other agents
+          in one conversation. */}
+      <SettingsRow
+        title="Agent handoff"
+        htmlFor="chat-handoff"
+        description="When you switch agents mid-chat, tell the one coming back what the others changed. Stays inside the chat — nothing is remembered beyond it."
+        control={
+          <Switch
+            id="chat-handoff"
+            checked={settings.handoff.enabled}
+            onCheckedChange={setHandoff}
           />
         }
       />

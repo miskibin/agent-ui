@@ -6,6 +6,7 @@ import type {
   AgentStreamEvent,
   AgentTokenUsage,
 } from "@/lib/cursor-agent-types"
+import { exitCodeFrom } from "@/lib/providers/exit-code"
 import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
 import { LineBuffer } from "@/lib/stream-framing"
 
@@ -314,6 +315,9 @@ function mapEvent(event: PiEvent): AgentStreamEvent[] {
   }
 
   if (event.type === "tool_execution_end" && event.toolCallId) {
+    // pi's tool results are free-form; a bash tool that publishes an exit code
+    // does so in there, and one that does not leaves the field absent.
+    const exitCode = exitCodeFrom(event.result)
     return [
       {
         type: "tool",
@@ -321,6 +325,7 @@ function mapEvent(event: PiEvent): AgentStreamEvent[] {
         name: event.toolName ?? "tool",
         status: event.isError ? "error" : "done",
         output: toolOutput(event.result),
+        ...(exitCode === undefined ? null : { exitCode }),
       },
     ]
   }

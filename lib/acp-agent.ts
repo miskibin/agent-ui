@@ -4,6 +4,7 @@ import { spawn } from "node:child_process"
 
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import { resolveAcpCommand, type AcpCommand } from "@/lib/acp-runtime"
+import { exitCodeFrom } from "@/lib/providers/exit-code"
 import { LineBuffer } from "@/lib/stream-framing"
 import {
   ACP_ERROR,
@@ -465,6 +466,7 @@ function mapToolCall(
   const read = raw ? unwrapReadEnvelope(raw) : null
   const output = read ? read.body : raw
   const input = toolInput(update.rawInput, summary.rawInput, read)
+  const exitCode = exitCodeFrom(update.rawOutput)
 
   return {
     type: "tool",
@@ -473,6 +475,7 @@ function mapToolCall(
     status,
     ...(input ? { input } : null),
     ...(output ? { output } : null),
+    ...(exitCode === undefined ? null : { exitCode }),
   }
 }
 
