@@ -436,13 +436,17 @@ export function cmdShimArgs(argv: string[]) {
  * verbatim.
  */
 function spawnViaCmd(argv: string[], cwd?: string) {
-  return spawn(process.env.ComSpec ?? "cmd.exe", cmdShimArgs(argv), {
-    cwd,
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
-    windowsVerbatimArguments: true,
-  })
+  return spawn(
+    /*turbopackIgnore: true*/ process.env.ComSpec ?? "cmd.exe",
+    cmdShimArgs(argv),
+    {
+      cwd,
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true,
+      windowsVerbatimArguments: true,
+    }
+  )
 }
 
 /**
@@ -453,7 +457,7 @@ function spawnViaCmd(argv: string[], cwd?: string) {
  * Explorer opens Documents, or nothing, and never says why.
  */
 function spawnVerbatim(command: string, args: string[]) {
-  return spawn(command, args, {
+  return spawn(/*turbopackIgnore: true*/ command, args, {
     detached: true,
     stdio: "ignore",
     windowsHide: true,
@@ -470,7 +474,7 @@ function launch(argv: string[], cwd?: string, verbatim = false) {
     ? spawnVerbatim(command, args)
     : viaCmd
       ? spawnViaCmd(command.toLowerCase().startsWith("cmd") ? args : argv, cwd)
-      : spawn(command, args, {
+      : spawn(/*turbopackIgnore: true*/ command, args, {
           cwd,
           detached: true,
           stdio: "ignore",
