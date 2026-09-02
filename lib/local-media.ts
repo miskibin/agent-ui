@@ -92,3 +92,29 @@ export function localFilesInMarkdown(markdown: string): string[] {
   }
   return found
 }
+
+/**
+ * The absolute path a tool row or a chip stands for: itself when it already
+ * names a place on this machine, else joined with the chat's folder. Returns
+ * the input untouched when there is no folder to join it with — a relative
+ * path is still the best name there is.
+ */
+export function resolveLocalPath(path: string, cwd?: string): string {
+  const target = path.trim()
+  if (!target || isLocalPath(target)) return target
+  const root = cwd?.trim()
+  if (!root) return target
+  const separator = root.includes("\\") ? "\\" : "/"
+  const base = root.replace(/[\\/]+$/, "")
+  return `${base}${separator}${target.replace(/^[\\/]+/, "")}`
+}
+
+/** A `/api/files?path=…` URL back to the path it serves, else the input. */
+export function localPathFromUrl(target: string): string {
+  if (!target.startsWith(FILE_ROUTE)) return target
+  try {
+    return decodeURIComponent(target.slice(FILE_ROUTE.length))
+  } catch {
+    return target
+  }
+}

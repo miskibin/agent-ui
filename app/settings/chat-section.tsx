@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
+import { requestNotificationPermission } from "@/lib/notifications"
 import type { AppSettings } from "@/lib/settings/schema"
 
 import { SettingsRow, SettingsSection } from "./section"
@@ -101,6 +102,24 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
             onCheckedChange={(notificationSounds) =>
               setChat({ notificationSounds })
             }
+          />
+        }
+      />
+
+      <SettingsRow
+        title="Desktop notifications"
+        htmlFor="chat-desktop-notifications"
+        description="Notify through the system when an agent finishes or asks a question while this window is in the background, and count waiting chats on the app icon."
+        control={
+          <Switch
+            id="chat-desktop-notifications"
+            checked={chat.desktopNotifications}
+            onCheckedChange={(desktopNotifications) => {
+              setChat({ desktopNotifications })
+              // A browser only grants the permission from a click like this
+              // one; the desktop shell asks through its own plugin.
+              if (desktopNotifications) void requestNotificationPermission()
+            }}
           />
         }
       />

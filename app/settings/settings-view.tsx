@@ -9,6 +9,7 @@ import {
   Brain,
   Database,
   MessageSquare,
+  SquareTerminal,
   Palette,
   Search,
   type LucideIcon,
@@ -25,12 +26,20 @@ import { cn } from "@/lib/utils"
 import { AppearanceSection } from "./appearance-section"
 import { ChatSection } from "./chat-section"
 import { DataSection } from "./data-section"
+import { EditorSection } from "./editor-section"
 import { MemorySection } from "./memory-section"
 import { ModelProvidersSection } from "./model-providers-section"
 import { ProvidersSection } from "./providers-section"
 import { useAppSettings } from "./use-app-settings"
 
-type SectionId = "appearance" | "chat" | "providers" | "models" | "memory" | "data"
+type SectionId =
+  | "appearance"
+  | "chat"
+  | "providers"
+  | "models"
+  | "memory"
+  | "editor"
+  | "data"
 
 type SettingsSection = {
   id: SectionId
@@ -59,7 +68,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
         label: "Chat",
         icon: MessageSquare,
         keywords:
-          "reasoning effort suggestions automatic titles conversation notification sounds audio chime handoff switching agents",
+          "reasoning effort suggestions automatic titles conversation notification sounds audio chime desktop notifications badge handoff switching agents",
       },
     ],
   },
@@ -90,6 +99,13 @@ const SECTION_GROUPS: SettingsGroup[] = [
   {
     label: "Application",
     sections: [
+      {
+        id: "editor",
+        label: "Editor & terminal",
+        icon: SquareTerminal,
+        keywords:
+          "editor vscode cursor zed windsurf jetbrains open in reveal finder explorer terminal shell",
+      },
       {
         id: "data",
         label: "Data",
@@ -326,6 +342,7 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
             ) : null}
             {active === "chat" ? <ChatSection {...settings} /> : null}
             {active === "memory" ? <MemorySection {...settings} /> : null}
+            {active === "editor" ? <EditorSection {...settings} /> : null}
             {active === "data" ? (
               <DataSection dataDir={dataDir} {...settings} />
             ) : null}

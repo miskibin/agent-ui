@@ -147,6 +147,22 @@ export type ChatSettings = {
   autoTitle: boolean
   /** Play a cue when a run finishes or pauses for an answer. */
   notificationSounds: boolean
+  /**
+   * Post an OS notification when a run finishes or pauses for an answer while
+   * the window is not in front. The sound above is for when you are looking;
+   * this is for when you are not.
+   */
+  desktopNotifications: boolean
+}
+
+/**
+ * Where "open" goes. Editors are detected on the machine the server runs on
+ * (`lib/open-target`); `defaultEditor` names one of them by id, and "" means
+ * the first one found. `terminal` works the same way for "Open in terminal".
+ */
+export type EditorSettings = {
+  defaultEditor: string
+  terminal: string
 }
 
 export type FileSettings = {
@@ -229,6 +245,7 @@ export type AppSettings = {
   modelProviders: Record<string, ModelProviderEntry>
   chat: ChatSettings
   files: FileSettings
+  editor: EditorSettings
   memory: MemorySettings
   handoff: HandoffSettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
@@ -307,9 +324,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
     showSuggestions: true,
     autoTitle: true,
     notificationSounds: true,
+    desktopNotifications: true,
   },
   files: {
     anyPath: true,
+  },
+  editor: {
+    defaultEditor: "",
+    terminal: "",
   },
   memory: {
     enabled: false,
@@ -386,6 +408,14 @@ export function normalizeSettings(raw: unknown): AppSettings {
     chat: { ...DEFAULT_SETTINGS.chat, ...asObject(value.chat) },
     files: {
       anyPath: asObject(value.files).anyPath !== false,
+    },
+    editor: {
+      defaultEditor:
+        asString(asObject(value.editor).defaultEditor) ??
+        DEFAULT_SETTINGS.editor.defaultEditor,
+      terminal:
+        asString(asObject(value.editor).terminal) ??
+        DEFAULT_SETTINGS.editor.terminal,
     },
     memory: normalizeMemory(value.memory),
     handoff: {

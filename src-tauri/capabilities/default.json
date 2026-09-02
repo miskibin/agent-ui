@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Everything lib/desktop.ts needs: window controls for the custom header, drag regions, resize events, platform detection, the native folder chooser behind the working-folder picker, and the update check / install / relaunch flow.",
+  "description": "Everything lib/desktop.ts needs: window controls for the custom header, drag regions, resize events, platform detection, the native folder chooser behind the working-folder picker, the update check / install / relaunch flow, OS notifications, and the dock badge / attention request for turns that finish while the window is in the background.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://127.0.0.1:*", "http://localhost:*"]
@@ -15,9 +15,15 @@
     "core:window:allow-is-maximized",
     "core:window:allow-start-dragging",
     "core:window:allow-set-focus",
+    "core:window:allow-is-focused",
+    "core:window:allow-set-badge-count",
+    "core:window:allow-set-badge-label",
+    "core:window:allow-request-user-attention",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
     "dialog:allow-open",
+    "notification:default",
+    "shell:allow-open",
     "os:default",
     "updater:default",
     "process:allow-restart"
