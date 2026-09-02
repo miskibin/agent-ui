@@ -1,6 +1,7 @@
 import "server-only"
 
 import { acpAgentKey } from "@/lib/providers/acp"
+import { CLAUDE_CODE_PROVIDER_ID } from "@/lib/providers/claude-code"
 import { CURSOR_PROVIDER_ID } from "@/lib/providers/cursor"
 import { PI_PROVIDER_ID } from "@/lib/providers/pi"
 import type { AppSettings } from "@/lib/settings/schema"
@@ -10,6 +11,7 @@ export function isHarnessProviderId(providerId: string): boolean {
   return (
     providerId === PI_PROVIDER_ID ||
     providerId === CURSOR_PROVIDER_ID ||
+    providerId === CLAUDE_CODE_PROVIDER_ID ||
     acpAgentKey(providerId) !== null
   )
 }
@@ -20,6 +22,7 @@ export function harnessDisplayName(
 ): string | null {
   if (providerId === PI_PROVIDER_ID) return "pi"
   if (providerId === CURSOR_PROVIDER_ID) return "Cursor Agent"
+  if (providerId === CLAUDE_CODE_PROVIDER_ID) return "Claude Code"
   const key = acpAgentKey(providerId)
   const agent = key ? settings.providers.acp.agents[key] : undefined
   if (!agent) return null
@@ -47,6 +50,15 @@ export function setHarnessBinaryPath(
       providers: {
         ...settings.providers,
         cursorAgent: { ...settings.providers.cursorAgent, binPath: binaryPath },
+      },
+    }
+  }
+  if (providerId === CLAUDE_CODE_PROVIDER_ID) {
+    return {
+      ...settings,
+      providers: {
+        ...settings.providers,
+        claudeCode: { ...settings.providers.claudeCode, binPath: binaryPath },
       },
     }
   }

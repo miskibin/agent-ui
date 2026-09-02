@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "node --import ./tests/register.mjs --test tests/*.test.ts",
+    "test:e2e": "node --test --test-concurrency=1 tests/e2e/*.test.mjs",
     "vendor:check": "node scripts/check-vendored.mjs",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",

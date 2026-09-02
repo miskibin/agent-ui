@@ -103,7 +103,20 @@ one interface:
   session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-agent.ts` owns the subprocess and
   event translation, and a generated `models.json` under `$AGENT_UI_DIR/pi` writes one entry per
   source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and on
-  for the hosted ones, which read it).
+  for the hosted ones, which read it),
+  `claude-code` (spawns the `claude` CLI as `-p --output-format stream-json --verbose
+  --include-partial-messages`, resumes by CLI session id; `lib/claude-code-runtime.ts` finds the
+  binary, `lib/claude-code-protocol.ts` is the pure half — the argv and the event translation,
+  importing nothing `node --test` cannot load, which is what makes `tests/claude-code-stream.ts`
+  possible — and `lib/claude-code-agent.ts` owns the subprocess. The prompt goes on **stdin**,
+  never argv: the CLI's flags are variadic, so a trailing prompt is swallowed as one more tool
+  name. With `--include-partial-messages` every assistant message arrives twice, as deltas and
+  then whole; text and thinking come from the deltas and only `tool_use` blocks are read off the
+  whole message, whose `input_json_delta` fragments are unusable partial JSON. A failed run is
+  `result.is_error`, while `subtype` stays `"success"`. All three permission modes are real:
+  `read-only` is `--permission-mode dontAsk` plus a `--disallowedTools` deny list, which outranks
+  every allow rule and reaches subagents; `full` is `acceptEdits` plus an allow list rather than
+  `bypassPermissions`, which skips the CLI's own guardrails and refuses to start under root).
   New backend = one file in `lib/providers/` + a `registry.ts` entry + settings schema wiring.
   Picking a model is a three-step choice — harness, then model provider, then model — and a
   provider that runs its own agent loop (`pi`) or streams tool-less chat directly
@@ -305,7 +318,10 @@ one interface:
   /api/sessions/<id>/title`, `lib/completion.ts`) asks the chat's own model when it is one the
   app can reach directly, else the memory model. Token counts get an estimated price from
   `lib/model-pricing.ts` — list prices by `<source>/<model>`; Ollama is free, a CLI harness's
-  bare id is unknown rather than free.
+  bare id is unknown rather than free. `claude-code` is the one exception, because unlike
+  Cursor it resells nothing: its bare ids *are* Anthropic ids at Anthropic's own rates, so
+  they are priced from the `ANTHROPIC` table, with the tier aliases (`sonnet`, `opus`, …)
+  resolved to whatever that tier is today.
 - Settings are a panel over the chat, not a route the sidebar navigates to: `app/page.tsx`
   holds `settingsSection` and renders `SettingsView` (a `next/dynamic` import, so the chat
   never waits for it) in a fixed overlay, while `/settings` stays for deep links and renders

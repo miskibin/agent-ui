@@ -1,6 +1,6 @@
 # Agent UI
 
-A fast, local-first **desktop app** for coding agents. One interface, swappable backends: the local `cursor-agent` CLI, any model served by [Ollama](https://ollama.com) — as plain chat or as a full agentic run through the [`pi`](https://pi.dev) harness — anything that speaks the [Agent Client Protocol](https://agentclientprotocol.com), or a scripted mock — with Claude Code and OpenCode adapters on the roadmap. Built entirely on [miskibin/chat-components](https://github.com/miskibin/chat-components), the shadcn/ui registry of agent-grade chat primitives, wrapped in a frameless Tauri shell with its own window chrome.
+A fast, local-first **desktop app** for coding agents. One interface, swappable backends: the local `cursor-agent` and `claude` CLIs, any model served by [Ollama](https://ollama.com) — as plain chat or as a full agentic run through the [`pi`](https://pi.dev) harness — anything that speaks the [Agent Client Protocol](https://agentclientprotocol.com), or a scripted mock — with an OpenCode adapter on the roadmap. Built entirely on [miskibin/chat-components](https://github.com/miskibin/chat-components), the shadcn/ui registry of agent-grade chat primitives, wrapped in a frameless Tauri shell with its own window chrome.
 
 [![CI](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml) [![Desktop](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml)
 
@@ -41,20 +41,29 @@ Two things are the app's, not the registry's. The **accent** — the colour behi
 | **Cursor Agent** | ✅ | ✅ | Spawns the local `agent` CLI; full agentic runs in your workspace |
 | **Ollama** | — | replayed | Direct `/api/chat` streaming with `thinking` support (deepseek-r1, qwen3…); stateless, so the app replays the stored transcript |
 | **pi** | ✅ | ✅ | Spawns the [`pi`](https://pi.dev) CLI in `--mode json` — read/write/edit/bash over your local *and* hosted models, sessions on disk |
+| **Claude Code** | ✅ | ✅ | Spawns the local `claude` CLI in `-p --output-format stream-json` — the full built-in tool set, your project's `CLAUDE.md`, hooks and MCP servers, resumed by session id |
 | **DeepSeek Harness** | ✅ | ✅ | Spawns `dsh --profile acp` and speaks [ACP](https://agentclientprotocol.com) over stdio — 25 tools, DeepSeek's own models or any OpenAI-compatible endpoint |
 | *any ACP agent* | ✅ | ✅ | Add a command in settings; no code change needed |
 | **Chat (direct)** | — | replayed | Tool-less streaming chat against any configured model provider's `/chat/completions` — no CLI, no sandbox |
 | **Mock** | ✅ | — | Scripted runs that exercise every UI part; no binary, no network |
 
-Providers are detected at runtime and surfaced in the picker with availability badges. On Windows, a missing harness binary (pi, Cursor Agent, DeepSeek Harness, or any ACP agent) offers **Configure** in that row — a native file dialog that writes the picked path into settings. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
+Providers are detected at runtime and surfaced in the picker with availability badges. On Windows, a missing harness binary (pi, Cursor Agent, Claude Code, DeepSeek Harness, or any ACP agent) offers **Configure** in that row — a native file dialog that writes the picked path into settings. The `AgentProvider` interface (`lib/providers/types.ts`) is ~30 lines — a new backend is one file plus a registry entry.
 
 Picking a model is three choices, not one: a harness (Cursor, pi, Chat, dsh, …), then a **model provider** — Ollama, or one of the OpenAI-compatible sources configured in **Settings → Model providers** — then a model from that provider's catalog. Ten presets ship built in (OpenAI, Anthropic, xAI, Google, DeepSeek, Groq, Mistral, OpenRouter, Together AI, Fireworks); add your own with a name, base URL and optional API key, and **Test** checks it against the provider's `/models` before you rely on it. A model's id everywhere in the app is `<provider>/<model>` — `openai/gpt-4o`, `ollama/qwen3:8b` — so the picker can group every source under its own heading instead of one flat list, with a brand mark next to each.
 
 Every harness that isn't tied to one model source draws from this same list: `pi` unions it with Ollama's own catalog when it writes `models.json`, and **Chat (direct)** streams straight against whichever source the model id names. Neither half is required — `pi` is just as usable with only a DeepSeek key and no local server as with only Ollama and no keys.
 
-**Reasoning effort** rides along in the same picker, one submenu below the model, for every harness whose backend can carry it: Ollama gets a graded `think` level where the model has one, hosted providers get `reasoning_effort`, and ACP agents get the matching session config option. The one exception is Cursor Agent, whose CLI picks reasoning depth per model and takes no flag — that row simply has no effort line.
+**Reasoning effort** rides along in the same picker, one submenu below the model, for every harness whose backend can carry it: Ollama gets a graded `think` level where the model has one, hosted providers get `reasoning_effort`, ACP agents get the matching session config option, and Claude Code gets `--effort` (the app's four levels are a subset of that CLI's own ladder). The one exception is Cursor Agent, whose CLI picks reasoning depth per model and takes no flag — that row simply has no effort line.
 
-Permission is one concept across every harness that supports it: **read-only**, **edits**, or **full access**. A provider that can enforce a mode advertises which ones, and only then does the composer show a per-chat picker next to the model — ACP's generic client offers read-only/full, the DeepSeek Harness maps all three onto its own sandbox setting. The choice is remembered per session.
+Permission is one concept across every harness that supports it: **read-only**, **edits**, or **full access**. A provider that can enforce a mode advertises which ones, and only then does the composer show a per-chat picker next to the model — ACP's generic client offers read-only/full, the DeepSeek Harness maps all three onto its own sandbox setting, and Claude Code enforces all three through its own permission flags. The choice is remembered per session.
+
+#### Claude Code
+
+`claude` is spawned once per turn as `-p --output-format stream-json --verbose --include-partial-messages`, with the prompt on **stdin** rather than in argv — that keeps a long paste clear of the platform's argument limit, and out of reach of the CLI's variadic flags, which would otherwise swallow a trailing prompt as one more tool name. Text and reasoning stream from the partial-message deltas; tool calls appear the moment the model names one and complete when their result comes back. `--resume <session id>` continues the CLI's own session, so the transcript lives on its side and the app replays nothing.
+
+The three permission modes are real, not advisory. **Read only** runs `--permission-mode dontAsk` with a deny list over the editing and shell tools, and a deny rule outranks every allow rule and every `permissions.allow` entry in your own settings — the model is told the tool is "disabled for this session, in subagents as well as here" and there is no route around it. **Edit files** is `acceptEdits`: files are written without a prompt, arbitrary shell is not approved. **Full access** adds an allow list covering shell and the network — deliberately *not* `bypassPermissions`, which also skips the CLI's own guardrails and refuses to start under root. Settings → Harnesses sets the default; a chat can pick its own.
+
+Models are a short static list — the tier aliases (`sonnet`, `opus`, `haiku`, `fable`) alongside pinned ids like `claude-sonnet-5` — because the CLI has no catalog to ask and filling a picker should not cost a network call. Unlike the other CLI harnesses, its bare model ids *are* Anthropic ids at Anthropic's own rates, so the turn's token counts get the same estimated price the rest of the app shows. Vision is off: `-p` takes a text prompt only.
 
 ### Switching agents mid-chat
 
@@ -297,8 +306,21 @@ npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
 npm run test        # node --test over tests/*.test.ts — no test runner to install:
                     #   Node strips the types, tests/register.mjs resolves `@/`
+npm run test:e2e    # one flow through the built app in a real browser (see below)
 npm run build       # next build (standalone output)
 ```
+
+`npm run test:e2e` drives the production build the way a user would: it builds if
+`.next/standalone` is missing, stages `.next/static` and `public` into it the way
+`scripts/prepare-desktop.mjs` does, starts `node .next/standalone/server.js` on a free port
+against a throwaway `AGENT_UI_DIR`, and then opens Chromium to send a prompt to the `mock`
+agent, assert the streamed answer and its tool rows, stop the turn, reload and find the
+transcript still there, and rename the chat with `/rename`. The same server is used to check
+the file routes over HTTP — traversal, the data directory, `files.anyPath` on and off, and the
+refusals `POST /api/open` makes before it spawns anything. It needs Playwright on the machine
+(the project itself, a global install, or `AGENT_UI_PLAYWRIGHT=/path/to/playwright`) and a
+Chromium it can launch (`AGENT_UI_CHROMIUM` overrides). It is deliberately outside `npm test`
+and outside CI: it wants a build, a browser and about a minute.
 
 ## License
 

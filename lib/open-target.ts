@@ -416,14 +416,27 @@ function cmdQuote(arg: string) {
 }
 
 /**
+ * The one command line this app ever builds by hand, exported so a test can
+ * hold it to its two rules: every element quoted, and a path carrying `"`,
+ * `%` or a newline refused rather than escaped.
+ */
+export function cmdCommandLine(argv: string[]) {
+  return argv.map(cmdQuote).join(" ")
+}
+
+/** The argv `cmd.exe` itself is spawned with — `/d /s /c "<line>"`. */
+export function cmdShimArgs(argv: string[]) {
+  return ["/d", "/s", "/c", `"${cmdCommandLine(argv)}"`]
+}
+
+/**
  * Batch shims (`code.cmd`) and `start` need `cmd.exe`, which parses its own
  * command line; Node's `shell: true` would join the argv with spaces and no
  * quoting at all. So the line is quoted here, element by element, and passed
  * verbatim.
  */
 function spawnViaCmd(argv: string[], cwd?: string) {
-  const line = argv.map(cmdQuote).join(" ")
-  return spawn(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", `"${line}"`], {
+  return spawn(process.env.ComSpec ?? "cmd.exe", cmdShimArgs(argv), {
     cwd,
     detached: true,
     stdio: "ignore",
@@ -498,19 +511,34 @@ export async function openInEditor(options: {
   }
 
   const { path, line, root } = options
-  if (editor.bin) {
-    const args: string[] = []
-    if (root && root !== path && editor.line === "goto") args.push(root)
-    if (line && editor.line === "goto") args.push("-g", `${path}:${line}`)
-    else if (line && editor.line === "colon") args.push(`${path}:${line}`)
-    else if (line && editor.line === "line-flag") args.push("--line", String(line), path)
-    else args.push(path)
-    await launch([editor.bin, ...args], root)
-  } else {
-    // Bundle only: `open -a` cannot carry a line, but it opens the file.
-    await launch(["open", "-a", editor.app, path])
-  }
+  const argv = editorArgv(editor, { path, line, root })
+  await launch(argv, editor.bin ? root : undefined)
   return { id: editor.id, name: editor.name }
+}
+
+/** How the chosen shim takes a line number. */
+export type EditorLineStyle = EditorSpec["line"]
+
+/**
+ * The argv one editor is launched with — pure, and exported so a test can hold
+ * it to the shape that makes this safe: a fixed command with the path as one
+ * argument of its own, never a string a shell parses.
+ */
+export function editorArgv(
+  editor: { bin: string; app: string; line: EditorLineStyle },
+  options: { path: string; line?: number; root?: string }
+): string[] {
+  const { path, line, root } = options
+  // Bundle only: `open -a` cannot carry a line, but it opens the file.
+  if (!editor.bin) return ["open", "-a", editor.app, path]
+
+  const args: string[] = []
+  if (root && root !== path && editor.line === "goto") args.push(root)
+  if (line && editor.line === "goto") args.push("-g", `${path}:${line}`)
+  else if (line && editor.line === "colon") args.push(`${path}:${line}`)
+  else if (line && editor.line === "line-flag") args.push("--line", String(line), path)
+  else args.push(path)
+  return [editor.bin, ...args]
 }
 
 /** Shows `path` selected in the OS file manager. */
