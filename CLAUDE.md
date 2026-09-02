@@ -26,6 +26,31 @@ Need app-specific behavior a generic component shouldn't carry? Compose around t
 edit the vendored file. If composition genuinely can't express it, that's the signal the
 upstream component needs a new prop or slot: go through steps 1–4.
 
+### The copies must never drift
+
+`npm run vendor:check` (`scripts/check-vendored.mjs`) diffs every vendored file against a
+sibling `../chat-components` checkout — override with `--repo <path>` or `CHAT_COMPONENTS_DIR`
+— and fails on any byte that differs, on a file in `components/ui` with no upstream twin, and
+on one upstream has that this app has lost. It skips silently when the checkout is absent, so
+it is a check you run beside a clone, not something CI can do for you. **Run it after any sync,
+and before opening a PR that touches `components/ui`.**
+
+Drift is not a tidiness problem. It is how a fix lands in one repo and silently misses the
+other, and how the next `cp` from upstream deletes a feature nobody remembers adding here.
+Three features once lived only in this repo's copies — the `--ui-scale` portal fix,
+`resolveFileUrl` for image tool rows, and `FilePreviewFile.imageSrc` — and every one of them
+was one careless overwrite from being lost.
+
+**This app is the product; the registry follows it.** So when the two disagree, the answer is
+almost never "patch it here": it is to take *this* repo's behaviour, land it in
+`chat-components` with docs, an example and a registry rebuild, and copy back. Changing a
+vendored file here without doing that is the one thing that is always wrong, however small the
+change looks.
+
+The eight stock shadcn primitives this app installed directly — `badge`, `card`, `input`,
+`label`, `select`, `skeleton`, `slider`, `switch` — are the documented exception: the registry
+does not ship them, so they have no upstream to match. They are listed in the check.
+
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
 `components/command-palette.tsx`, `components/folder-picker.tsx`, `components/handoff-notice.tsx`,
 `components/memory-notice.tsx`, `components/message-actions.tsx`, `components/stash-menu.tsx`,
@@ -94,6 +119,22 @@ one interface:
   every variable — colors, radius, fonts, shadows, tracking — into one `[data-theme]`
   stylesheet, `app/fonts.ts` loads the typefaces they name, and the app's own surface aliases
   in `globals.css` are `color-mix`ed from those tokens. Do not hand-edit theme data.
+
+  Two token families are *not* taken verbatim, and `lib/theme/contrast.ts` owns both.
+  **`accent` / `sidebar-accent` are derived**: a tint of the theme's own primary over its own
+  surface, with the tint weakened until the surface's own ink reads on it. A registry accent is
+  whatever its author picked, and the app leans on it for every hover and every selected row —
+  `notebook` dark ships one at oklch(0.907) under a foreground of oklch(0.895), which is white
+  on white. Deriving it keeps the theme's hue (and carries more of it than most originals did)
+  while making the hover the same shape everywhere. **Contrast is a setting**, `soft |
+  standard | high` (Settings → Appearance, persisted in `appearance.contrast`): `standard`
+  holds every text pair to WCAG AA against the surface it actually sits on, `high` to AAA,
+  `soft` relaxes the greys down to a floor. Each level is emitted as its own small
+  `[data-contrast]` block carrying only the tokens it moves, and the light half is guarded with
+  `:not(.dark)` — the extra attribute would otherwise outrank the *dark* base block. Repair
+  moves lightness only, never hue or chroma. `tests/theme-contrast.test.ts` is the net: every
+  shipped theme, both modes, all three levels.
+
   The typeface is the one token the user may pin across themes:
   `lib/theme/font-options.ts` lists the choices, and `applyAppearance` writes the picked
   stack inline on `<html>`, which outranks the `[data-theme]` block. A new family needs a
@@ -291,7 +332,8 @@ every push. `release.yml` builds Win/macOS/Linux installers on `v*` tags.
 
 ## Definition of done
 
-`lint`, `typecheck`, `test`, `build` clean — and for anything user-visible, run the app
+`lint`, `typecheck`, `test`, `build` clean — plus `vendor:check` whenever `components/ui/**`
+or a shared `lib/` module was touched — and for anything user-visible, run the app
 (`AGENT_UI_DIR=/tmp/agent-ui-test node .next/standalone/server.js` after a build) and exercise
 the flow for real; there is a Playwright-style flow suite precedent in the repo history. If the
 UI changed visibly, refresh the screenshots in `.github/screenshots/` and keep `README.md`

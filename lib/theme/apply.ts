@@ -24,6 +24,13 @@
 
 import { DEFAULT_SETTINGS, type AppearanceSettings } from "@/lib/settings/schema"
 
+import {
+  CONTRAST_LEVELS,
+  DEFAULT_CONTRAST,
+  contrastFixes,
+  isContrastLevel,
+  type ContrastLevel,
+} from "./contrast"
 import { fontStack, fontStackMap } from "./font-options"
 import { withLoadedFont } from "./fonts"
 import { THEME_PRESETS, findPreset, presetVars } from "./presets"
@@ -51,6 +58,11 @@ export const MIN_ZOOM = 0.5
 export const MAX_ZOOM = 2
 export const ZOOM_STEP = 0.1
 export const DEFAULT_ZOOM = 1
+
+/** Unknown / retired levels (older settings.json files) fall back to standard. */
+export function normalizeContrast(value: unknown): ContrastLevel {
+  return isContrastLevel(value) ? value : DEFAULT_CONTRAST
+}
 
 export function clampRadius(value: number): number {
   if (!Number.isFinite(value)) return 0.5
@@ -108,12 +120,44 @@ function block(selector: string, vars: Record<string, string>) {
   return `${css}}`
 }
 
-/** Every preset, serialized once. Stable output — safe to render server-side. */
+/**
+ * Selector for one preset in one mode. The light half is guarded with
+ * `:not(.dark)` rather than left bare: a `[data-contrast]` block carries one
+ * attribute more than the base block it refines, so an unguarded light rule
+ * would outrank the *dark* base rule and repaint a dark document in light
+ * greys. Guarded, the two halves are mutually exclusive instead of competing.
+ */
+function schemeSelector(id: string, scheme: "light" | "dark", level?: string) {
+  const base =
+    scheme === "dark" ? `.dark[data-theme="${id}"]` : `:root:not(.dark)[data-theme="${id}"]`
+  return level ? `${base}[data-contrast="${level}"]` : base
+}
+
+/**
+ * Every preset, serialized once: the base palette per mode — with the accent
+ * harmonised, see `lib/theme/contrast.ts` — then one small block per contrast
+ * level carrying only the tokens that level actually moves. Stable output, so
+ * it is safe to render server-side.
+ */
 export function themePresetCss(): string {
   let css = ""
   for (const preset of THEME_PRESETS) {
-    css += block(`:root[data-theme="${preset.id}"]`, presetVars(preset, "light"))
-    css += block(`.dark[data-theme="${preset.id}"]`, preset.cssVars.dark)
+    for (const scheme of ["light", "dark"] as const) {
+      // The bare `:root[data-theme]` selector stays the light base so a
+      // document that never reaches the guard above still paints a palette.
+      const vars = presetVars(preset, scheme)
+      css += block(
+        scheme === "light"
+          ? `:root[data-theme="${preset.id}"]`
+          : schemeSelector(preset.id, scheme),
+        vars
+      )
+      for (const level of CONTRAST_LEVELS) {
+        const fixes = contrastFixes(vars, level)
+        if (Object.keys(fixes).length === 0) continue
+        css += block(schemeSelector(preset.id, scheme, level), fixes)
+      }
+    }
   }
   return css
 }
@@ -130,7 +174,9 @@ export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s
   APPEARANCE_STORAGE_KEY
 )})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
   DEFAULT_SETTINGS.appearance.theme
-)});if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){d.style.setProperty("--ui-scale",String(Math.round(v.zoom*10)/10))}var f=${JSON.stringify(
+)});d.setAttribute("data-contrast",${JSON.stringify(
+  CONTRAST_LEVELS
+)}.indexOf(v.contrast)<0?${JSON.stringify(DEFAULT_CONTRAST)}:v.contrast);if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){d.style.setProperty("--ui-scale",String(Math.round(v.zoom*10)/10))}var f=${JSON.stringify(
   {
     "--font-sans": {
       stacks: fontStackMap("sans"),
@@ -168,13 +214,14 @@ function ensureStyleElement() {
 export function applyAppearance(
   appearance: Pick<
     AppearanceSettings,
-    "theme" | "radiusOverride" | "fontSans" | "fontMono" | "zoom"
+    "theme" | "contrast" | "radiusOverride" | "fontSans" | "fontMono" | "zoom"
   >
 ) {
   if (typeof document === "undefined") return
   ensureStyleElement()
   const root = document.documentElement
   root.setAttribute("data-theme", findPreset(appearance.theme).id)
+  root.setAttribute("data-contrast", normalizeContrast(appearance.contrast))
   const radius = normalizeRadiusOverride(appearance.radiusOverride)
   if (radius === null) root.style.removeProperty("--radius")
   else root.style.setProperty("--radius", `${radius}rem`)

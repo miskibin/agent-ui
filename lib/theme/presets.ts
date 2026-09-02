@@ -8,6 +8,7 @@
  * entry in `scripts/import-tweakcn.mjs` plus a rerun.
  */
 
+import { tunedVars } from "./contrast"
 import { firstFontFamily } from "./fonts"
 import { TWEAKCN_THEMES } from "./themes/generated"
 import type { TweakcnTheme, TweakcnVars } from "./themes/types"
@@ -26,13 +27,23 @@ export function findPreset(id: string | undefined): ThemePreset {
 
 /**
  * The variables that apply to one mode: the mode-independent block first, then
- * the mode's own, which is exactly the order `apply.ts` emits them in.
+ * the mode's own, then the accent the app derives from the theme's own primary
+ * (`lib/theme/contrast.ts`). That last step is why this — not the raw registry
+ * item — is what both `apply.ts` and the preset card read: a swatch that shows
+ * the registry's accent would be showing a colour the app never paints.
+ *
+ * The per-level contrast repairs are *not* folded in here: they are emitted as
+ * their own `[data-contrast]` block, so this stays the palette a document with
+ * no contrast attribute gets.
  */
 export function presetVars(
   preset: ThemePreset,
   scheme: ThemeScheme
 ): TweakcnVars {
-  return { ...preset.cssVars.theme, ...preset.cssVars[scheme] }
+  return tunedVars(
+    { ...preset.cssVars.theme, ...preset.cssVars[scheme] },
+    scheme
+  )
 }
 
 /** Name of the UI typeface, for the preset card — "Inter", "Geist", … */

@@ -70,17 +70,56 @@ const CURATED = [
     name: "Notebook",
     description: "Hand-drawn paper and pencil.",
   },
+  {
+    id: "vercel",
+    name: "Vercel",
+    description: "Black, white, and nothing else.",
+  },
+  {
+    id: "claude",
+    name: "Claude",
+    description: "Warm clay on paper.",
+  },
+  {
+    id: "supabase",
+    name: "Supabase",
+    description: "Signal green over near-black.",
+  },
+  {
+    id: "bold-tech",
+    name: "Bold Tech",
+    description: "Saturated violet, high energy.",
+  },
+  {
+    id: "tangerine",
+    name: "Tangerine",
+    description: "Bright orange against cool slate.",
+  },
+  {
+    id: "ocean-breeze",
+    name: "Ocean Breeze",
+    description: "Sea green on a cool white.",
+  },
+  {
+    id: "soft-pop",
+    name: "Soft Pop",
+    description: "Primary colours, hard edges.",
+  },
 ]
 
 /** Families `app/fonts.ts` preloads — keep in step with lib/theme/fonts.ts. */
 const KNOWN_FAMILIES = new Set([
   "Inter",
   "Geist",
+  "Geist Mono",
   "Montserrat",
   "DM Sans",
+  "Outfit",
   "Architects Daughter",
   "JetBrains Mono",
   "Fira Code",
+  "IBM Plex Mono",
+  "Space Mono",
   "Source Code Pro",
 ])
 

@@ -15,11 +15,15 @@
 export const THEME_FONT_VARS = {
   Inter: "--font-inter",
   Geist: "--font-geist",
+  "Geist Mono": "--font-geist-mono",
   Montserrat: "--font-montserrat",
   "DM Sans": "--font-dm-sans",
+  Outfit: "--font-outfit",
   "Architects Daughter": "--font-architects-daughter",
   "JetBrains Mono": "--font-jetbrains-mono",
   "Fira Code": "--font-fira-code",
+  "IBM Plex Mono": "--font-ibm-plex-mono",
+  "Space Mono": "--font-space-mono",
   "Source Code Pro": "--font-source-code-pro",
 } as const satisfies Record<string, string>
 

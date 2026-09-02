@@ -24,6 +24,14 @@ The stretch before a local model's first token is the one that looks broken, and
 
 ![Settings](.github/screenshots/settings.png)
 
+### Sixteen themes, and a contrast you choose
+
+Every theme is a complete shadcn item from the [tweakcn](https://tweakcn.com) registry — colours, radius, shadows, tracking and typefaces, tuned separately for light and dark — applied by swapping one attribute on `<html>`, so switching is instant and costs no request.
+
+Two things are the app's, not the registry's. The **accent** — the colour behind every hover and every selected chat — is derived: a tint of that theme's own primary over its own surface, weakened until the surface's ink still reads on it. It keeps the theme's hue while making the hover the same shape in all sixteen, and it is what stops a theme whose accent happens to sit next to its foreground from painting white on white. And **contrast is a setting**: *Standard* holds every text pair to WCAG AA against the surface it actually sits on, *High* to AAA, *Soft* relaxes the greys down to a readable floor. Each level is computed per theme, per mode, and only moves lightness — never the hue you picked.
+
+![Contrast](.github/screenshots/settings-contrast.png)
+
 ![Memory settings](.github/screenshots/settings-memory.png)
 
 ## Providers
