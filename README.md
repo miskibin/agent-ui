@@ -297,8 +297,21 @@ npm run lint        # eslint
 npm run typecheck   # tsc --noEmit
 npm run test        # node --test over tests/*.test.ts — no test runner to install:
                     #   Node strips the types, tests/register.mjs resolves `@/`
+npm run test:e2e    # one flow through the built app in a real browser (see below)
 npm run build       # next build (standalone output)
 ```
+
+`npm run test:e2e` drives the production build the way a user would: it builds if
+`.next/standalone` is missing, stages `.next/static` and `public` into it the way
+`scripts/prepare-desktop.mjs` does, starts `node .next/standalone/server.js` on a free port
+against a throwaway `AGENT_UI_DIR`, and then opens Chromium to send a prompt to the `mock`
+agent, assert the streamed answer and its tool rows, stop the turn, reload and find the
+transcript still there, and rename the chat with `/rename`. The same server is used to check
+the file routes over HTTP — traversal, the data directory, `files.anyPath` on and off, and the
+refusals `POST /api/open` makes before it spawns anything. It needs Playwright on the machine
+(the project itself, a global install, or `AGENT_UI_PLAYWRIGHT=/path/to/playwright`) and a
+Chromium it can launch (`AGENT_UI_CHROMIUM` overrides). It is deliberately outside `npm test`
+and outside CI: it wants a build, a browser and about a minute.
 
 ## License
 
