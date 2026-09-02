@@ -3,6 +3,14 @@ import { NextResponse } from "next/server"
 import type { MessageAttachmentData } from "@/components/ui/message"
 import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
 import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
+import { toolJournalEvent, userJournalText } from "@/lib/handoff/journal"
+import { commitTurn, prepareTurn } from "@/lib/handoff/server"
+import type {
+  AgentSessionState,
+  JournalTool,
+  NewJournalEvent,
+  TurnStateFrame,
+} from "@/lib/handoff/types"
 import { buildMemoryContext } from "@/lib/memory/context"
 import { getProvider } from "@/lib/providers/registry"
 import type {
@@ -117,15 +125,9 @@ export async function POST(req: Request) {
     prior.length === 0 &&
     (!session.title || session.title === "New chat")
 
-  // The stored provider session id belongs to whichever backend produced it.
-  // Handing it to a *different* provider after a mid-session switch would
-  // resume a conversation that backend never started.
-  const providerChanged = session.providerId !== providerId
-
   await writeMessages(sessionId, [...prior, userMessage], {
     providerId,
     model,
-    ...(providerChanged ? { providerSessionId: "" } : null),
     ...(shouldTitle ? { title: deriveSessionTitle(prompt) } : null),
   })
 
@@ -138,10 +140,26 @@ export async function POST(req: Request) {
 
   const startedAt = Date.now()
   let assistant = seedAssistantMessage(body.assistantMessageId || newId())
-  let providerSessionId = providerChanged ? undefined : session.providerSessionId
   let durationMs: number | undefined
   let usage: AgentTokenUsage | undefined
   const cwd = body.cwd?.trim() || session.cwd
+
+  /**
+   * The backend session this provider owns in this chat, plus whatever the
+   * *other* agents did while it was away.
+   *
+   * A stored id is no longer thrown away when the composer switches provider:
+   * each backend keeps its own conversation, and the one coming back is told
+   * what it missed instead of being handed a transcript it cannot explain.
+   */
+  const prepared = await prepareTurn({
+    session,
+    providerId,
+    cwd,
+    canResume: info.capabilities.resume,
+    enabled: settings.handoff.enabled,
+  })
+  let providerSessionId = prepared.resumeSessionId
   // Like `cwd`: the turn's own choice, else what the chat last stored — and
   // only when this backend actually publishes the mode, so a client that
   // never sends one (or sends a mode this harness cannot enforce) leaves the
@@ -162,7 +180,7 @@ export async function POST(req: Request) {
    * what gets stored and shown.
    */
   const memoryContext =
-    info.capabilities.resume && providerSessionId
+    info.capabilities.resume && prepared.resumeSessionId
       ? undefined
       : await buildMemoryContext(settings, {
           toolCapable: info.capabilities.tools,
@@ -172,11 +190,26 @@ export async function POST(req: Request) {
   const onClientGone = () => abort.abort()
   req.signal.addEventListener("abort", onClientGone)
 
+  /**
+   * The turn's semantic events, for the next agent to arrive. Text, thinking
+   * and tool output are deliberately absent: the journal is the summary a
+   * returning agent needs, not a second transcript. Tool calls are keyed by
+   * id because every harness reports one twice — the terminal state wins.
+   */
+  const toolEvents = new Map<string, Omit<JournalTool, "kind">>()
+  let sawError = false
+  /**
+   * Whether the backend actually took the prompt. `status` lines are the app
+   * narrating a spawn, and a first event of `error` is the spawn failing — in
+   * neither case has the agent seen the handoff, so the cursor must not move.
+   */
+  let runStarted = false
+
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
       let closed = false
-      const send = (event: AgentStreamEvent) => {
+      const send = (event: AgentStreamEvent | TurnStateFrame) => {
         if (closed) return
         try {
           controller.enqueue(
@@ -191,7 +224,8 @@ export async function POST(req: Request) {
         for await (const event of provider.run({
           prompt,
           model,
-          system: memoryContext,
+          standingContext: memoryContext,
+          turnContext: prepared.handoff?.text,
           sessionId: providerSessionId,
           effort: info.capabilities.effort ? body.effort : undefined,
           permissionMode,
@@ -208,6 +242,14 @@ export async function POST(req: Request) {
             durationMs = event.durationMs
             usage = event.usage
           }
+          if (event.type === "error") sawError = true
+          if (event.type !== "status" && event.type !== "error") {
+            runStarted = true
+          }
+          if (event.type === "tool") {
+            const journaled = toolJournalEvent(event)
+            if (journaled) toolEvents.set(event.id, journaled)
+          }
           assistant = applyStreamEvent(assistant, event)
           send(event)
         }
@@ -220,7 +262,12 @@ export async function POST(req: Request) {
         }
       } finally {
         req.signal.removeEventListener("abort", onClientGone)
-        await persist()
+        const state = await persist()
+        // An app-level frame, not an `AgentStreamEvent`: the marker and the
+        // composer's per-agent hints are this app's own concern, and the
+        // vendored protocol has no business growing a variant for them.
+        // `lib/api-client` routes it away from the stream reducer.
+        if (state) send(state)
         if (!closed) {
           try {
             controller.enqueue(encoder.encode("data: [DONE]\n\n"))
@@ -236,9 +283,50 @@ export async function POST(req: Request) {
     },
   })
 
-  /** Saves whatever the turn produced — including a stopped partial answer. */
-  async function persist() {
+  /**
+   * Saves whatever the turn produced — including a stopped partial answer —
+   * and hands back the app-level frame that tells the client what the turn
+   * was sent and which agents now hold a session in this chat.
+   */
+  async function persist(): Promise<TurnStateFrame | undefined> {
     const elapsed = (durationMs ?? Date.now() - startedAt) / 1000
+    const outcome = abort.signal.aborted
+      ? "aborted"
+      : sawError
+        ? "error"
+        : "ok"
+    const journalEvents: NewJournalEvent[] = [
+      { kind: "user-message", providerId, text: userJournalText(userMessage.content) },
+      ...[...toolEvents.values()].map(
+        (tool): NewJournalEvent => ({ kind: "tool", providerId, ...tool })
+      ),
+      {
+        kind: "turn-end",
+        providerId,
+        model,
+        outcome,
+        ...(outcome === "error" && assistantError(assistant)
+          ? { error: assistantError(assistant) as string }
+          : null),
+      },
+    ]
+
+    let agentSessions: Record<string, AgentSessionState> | undefined
+    try {
+      agentSessions = await commitTurn({
+        sessionId: sessionId!,
+        providerId,
+        cwd,
+        prepared,
+        events: journalEvents,
+        runStarted,
+        providerSessionId,
+        enabled: settings.handoff.enabled,
+      })
+    } catch {
+      /* the answer is delivered; per-agent bookkeeping is not worth a 500 */
+    }
+
     const finished: StoredMessage = {
       ...assistant,
       createdAt: Date.now(),
@@ -250,13 +338,18 @@ export async function POST(req: Request) {
         finishedAt: Date.now(),
         ...(cwd ? { cwd, gitBranch: session!.gitBranch } : null),
         ...tokenMetadata(usage),
+        ...(prepared.handoff ? { handoff: prepared.handoff.marker } : null),
       },
     }
     const keep = finished.content.trim() || (finished.parts?.length ?? 0) > 0
     const patch: SessionPatch = {
       providerId,
       model,
+      // Still written for the provider that ran, so an index read by an older
+      // build (or by anything that only knows the single-id field) resumes
+      // the same conversation `agentSessions` does.
       ...(providerSessionId ? { providerSessionId } : null),
+      ...(agentSessions ? { agentSessions } : null),
     }
     try {
       await writeMessages(
@@ -266,6 +359,13 @@ export async function POST(req: Request) {
       )
     } catch {
       /* the turn already streamed; a failed write must not crash the route */
+    }
+
+    return {
+      type: "turn-state",
+      messageId: finished.id,
+      ...(agentSessions ? { agentSessions } : null),
+      ...(prepared.handoff ? { handoff: prepared.handoff.marker } : null),
     }
   }
 
@@ -277,6 +377,12 @@ export async function POST(req: Request) {
       "X-Accel-Buffering": "no",
     },
   })
+}
+
+/** Why a failed turn failed, for the journal — the reducer already wrote it. */
+function assistantError(message: StoredMessage) {
+  const match = /Agent error: (.+)/.exec(message.content)
+  return match?.[1]?.trim() || undefined
 }
 
 /**

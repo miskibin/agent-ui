@@ -1,6 +1,7 @@
 import "server-only"
 
 import type { OllamaSettings } from "@/lib/settings/schema"
+import { withPromptContext } from "@/lib/providers/system-prefix"
 import { LineBuffer } from "@/lib/stream-framing"
 import {
   fetchLoadedOllamaModels,
@@ -93,10 +94,12 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       const startedAt = Date.now()
       const messages = [
-        // Ollama has a real system role, so the memory block goes where it
-        // belongs instead of being fenced into the prompt like the CLIs need.
-        ...(options.system?.trim()
-          ? [{ role: "system" as const, content: options.system.trim() }]
+        // Ollama has a real system role, so the standing memory block goes
+        // where it belongs instead of being fenced into the prompt like the
+        // CLIs need. The handoff does not: it is about *this* turn, so it
+        // rides in front of this turn's prompt.
+        ...(options.standingContext?.trim()
+          ? [{ role: "system" as const, content: options.standingContext.trim() }]
           : []),
         ...(options.history ?? []).map((turn) => ({
           role: turn.role,
@@ -105,7 +108,9 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         })),
         {
           role: "user" as const,
-          content: options.prompt,
+          content: withPromptContext(options.prompt, {
+            turnContext: options.turnContext,
+          }),
           ...(options.images?.length ? { images: options.images } : null),
         },
       ]

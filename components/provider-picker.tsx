@@ -11,6 +11,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
+import type { ProviderSessionHint } from "@/lib/handoff/types"
 import type { ProviderInfo } from "@/lib/providers/types"
 import { cn } from "@/lib/utils"
 
@@ -26,6 +27,21 @@ const LOGO_SLUGS: Record<string, string> = {
   dsh: "deepseek",
 }
 
+/**
+ * "4m ago" / "yesterday" — coarse on purpose: the row says which agent has
+ * been away longest, and a live-updating clock in a dropdown is noise.
+ */
+function relativeTime(at: number, now = Date.now()) {
+  const seconds = Math.max(0, Math.round((now - at) / 1000))
+  if (seconds < 60) return "just now"
+  const minutes = Math.round(seconds / 60)
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.round(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  const days = Math.round(hours / 24)
+  return days === 1 ? "yesterday" : `${days}d ago`
+}
+
 /** Brand-mark slug for a provider id; empty when no mark exists. */
 function providerLogoSlug(providerId: string): string {
   const key = providerId.startsWith(ACP_PROVIDER_PREFIX)
@@ -39,6 +55,14 @@ export type ProviderPickerProps = {
   providers: ProviderInfo[]
   value: string
   onChange: (id: string) => void
+  /**
+   * What each provider already holds in the chat that is open, keyed by
+   * provider id: whether picking it resumes a backend session, when it last
+   * ran, and whether another agent has worked since it looked. Absent for a
+   * provider that has never run here — which is most of them, most of the
+   * time, so the row stays exactly as it was.
+   */
+  sessions?: Record<string, ProviderSessionHint>
   /** Windows-only: locate a missing harness binary via a native file dialog. */
   onConfigure?: (id: string) => void
   className?: string
@@ -53,6 +77,7 @@ export const ProviderPicker = React.memo(function ProviderPicker({
   providers,
   value,
   onChange,
+  sessions,
   onConfigure,
   className,
 }: ProviderPickerProps) {
@@ -105,6 +130,7 @@ export const ProviderPicker = React.memo(function ProviderPicker({
             !provider.available &&
             Boolean(provider.configureBinary)
           const slug = providerLogoSlug(provider.id)
+          const session = sessions?.[provider.id]
 
           return (
             <div
@@ -137,6 +163,27 @@ export const ProviderPicker = React.memo(function ProviderPicker({
                       ? provider.description
                       : (provider.unavailableReason ?? "Unavailable")}
                   </span>
+                  {session ? (
+                    <span
+                      data-slot="provider-picker-session"
+                      className="mt-1 flex min-w-0 flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] text-muted-foreground/80"
+                    >
+                      <span>
+                        {session.resumes ? "Resumes" : "Fresh session"}
+                        {session.lastActiveAt > 0
+                          ? ` · last ran ${relativeTime(session.lastActiveAt)}`
+                          : ""}
+                      </span>
+                      {session.handoffPending ? (
+                        <span
+                          data-slot="provider-picker-handoff"
+                          className="rounded-full bg-primary/10 px-1.5 py-px text-[10.5px] text-primary"
+                        >
+                          handoff pending
+                        </span>
+                      ) : null}
+                    </span>
+                  ) : null}
                 </span>
                 {provider.id === value ? (
                   <Check className="mt-0.5 size-3.5 shrink-0 !text-primary" />

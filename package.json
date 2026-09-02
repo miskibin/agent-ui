@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
+    "test": "node --import ./tests/register.mjs --test tests/*.test.ts",
     "typecheck": "tsc --noEmit",
     "tauri": "tauri",
     "desktop:dev": "node scripts/prepare-desktop.mjs --skip-next && tauri dev",

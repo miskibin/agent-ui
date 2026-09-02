@@ -7,6 +7,7 @@ import {
   listSourceModels,
   type ModelSource,
 } from "@/lib/model-providers/server"
+import { withPromptContext } from "@/lib/providers/system-prefix"
 import { LineBuffer } from "@/lib/stream-framing"
 import type { AppSettings } from "@/lib/settings/schema"
 import type {
@@ -116,14 +117,24 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
       }
 
       const messages = [
-        ...(options.system?.trim()
-          ? [{ role: "system" as const, content: options.system.trim() }]
+        ...(options.standingContext?.trim()
+          ? [
+              {
+                role: "system" as const,
+                content: options.standingContext.trim(),
+              },
+            ]
           : []),
         ...(options.history ?? []).map((turn) => ({
           role: turn.role,
           content: turn.content,
         })),
-        { role: "user" as const, content: options.prompt },
+        {
+          role: "user" as const,
+          content: withPromptContext(options.prompt, {
+            turnContext: options.turnContext,
+          }),
+        },
       ]
 
       yield {
