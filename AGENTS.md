@@ -66,7 +66,8 @@ everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `l
 `lib/completion.ts`, `lib/model-pricing.ts`, `lib/file-actions.tsx`, `lib/drafts.ts`,
 `lib/slash-commands.ts`, `lib/app-shortcuts.ts`, `lib/notifications.ts`, `lib/attachments.ts`,
 `lib/local-media.ts`, `lib/chat-helpers.ts`, `lib/ask-tools.ts`, `lib/ui-cache.ts`,
-`lib/todo-plan.ts`, `src-tauri/`.
+`lib/todo-plan.ts`, `lib/usage.ts`, `components/chat-usage.tsx`,
+`app/settings/usage-section.tsx`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
 as the rest of `components/ui/**`.
@@ -349,6 +350,19 @@ one interface:
   Cursor it resells nothing: its bare ids *are* Anthropic ids at Anthropic's own rates, so
   they are priced from the `ANTHROPIC` table, with the tier aliases (`sonnet`, `opus`, …)
   resolved to whatever that tier is today.
+- What it all cost, at two scopes, from one aggregation: `lib/usage.ts` turns stored messages
+  into `UsageTurn`s (model, provider, folder, tokens, the finish timestamp the turn already
+  records) and groups them per model and per folder. It is pure and free of `node:`, so the
+  same code runs in the browser over the open transcript — `chatUsage`, memoized in
+  `use-thread-view`, behind the header's total next to "N files changed"
+  (`components/chat-usage.tsx`) — and on the server over every stored one, behind
+  `GET /api/usage?days=N` and **Settings → Usage** (7d / 30d / all, totals plus a table per
+  model and per folder). The route reads the index and each transcript through `lib/store`
+  and answers with aggregated rows only; per-session turns are memoized in module state
+  keyed by the session's `updatedAt`, so reopening the page or switching windows re-reads
+  nothing. The distinction that runs through all of it is **free vs unknown**: an unpriced
+  turn is counted in tokens and in the turn count but never folded into a cost, and the UI
+  says how many there were, so a partial sum can never read as the whole.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.

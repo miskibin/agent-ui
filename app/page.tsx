@@ -6,6 +6,7 @@ import * as React from "react"
 
 import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
 import { ChatChanges } from "@/components/chat-changes"
+import { ChatUsageSummary } from "@/components/chat-usage"
 import { ThreadLoading } from "@/components/chat-skeletons"
 import { ChatSidebarPanel } from "@/components/chat-sidebar-panel"
 import { CHAT_SUGGESTIONS } from "@/components/chat-suggestions"
@@ -327,6 +328,7 @@ export default function ChatPage() {
     contextTurn,
     contextTotal,
     activeCost,
+    usage,
     pendingAsk,
     waitingCount,
     chatChanges,
@@ -569,6 +571,7 @@ export default function ChatPage() {
               fileActions={fileActions}
               onFileClick={handleChatChangeClick}
             />
+            <ChatUsageSummary usage={usage} />
             <AppHeaderButton
               label="Search chats and commands"
               hint="⌘K"

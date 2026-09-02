@@ -7,6 +7,7 @@ import {
   Bot,
   Boxes,
   Brain,
+  Coins,
   Database,
   MessageSquare,
   SquareTerminal,
@@ -30,6 +31,7 @@ import { EditorSection } from "./editor-section"
 import { MemorySection } from "./memory-section"
 import { ModelProvidersSection } from "./model-providers-section"
 import { ProvidersSection } from "./providers-section"
+import { UsageSection } from "./usage-section"
 import { useAppSettings } from "./use-app-settings"
 
 type SectionId =
@@ -39,6 +41,7 @@ type SectionId =
   | "models"
   | "memory"
   | "editor"
+  | "usage"
   | "data"
 
 type SettingsSection = {
@@ -105,6 +108,13 @@ const SECTION_GROUPS: SettingsGroup[] = [
         icon: SquareTerminal,
         keywords:
           "editor vscode cursor zed windsurf jetbrains open in reveal finder explorer terminal shell",
+      },
+      {
+        id: "usage",
+        label: "Usage",
+        icon: Coins,
+        keywords:
+          "usage cost spend price tokens input output per model folder budget billing estimate",
       },
       {
         id: "data",
@@ -343,6 +353,7 @@ export function SettingsView({ dataDir }: { dataDir: string }) {
             {active === "chat" ? <ChatSection {...settings} /> : null}
             {active === "memory" ? <MemorySection {...settings} /> : null}
             {active === "editor" ? <EditorSection {...settings} /> : null}
+            {active === "usage" ? <UsageSection /> : null}
             {active === "data" ? (
               <DataSection dataDir={dataDir} {...settings} />
             ) : null}

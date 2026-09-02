@@ -3,11 +3,12 @@
 import * as React from "react"
 
 import { collectChatChanges } from "@/components/chat-changes"
-import { chatCost, contextTurnUsage } from "@/components/context-usage"
+import { contextTurnUsage } from "@/components/context-usage"
 import type { ModelOption } from "@/components/ui/model-picker"
 import { findPendingAsk, isInternalMessage } from "@/lib/ask-tools"
 import type { StoredMessage } from "@/lib/store/types"
 import { latestTodos } from "@/lib/todo-plan"
+import { chatUsage } from "@/lib/usage"
 import { turnFiles } from "@/lib/turn-files"
 
 import type { SessionRun } from "./chat-types"
@@ -90,10 +91,16 @@ export function useThreadView({
     () => models.find((option) => option.id === model)?.contextLength,
     [model, models]
   )
-  const activeCost = React.useMemo(
-    () => chatCost(deferredMessages),
+  /**
+   * What the chat has spent so far: the composer's context ring takes the
+   * total, the header's control takes the whole breakdown. One pass over the
+   * deferred transcript feeds both, so a streaming turn pays for neither.
+   */
+  const usage = React.useMemo(
+    () => chatUsage(deferredMessages),
     [deferredMessages]
   )
+  const activeCost = usage?.cost ?? null
 
   /**
    * The transcript as the list sees it: same objects, except where a turn's
@@ -147,6 +154,7 @@ export function useThreadView({
     contextTurn,
     contextTotal,
     activeCost,
+    usage,
     pendingAsk,
     waitingCount,
     chatChanges,

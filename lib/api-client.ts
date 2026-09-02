@@ -11,6 +11,7 @@ import type {
 } from "@/lib/providers/types"
 import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
 import { LineBuffer } from "@/lib/stream-framing"
+import type { UsageReport } from "@/lib/usage"
 import type {
   CreateSessionInput,
   SessionMeta,
@@ -470,4 +471,14 @@ export function regenerateTitle(
   return fetch(`/api/sessions/${encodeURIComponent(sessionId)}/title`, {
     method: "POST",
   }).then(json<{ session: SessionMeta; title: string }>)
+}
+
+/**
+ * Tokens and estimated cost across every stored chat, aggregated server-side
+ * (`app/api/usage`). `days` of `"all"` drops the window.
+ */
+export function fetchUsage(days: number | "all"): Promise<UsageReport> {
+  return fetch(`/api/usage?days=${days}`, { cache: "no-store" }).then(
+    json<UsageReport>
+  )
 }
