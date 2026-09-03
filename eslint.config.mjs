@@ -22,6 +22,8 @@ const eslintConfig = [
       "src-tauri/binaries/**",
       "src-tauri/resources/**",
       "src-tauri/gen/**",
+      // Standalone party app (own Vite toolchain, deployed separately to Vercel).
+      "bingo/**",
     ],
   },
   ...coreWebVitals,
