@@ -15,9 +15,18 @@ export function shuffle<T>(items: readonly T[]): T[] {
   return out;
 }
 
+/** A random board of `size` tiles; `size` 0 means the whole pool. */
 export function pickBoard(tileIds: readonly string[], size: number): string[] {
-  return shuffle(tileIds).slice(0, Math.min(size, tileIds.length));
+  const picked = shuffle(tileIds);
+  return size > 0 ? picked.slice(0, Math.min(size, picked.length)) : picked;
 }
+
+export const BOARD_SIZES: { size: 0 | 9 | 16 | 25; label: string }[] = [
+  { size: 9, label: "3×3" },
+  { size: 16, label: "4×4" },
+  { size: 25, label: "5×5" },
+  { size: 0, label: "Wszystkie" },
+];
 
 const NICK_KEY = "bingo:nick";
 const playerKey = (code: string) => `bingo:player:${code.toUpperCase()}`;

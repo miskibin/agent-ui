@@ -127,6 +127,8 @@ input:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 3px color-m
 .board.cols-3 { grid-template-columns: repeat(3, 1fr); }
 .board.cols-4 { grid-template-columns: repeat(4, 1fr); }
 .board.cols-5 { grid-template-columns: repeat(5, 1fr); }
+.board.cols-2 { grid-template-columns: repeat(2, 1fr); }
+.cols-2 .cell { aspect-ratio: auto; min-height: 64px; }
 .cell {
   aspect-ratio: 1;
   min-height: 0;

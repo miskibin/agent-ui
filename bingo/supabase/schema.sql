@@ -1,4 +1,4 @@
--- Applied to the Supabase project "bingo" (xonvauehqxbjavckoorx) as migrations `bingo_schema` and `toggle_tile_rpc`.
+-- Applied to the Supabase project "bingo" (xonvauehqxbjavckoorx) as migrations `bingo_schema`, `toggle_tile_rpc` and `board_size_all`.
 create extension if not exists pgcrypto;
 
 create table public.rooms (
@@ -6,7 +6,7 @@ create table public.rooms (
   code text not null unique,
   name text not null,
   status text not null default 'lobby' check (status in ('lobby', 'playing')),
-  board_size int not null default 9 check (board_size in (9, 16, 25)),
+  board_size int not null default 9 check (board_size in (0, 9, 16, 25)), -- 0 = every tile in the pool
   host_id uuid,
   round int not null default 1,
   created_at timestamptz not null default now()

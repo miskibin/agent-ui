@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { supabase } from "./supabase";
 import { joinRoom, message } from "./Home";
-import { clearPlayerId, formatTime, loadNick, loadPlayerId, pickBoard, saveNick, shareRoom } from "./lib";
+import { BOARD_SIZES, clearPlayerId, formatTime, loadNick, loadPlayerId, pickBoard, saveNick, shareRoom } from "./lib";
 import { navigate } from "./router";
 import type { Player, Room as RoomRow, Tile } from "./types";
 
@@ -106,6 +106,23 @@ export function Room({ code }: { code: string }) {
     void supabase
       .from("players")
       .update({ board, checked: [], finished_at: null })
+      .eq("id", me.id)
+      .then(() => {
+        dealing.current = false;
+        void refresh();
+      });
+  }, [room, me, tiles, refresh]);
+
+  // "All tiles" mode: a tile added while playing is appended to my board.
+  useEffect(() => {
+    if (!room || room.status !== "playing" || room.board_size !== 0 || !me || me.board.length === 0 || dealing.current) return;
+    const have = new Set(me.board);
+    const missing = tiles.filter((t) => !have.has(t.id)).map((t) => t.id);
+    if (missing.length === 0) return;
+    dealing.current = true;
+    void supabase
+      .from("players")
+      .update({ board: [...me.board, ...missing] })
       .eq("id", me.id)
       .then(() => {
         dealing.current = false;
@@ -237,10 +254,9 @@ interface ViewProps {
   refresh: () => Promise<void>;
 }
 
-function Lobby({ room, me, players, tiles, isHost, notify, refresh }: ViewProps) {
+function AddTile({ room, me, notify, refresh }: Pick<ViewProps, "room" | "me" | "notify" | "refresh">) {
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
-  const names = useMemo(() => new Map(players.map((p) => [p.id, p.name])), [players]);
 
   async function addTile(e: FormEvent) {
     e.preventDefault();
@@ -253,6 +269,24 @@ function Lobby({ room, me, players, tiles, isHost, notify, refresh }: ViewProps)
     setText("");
     void refresh();
   }
+
+  return (
+    <form className="row" onSubmit={addTile}>
+      <input
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="np. ściągnie koszulkę"
+        maxLength={120}
+        enterKeyHint="send"
+      />
+      <button className="btn primary" disabled={!text.trim() || busy}>Dodaj</button>
+    </form>
+  );
+}
+
+function Lobby({ room, me, players, tiles, isHost, notify, refresh }: ViewProps) {
+  const [busy, setBusy] = useState(false);
+  const names = useMemo(() => new Map(players.map((p) => [p.id, p.name])), [players]);
 
   async function removeTile(tile: Tile) {
     const { error } = await supabase.from("tiles").delete().eq("id", tile.id);
@@ -267,7 +301,7 @@ function Lobby({ room, me, players, tiles, isHost, notify, refresh }: ViewProps)
 
   async function start() {
     if (tiles.length === 0) return notify("Dodajcie najpierw jakieś hasła", "error");
-    if (tiles.length < room.board_size && !confirm(`Jest tylko ${tiles.length} haseł, plansze będą mniejsze niż ${room.board_size}. Startować?`)) return;
+    if (room.board_size > 0 && tiles.length < room.board_size && !confirm(`Jest tylko ${tiles.length} haseł, plansze będą mniejsze niż ${room.board_size}. Startować?`)) return;
     setBusy(true);
     const ids = tiles.map((t) => t.id);
     try {
@@ -292,17 +326,8 @@ function Lobby({ room, me, players, tiles, isHost, notify, refresh }: ViewProps)
     <>
       <section className="card">
         <h2>Hasła <span className="count">{tiles.length}</span></h2>
-        <p className="muted">Każdy dopisuje, co może się dziś wydarzyć. Plansze losują się ze wspólnej puli.</p>
-        <form className="row" onSubmit={addTile}>
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder="np. ściągnie koszulkę"
-            maxLength={120}
-            enterKeyHint="send"
-          />
-          <button className="btn primary" disabled={!text.trim() || busy}>Dodaj</button>
-        </form>
+        <p className="muted">Każdy dopisuje, co może się dziś wydarzyć. Tylko Wasze hasła — apka nic nie dodaje.</p>
+        <AddTile room={room} me={me} notify={notify} refresh={refresh} />
         {tiles.length === 0 ? (
           <p className="muted empty">Jeszcze pusto. Ty pierwszy/a!</p>
         ) : (
@@ -340,19 +365,23 @@ function Lobby({ room, me, players, tiles, isHost, notify, refresh }: ViewProps)
         <section className="card host">
           <h2>Start</h2>
           <div className="sizes" role="radiogroup" aria-label="Rozmiar planszy">
-            {[9, 16, 25].map((s) => (
+            {BOARD_SIZES.map(({ size, label }) => (
               <button
-                key={s}
+                key={size}
                 role="radio"
-                aria-checked={room.board_size === s}
-                className={`chip${room.board_size === s ? " on" : ""}`}
-                onClick={() => void setSize(s)}
+                aria-checked={room.board_size === size}
+                className={`chip${room.board_size === size ? " on" : ""}`}
+                onClick={() => void setSize(size)}
               >
-                {Math.sqrt(s)}×{Math.sqrt(s)}
+                {label}
               </button>
             ))}
           </div>
-          <p className="muted">Każdy dostanie {Math.min(room.board_size, tiles.length) || room.board_size} losowych haseł z {tiles.length}.</p>
+          <p className="muted">
+            {room.board_size === 0
+              ? `Każdy dostanie wszystkie hasła (${tiles.length}), a nowe można dopisywać też w trakcie gry.`
+              : `Każdy dostanie ${Math.min(room.board_size, tiles.length) || room.board_size} losowych haseł z ${tiles.length}.`}
+          </p>
           <button className="btn primary big" disabled={busy || tiles.length === 0} onClick={() => void start()}>
             {busy ? "Rozdaję…" : "Rozdaj plansze i start"}
           </button>
@@ -369,7 +398,7 @@ function Game({ room, me, players, tiles, isHost, notify, refresh, applyMe }: Vi
   const board = me.board.filter((id) => tileById.has(id));
   const checked = new Set(me.checked);
   const done = board.filter((id) => checked.has(id)).length;
-  const cols = board.length > 16 ? 5 : board.length > 9 ? 4 : 3;
+  const cols = board.length > 25 ? 2 : board.length > 16 ? 5 : board.length > 9 ? 4 : 3;
   const [busy, setBusy] = useState(false);
   const queue = useRef<Promise<unknown>>(Promise.resolve());
   const wasFinished = useRef(Boolean(me.finished_at));
@@ -447,6 +476,14 @@ function Game({ room, me, players, tiles, isHost, notify, refresh, applyMe }: Vi
             })}
           </div>
         </>
+      )}
+
+      {room.board_size === 0 && !me.finished_at && (
+        <section className="card">
+          <h2>Dopisz hasło</h2>
+          <p className="muted">Trafi na planszę każdego gracza.</p>
+          <AddTile room={room} me={me} notify={notify} refresh={refresh} />
+        </section>
       )}
 
       <section className="card">

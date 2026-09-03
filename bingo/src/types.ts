@@ -5,7 +5,8 @@ export interface Room {
   code: string;
   name: string;
   status: RoomStatus;
-  board_size: 9 | 16 | 25;
+  /** 0 = every tile in the pool (and the pool may grow mid-game). */
+  board_size: 0 | 9 | 16 | 25;
   host_id: string | null;
   round: number;
   created_at: string;
