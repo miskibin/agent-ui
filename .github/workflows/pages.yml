@@ -2,9 +2,10 @@ name: Deploy product site to GitHub Pages
 
 on:
   push:
-    branches: [main]
+    branches: [main, claude/bingo-app-vercel-v04rdx]
     paths:
       - "website/**"
+      - "bingo/**"
       - ".github/workflows/pages.yml"
   workflow_dispatch:
 
@@ -28,13 +29,34 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: bingo/package-lock.json
+
+      # The party bingo app is published beside the product site, under /bingo/.
+      - name: Build bingo
+        working-directory: bingo
+        env:
+          BASE_PATH: /agent-ui/bingo/
+        run: |
+          npm ci
+          npm run build
+
+      - name: Assemble site
+        run: |
+          mkdir -p site
+          cp -R website/. site/
+          cp -R bingo/dist site/bingo
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
 
       - name: Upload static site
         uses: actions/upload-pages-artifact@v4
         with:
-          path: website
+          path: site
 
       - name: Deploy to GitHub Pages
         id: deployment

@@ -67,7 +67,7 @@ export function formatTime(iso: string): string {
 }
 
 export function roomUrl(code: string): string {
-  return `${location.origin}/r/${code}`;
+  return `${location.origin}${location.pathname}#/r/${code}`;
 }
 
 export async function shareRoom(code: string, name: string) {
