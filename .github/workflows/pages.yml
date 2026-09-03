@@ -2,7 +2,7 @@ name: Deploy product site to GitHub Pages
 
 on:
   push:
-    branches: [main, claude/bingo-app-vercel-v04rdx]
+    branches: [main]
     paths:
       - "website/**"
       - "bingo/**"
