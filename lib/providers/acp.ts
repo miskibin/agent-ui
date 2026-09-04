@@ -229,6 +229,11 @@ export function createAcpProvider(
         return
       }
 
+      // The approval policy this turn actually runs under. `fs/write_text_file`
+      // is a write we perform *for* the agent, outside the permission dance, so
+      // anything short of auto-approve must not be served one.
+      const policy = acpPolicy(options.permissionMode) ?? agent.permissionMode
+
       const { runAcpAgent } = await import("@/lib/acp-agent")
       yield* runAcpAgent({
         spawn: spec,
@@ -237,6 +242,7 @@ export function createAcpProvider(
         effort: options.effort,
         sessionId: options.sessionId,
         label,
+        canWriteFiles: policy === "auto-approve",
         signal: options.signal,
         handlers: {
           async readTextFile({ path: requested, line, limit }) {
@@ -253,11 +259,7 @@ export function createAcpProvider(
             await writeFile(target, content, "utf8")
           },
           decidePermission({ toolCall, options: choices }) {
-            return decide(
-              acpPolicy(options.permissionMode) ?? agent.permissionMode,
-              toolCall,
-              choices
-            )
+            return decide(policy, toolCall, choices)
           },
         },
       })

@@ -94,6 +94,12 @@ export type AcpRunOptions = {
   sessionId?: string
   /** Display name, used in error messages. */
   label: string
+  /**
+   * Whether `fs/write_text_file` is served this turn. A read-only turn both
+   * withholds the capability in the handshake and refuses the call: an agent
+   * that asks for the write anyway must not be handed one.
+   */
+  canWriteFiles: boolean
   handlers: AcpClientHandlers
   signal?: AbortSignal
 }
@@ -131,6 +137,12 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
     stdio: ["pipe", "pipe", "pipe"],
   })
 
+  // Decoding per chunk would tear a multi-byte character in half wherever the
+  // pipe happened to break; the stream's own decoder holds the tail back until
+  // the rest of the sequence arrives.
+  child.stdout?.setEncoding("utf8")
+  child.stderr?.setEncoding("utf8")
+
   const pending = new Map<JsonRpcId, PendingCall>()
   const stderrChunks: string[] = []
   const failure: { error?: NodeJS.ErrnoException } = {}
@@ -159,9 +171,15 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
     )
   })
 
-  child.stderr?.on("data", (chunk: Buffer | string) => {
+  child.stderr?.on("data", (chunk: string) => {
     // Free-form by spec; logged, never parsed.
-    if (stderrChunks.length < 64) stderrChunks.push(String(chunk))
+    if (stderrChunks.length < 64) stderrChunks.push(chunk)
+  })
+
+  // A cancel that races the agent's own exit writes into a closed pipe, and an
+  // unhandled EPIPE there would take the server down with it.
+  child.stdin?.on("error", () => {
+    /* the close handler rejects anything still pending */
   })
 
   const write = (message: unknown) => {
@@ -188,8 +206,14 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
     }
     dispatch(message)
   }
-  child.stdout?.on("data", (chunk: Buffer | string) => {
-    for (const line of lines.push(String(chunk))) processLine(line)
+  child.stdout?.on("data", (chunk: string) => {
+    try {
+      for (const line of lines.push(chunk)) processLine(line)
+    } catch (err) {
+      // An over-long record throws out of the framing; this is an event
+      // handler, so the only way it reaches the turn is through `fail`.
+      fail(err instanceof Error ? err : new Error(String(err)))
+    }
   })
   child.stdout?.once("end", () => {
     const tail = lines.finish()
@@ -657,6 +681,14 @@ export async function* runAcpAgent(
       return { content: await options.handlers.readTextFile({ path: p.path, line: p.line, limit: p.limit }) }
     }
     if (method === "fs/write_text_file") {
+      // Undeclared capabilities are "not there" on the wire, so this is the
+      // same answer the agent gets for any method we do not implement.
+      if (!options.canWriteFiles) {
+        throw new AcpRpcError(
+          ACP_ERROR.methodNotFound,
+          "fs/write_text_file is not available: this turn is read-only"
+        )
+      }
       const p = (params ?? {}) as AcpWriteTextFileParams
       if (!p.path) throw new AcpRpcError(ACP_ERROR.invalidParams, "path is required")
       await options.handlers.writeTextFile({ path: p.path, content: p.content ?? "" })
@@ -700,7 +732,7 @@ export async function* runAcpAgent(
       {
         protocolVersion: ACP_PROTOCOL_VERSION,
         clientCapabilities: {
-          fs: { readTextFile: true, writeTextFile: true },
+          fs: { readTextFile: true, writeTextFile: options.canWriteFiles },
           terminal: false,
         },
         clientInfo: { name: "agent-ui", title: "Agent UI", version: "1" },

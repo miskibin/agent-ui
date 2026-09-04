@@ -83,11 +83,27 @@ test("a new backend id replaces the old one; the snapshot falls back", () => {
     journalEnd: 5,
     wrote: true,
     runStarted: true,
+    cwd: "/repo",
     providerSessionId: "backend-2",
     now: 200,
   })
   assert.equal(next.providerSessionId, "backend-2")
   assert.deepEqual(next.snapshot, snapshot)
+})
+
+test("a repointed chat inherits neither the id nor the worktree it was taken in", () => {
+  const next = nextAgentSessionState({
+    previous: { ...entry, snapshot: { head: "aaa", status: [] } },
+    journalEnd: 5,
+    wrote: true,
+    // The turn never reached the backend, so it minted no id of its own.
+    runStarted: false,
+    cwd: "/other",
+    now: 200,
+  })
+  assert.equal(next.providerSessionId, undefined)
+  assert.equal(next.snapshot, undefined)
+  assert.equal(next.cwd, "/other")
 })
 
 test("a first turn starts both cursors from nothing", () => {

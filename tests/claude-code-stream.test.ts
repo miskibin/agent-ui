@@ -299,6 +299,28 @@ test("an exit code is passed through only where one was published", () => {
   assert.equal(withCode[0].type === "tool" && withCode[0].exitCode, 2)
 })
 
+test("a batched message keeps its one result to itself", () => {
+  const translator = new ClaudeCodeTranslator()
+  translator.translate(INIT)
+  // Two parallel Bash calls answer in one user message, but `tool_use_result`
+  // describes only one of them — so neither may claim it.
+  const both = translator.translate({
+    type: "user",
+    message: {
+      content: [
+        { type: "tool_result", content: "boom", tool_use_id: "t5" },
+        { type: "tool_result", content: "fine", tool_use_id: "t6" },
+      ],
+    },
+    session_id: SESSION,
+    tool_use_result: { stdout: "", stderr: "boom", exitCode: 2 },
+  } as ClaudeCodeCliEvent)
+  assert.deepEqual(both, [
+    { type: "tool", id: "t5", name: "tool", status: "done", output: "boom" },
+    { type: "tool", id: "t6", name: "tool", status: "done", output: "fine" },
+  ])
+})
+
 test("the result line yields token usage on done", () => {
   const events = body([
     streamEvent({ type: "message_start", message: { id: MSG } }),

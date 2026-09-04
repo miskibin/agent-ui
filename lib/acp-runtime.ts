@@ -133,7 +133,10 @@ export function acpConfigDir(dataDir: string, agentId: string): string {
 
 /** Keeps a user-chosen agent key from escaping the data directory. */
 function slug(value: string): string {
-  return value.replace(/[^a-zA-Z0-9._-]/g, "-") || "agent"
+  const cleaned = value.replace(/[^a-zA-Z0-9._-]/g, "-")
+  // "." and ".." survive the character filter and would name the data
+  // directory itself or — worse — its parent.
+  return !cleaned || cleaned === "." || cleaned === ".." ? "agent" : cleaned
 }
 
 function pathDirs(): string[] {

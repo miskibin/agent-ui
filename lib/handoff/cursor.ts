@@ -51,9 +51,17 @@ export function nextAgentSessionState(args: {
   now: number
 }): AgentSessionState {
   const previous = args.previous
+  // The stored id and the worktree it was taken against both belong to the
+  // folder they were minted in — so a turn that produced neither (a spawn that
+  // failed) may only inherit them when the chat still points there. Carrying
+  // them across a repoint is how a later turn resumes a backend session about
+  // another checkout, which `resolveResumeSessionId` exists to prevent.
+  const inherited = sameWorkingFolder(previous?.cwd, args.cwd)
+    ? previous
+    : undefined
   const providerSessionId =
-    args.providerSessionId || previous?.providerSessionId || undefined
-  const snapshot = args.snapshot ?? previous?.snapshot
+    args.providerSessionId || inherited?.providerSessionId || undefined
+  const snapshot = args.snapshot ?? inherited?.snapshot
   return {
     ...(providerSessionId ? { providerSessionId } : null),
     ...(args.cwd ? { cwd: args.cwd } : null),

@@ -1,6 +1,6 @@
 import "server-only"
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { OllamaModel } from "@/lib/providers/ollama-api"
@@ -128,7 +128,14 @@ export async function writeDshPatch(
   const current = await readFile(path, "utf8").catch(() => null)
   if (current === serialized) return path
   await mkdir(configDir, { recursive: true })
-  await writeFile(path, serialized, "utf8")
+  // A concurrent turn may spawn a dsh that reads this overlay at any moment, so
+  // it is replaced rather than rewritten: a reader sees the whole old file or
+  // the whole new one, never a half-written one.
+  const tmp = `${path}.${process.pid.toString(36)}${Math.random()
+    .toString(36)
+    .slice(2, 8)}.tmp`
+  await writeFile(tmp, serialized, "utf8")
+  await rename(tmp, path)
   return path
 }
 
