@@ -16,7 +16,8 @@ export function DataSection({
   dataDir,
   settings,
   update,
-}: AppSettingsApi & { dataDir: string }) {
+  onSessionsCleared,
+}: AppSettingsApi & { dataDir: string; onSessionsCleared?: () => void }) {
   const [armed, setArmed] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
 
@@ -35,6 +36,9 @@ export function DataSection({
         return
       }
       if (!res.ok) throw new Error(String(res.status))
+      // The chat page behind the panel still holds the deleted index; without
+      // this its sidebar stays stale and re-seeds from the cache on restart.
+      onSessionsCleared?.()
       toast.success("All chats deleted.")
     } catch {
       toast.error("Couldn't delete chats.")
@@ -42,7 +46,7 @@ export function DataSection({
       setBusy(false)
       setArmed(false)
     }
-  }, [])
+  }, [onSessionsCleared])
 
   return (
     <SettingsSection

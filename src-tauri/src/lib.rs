@@ -8,10 +8,12 @@
 //! In development (`tauri dev`) the sidecar is skipped entirely — `next dev`
 //! is already running behind `build.devUrl`.
 
+use std::collections::hash_map::RandomState;
+use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager, RunEvent, Url, WebviewWindow, WindowEvent};
@@ -24,6 +26,17 @@ const SERVER_ENTRY: &str = "resources/app/server.js";
 
 /// Route that only answers once Next.js has finished booting its router.
 const HEALTH_PATH: &str = "/api/providers";
+
+/// Env var the per-launch token reaches the sidecar through, and the response
+/// header the app server is expected to echo it back in. Together they are
+/// what tells *our* server apart from anything else that may have taken the
+/// port between `free_port` letting go of it and the sidecar binding it.
+const LAUNCH_TOKEN_ENV: &str = "AGENT_UI_LAUNCH_TOKEN";
+const LAUNCH_HEADER: &str = "x-agent-ui-launch";
+
+/// The compiled capability, reused as the template for the runtime one — see
+/// `grant_remote_origin`.
+const DEFAULT_CAPABILITY: &str = include_str!("../capabilities/default.json");
 
 /// Give up (and show a readable error) if the server is not up by then.
 const READY_TIMEOUT: Duration = Duration::from_secs(15);
@@ -120,8 +133,13 @@ pub fn run() {
                     window.navigate(url)?;
                 }
                 window.show()?;
-            } else {
-                start_app_server(app.handle().clone(), window)?;
+            } else if let Err(err) = start_app_server(app.handle().clone(), window.clone()) {
+                // Everything before the spawn — resolving the bundled server,
+                // reserving a port, launching Node — used to propagate out of
+                // `setup`, which aborts the process with no window at all. A
+                // failure the user cannot see is worse than a slow one, so it
+                // gets the same screen the timeout does.
+                show_failure(&window, None, &err.to_string());
             }
 
             Ok(())
@@ -177,6 +195,11 @@ fn start_app_server(
         .ok_or("bundled server.js has no file name")?
         .to_os_string();
 
+    // Minted per launch (or inherited, which is what makes it pinnable while
+    // debugging) and handed to the server so it can prove it is the process we
+    // started when we come knocking on the port.
+    let token = std::env::var(LAUNCH_TOKEN_ENV).unwrap_or_else(|_| launch_token());
+
     let (mut events, child) = app
         .shell()
         .sidecar("node")?
@@ -186,6 +209,7 @@ fn start_app_server(
         .env("HOSTNAME", "127.0.0.1")
         .env("NODE_ENV", "production")
         .env("NEXT_TELEMETRY_DISABLED", "1")
+        .env(LAUNCH_TOKEN_ENV, &token)
         .spawn()?;
 
     app.state::<Sidecar>().store(child);
@@ -215,11 +239,11 @@ fn start_app_server(
         let mut splash_shown = false;
 
         loop {
-            if probe(port) {
+            if probe(port, &token) {
                 break;
             }
             if started.elapsed() >= READY_TIMEOUT {
-                show_failure(&window, port, &log.snapshot());
+                show_failure(&window, Some(port), &log.snapshot());
                 return;
             }
             if !splash_shown && started.elapsed() >= SPLASH_AFTER {
@@ -229,15 +253,22 @@ fn start_app_server(
             std::thread::sleep(PROBE_INTERVAL);
         }
 
+        // The webview only gets the shell's own commands on the origin it is
+        // about to load, and only once that origin is known.
+        if let Err(err) = grant_remote_origin(&app, port) {
+            show_failure(&window, Some(port), &err.to_string());
+            return;
+        }
+
         match Url::parse(&format!("http://127.0.0.1:{port}/")) {
             Ok(url) => {
                 if let Err(err) = window.navigate(url) {
-                    show_failure(&window, port, &err.to_string());
+                    show_failure(&window, Some(port), &err.to_string());
                     return;
                 }
             }
             Err(err) => {
-                show_failure(&window, port, &err.to_string());
+                show_failure(&window, Some(port), &err.to_string());
                 return;
             }
         }
@@ -259,10 +290,34 @@ fn free_port() -> std::io::Result<u16> {
     Ok(port)
 }
 
+/// Per-launch identity for the bundled server. Not a credential — it never
+/// leaves this machine and guards nothing but "is this listener ours" — so it
+/// is drawn from the OS entropy `RandomState` is already seeded with rather
+/// than pulling a random-number crate into the shell for it.
+fn launch_token() -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_nanos())
+        .unwrap_or_default();
+    let pid = u128::from(std::process::id());
+    let mut token = String::with_capacity(32);
+    for salt in 0..2u128 {
+        // A fresh RandomState per half: each carries its own OS-seeded keys.
+        let half = RandomState::new().hash_one(nanos ^ (pid << 64) ^ salt);
+        token.push_str(&format!("{half:016x}"));
+    }
+    token
+}
+
 /// True once the server returns any HTTP status line — a 500 from the health
 /// route still means Next.js is listening and routing, which is what we wait
 /// for. Connection refused / timeout is the "not ready yet" signal.
-fn probe(port: u16) -> bool {
+///
+/// The port was picked by binding `:0` and letting go again, so between that
+/// and the sidecar's own bind anything on this machine could have taken it.
+/// A response that carries `x-agent-ui-launch` therefore has to carry *our*
+/// token: a stranger's server is never adopted, and never navigated to.
+fn probe(port: u16, token: &str) -> bool {
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, port));
     let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(500)) else {
         return false;
@@ -276,24 +331,74 @@ fn probe(port: u16) -> bool {
         return false;
     }
 
+    let mut reader = BufReader::new(stream);
     let mut status = String::new();
-    if BufReader::new(stream).read_line(&mut status).is_err() {
+    if reader.read_line(&mut status).is_err() || !status.starts_with("HTTP/1.") {
         return false;
     }
-    status.starts_with("HTTP/1.")
+
+    loop {
+        let mut line = String::new();
+        match reader.read_line(&mut line) {
+            Ok(0) => break,
+            Ok(_) => {}
+            Err(_) => return false,
+        }
+        let line = line.trim_end();
+        if line.is_empty() {
+            break;
+        }
+        let Some((name, value)) = line.split_once(':') else {
+            continue;
+        };
+        if name.trim().eq_ignore_ascii_case(LAUNCH_HEADER) {
+            return value.trim() == token;
+        }
+    }
+
+    // No header at all is not our server: the route behind HEALTH_PATH echoes
+    // the token on every answer, so a silent listener is whatever else took
+    // the port between `free_port` and the sidecar binding it.
+    false
+}
+
+/// Hands the shell's own commands to exactly the origin the sidecar ended up
+/// on. `capabilities/default.json` can only name the dev server statically —
+/// the production port is not known until launch — and a `127.0.0.1:*` grant
+/// there would offer `shell:allow-open` and the window controls to anything
+/// else listening on loopback. The permission list is not duplicated here: the
+/// compiled capability is re-read and only its identity and `remote.urls` are
+/// rewritten.
+fn grant_remote_origin(app: &AppHandle, port: u16) -> Result<(), Box<dyn std::error::Error>> {
+    let mut capability: serde_json::Value = serde_json::from_str(DEFAULT_CAPABILITY)?;
+    let fields = capability
+        .as_object_mut()
+        .ok_or("capabilities/default.json is not an object")?;
+    fields.insert("identifier".into(), serde_json::json!("app-server"));
+    fields.insert(
+        "remote".into(),
+        serde_json::json!({ "urls": [format!("http://127.0.0.1:{port}")] }),
+    );
+    app.add_capability(serde_json::to_string(&capability)?)?;
+    Ok(())
 }
 
 /// Reveals the window with a readable error instead of hanging invisibly.
-fn show_failure(window: &WebviewWindow, port: u16, detail: &str) {
+/// `port` is `None` when the failure happened before there was one — nothing
+/// was ever listening, so the timeout wording would be a lie.
+fn show_failure(window: &WebviewWindow, port: Option<u16>, detail: &str) {
     let detail = if detail.is_empty() {
         "The server produced no output.".to_string()
     } else {
         detail.to_string()
     };
-    let message = format!(
-        "The bundled server did not answer on http://127.0.0.1:{port} within {}s.\n\n{detail}",
-        READY_TIMEOUT.as_secs()
-    );
+    let message = match port {
+        Some(port) => format!(
+            "The bundled server did not answer on http://127.0.0.1:{port} within {}s.\n\n{detail}",
+            READY_TIMEOUT.as_secs()
+        ),
+        None => format!("The bundled server could not be started.\n\n{detail}"),
+    };
     if let Ok(json) = serde_json::to_string(&message) {
         let _ = window.eval(format!("window.__agentUiError({json})"));
     }

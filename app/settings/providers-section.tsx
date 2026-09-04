@@ -38,7 +38,12 @@ const CLAUDE_CODE_MODES = [
   { id: "full", label: "Full access" },
 ] as const
 
-export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
+export function ProvidersSection({
+  settings,
+  loaded,
+  update,
+  flush,
+}: AppSettingsApi) {
   const { phase, map, refresh } = useProviderStatus()
   const [testing, setTesting] = React.useState(false)
   const providers = settings.providers
@@ -72,6 +77,9 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
 
   const testOllama = React.useCallback(async () => {
     setTesting(true)
+    // The status route reads settings.json, so a base URL typed a moment ago
+    // has to be written before the probe — otherwise this tests the old one.
+    await flush()
     const next = await refresh()
     setTesting(false)
     if (!next) {
@@ -81,7 +89,7 @@ export function ProvidersSection({ settings, loaded, update }: AppSettingsApi) {
     const status = next[statusKey("ollama")]
     if (status?.available) toast.success("Ollama is reachable.")
     else toast.error(status?.detail ?? "Ollama did not respond.")
-  }, [refresh])
+  }, [flush, refresh])
 
   return (
     <SettingsSection

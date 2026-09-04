@@ -94,10 +94,10 @@ for (const rel of drifted) console.error(`drift:  ${rel}`)
 for (const rel of forked) console.error(`forked: ${rel} (no upstream twin)`)
 for (const rel of missing) console.error(`gone:   ${rel} (upstream has it)`)
 
-if (drifted.length || forked.length) {
+if (drifted.length || forked.length || missing.length) {
   console.error(
-    `\n${drifted.length + forked.length} vendored file(s) do not match ` +
-      "miskibin/chat-components.\n" +
+    `\n${drifted.length + forked.length + missing.length} vendored file(s) do ` +
+      "not match miskibin/chat-components.\n" +
       "Fix it THERE first, then copy back — never the other way round.\n" +
       "See the top of CLAUDE.md."
   )

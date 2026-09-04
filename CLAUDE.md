@@ -223,9 +223,11 @@ one interface:
   line diff of the whole run, taken against the state it started from. The
   `memory.maxChars` budget is enforced *after* the write, with a second merge-and-shorten pass
   when it is exceeded — a small model will promise to stay under a cap and then not.
-  Two rules are load-bearing and must not be relaxed: the extractor is handed **only the
-  user's own messages** (never assistant text, tool calls, tool output or file contents), so
-  content the agent merely read cannot write itself into every future prompt; and category
+  Two rules are load-bearing and must not be relaxed: the extractor is handed **only what
+  the user typed** — `metadata.typedText` on a user message, which the composer sends beside
+  the prompt, never the attachments fenced into the stored content, assistant text, tool
+  calls, tool output or the app's own ask-answer turns — so content the agent merely read
+  cannot write itself into every future prompt; and category
   ids are validated against a separator-free alphabet rather than escaped, because they
   become file names.
 - Handing one agent's work to the next (`lib/handoff/`, on by default): a chat is one
@@ -387,12 +389,25 @@ one interface:
   in-flight turn, and unmounting it aborts the fetch, which `/api/chat` reads as the client
   giving up and kills the run. `dataDir` is the one thing a panel cannot render server-side,
   so `GET /api/settings/data-dir` hands it over; closing re-reads settings and providers,
-  because either may have changed while it was open.
+  because either may have changed while it was open. The file holds one object, so every
+  write is a read-modify-write and there is more than one writer: the panel
+  (`app/settings/use-app-settings`, which owns `providers`, `modelProviders`, `chat`,
+  `files`, `editor`, `memory` and `handoff`), `lib/theme/theme-client` (`appearance`) and
+  the folder picker through `lib/api-client` (`recentFolders`). They all go through the one
+  serialized chain in `lib/settings/client.ts` — without it a save in flight writes another
+  writer's subtree back stale.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.
   Production spawns the Next standalone server as a Node sidecar on a free port and shows the
-  window only when it's ready. Auto-update rides the same bridge: `tauri-plugin-updater` +
+  window only when it's ready. That port is chosen by binding `:0` and letting go again, so
+  the shell mints a per-launch token, passes it to the sidecar as `AGENT_UI_LAUNCH_TOKEN`,
+  and the health probe adopts a listener only when its `x-agent-ui-launch` header carries
+  that token (`GET /api/providers` echoes it), never a silent one. The webview's
+  permissions follow the same line: `capabilities/default.json` names the dev server alone,
+  and `grant_remote_origin` re-reads it at launch to grant the shell's commands to the one
+  resolved `http://127.0.0.1:<port>` origin rather than to every loopback port.
+  Auto-update rides the same bridge: `tauri-plugin-updater` +
   `tauri-plugin-process` are registered in `src-tauri`, `lib/desktop.ts` wraps
   `check / downloadAndInstall / relaunch`, and `components/desktop-updater.tsx` (mounted in
   `app/layout.tsx`) schedules the startup check off the critical path and owns the toasts.

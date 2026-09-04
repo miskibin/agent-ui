@@ -159,6 +159,16 @@ function AcpAgentRow({
     (changes: Partial<AcpAgentSettings>) => onPatch(agentKey, changes),
     [agentKey, onPatch]
   )
+  // Arguments are one text field over a string[], so the typed text is held
+  // raw until the field is left: splitting on every keystroke would swallow
+  // the space that separates the argument being typed from the next one.
+  // `null` means "not being edited", so a change from elsewhere still shows.
+  const [argsDraft, setArgsDraft] = React.useState<string | null>(null)
+  const commitArgs = React.useCallback(() => {
+    if (argsDraft === null) return
+    patch({ args: argsDraft.split(/\s+/).filter(Boolean) })
+    setArgsDraft(null)
+  }, [argsDraft, patch])
   const isDsh = agent.kind === "dsh"
   const inputId = `provider-acp-${agentKey}`
 
@@ -224,10 +234,12 @@ function AcpAgentRow({
             autoComplete="off"
             placeholder="Arguments, space separated — e.g. --acp"
             className="h-8 font-mono text-[12px]"
-            value={agent.args.join(" ")}
-            onChange={(event) =>
-              patch({ args: event.target.value.split(/\s+/).filter(Boolean) })
-            }
+            value={argsDraft ?? agent.args.join(" ")}
+            onChange={(event) => setArgsDraft(event.target.value)}
+            onBlur={commitArgs}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur()
+            }}
           />
         ) : null}
 

@@ -15,6 +15,7 @@ import * as React from "react"
 import { useTheme } from "next-themes"
 import { toast } from "sonner"
 
+import { writeSettings } from "@/lib/settings/client"
 import {
   DEFAULT_SETTINGS,
   normalizeSettings,
@@ -103,34 +104,21 @@ function commit(next: AppearanceSettings) {
 
 /* -------------------------------------------------------------------------
  * Persistence — settings.json holds the whole AppSettings object, so a write
- * is read-modify-write. Debounced so dragging the radius slider is one PUT.
+ * is read-modify-write. Debounced so dragging the radius slider is one PUT,
+ * and handed to `lib/settings/client`, whose one chain serialises this against
+ * the settings panel's own writes — `appearance` is the only subtree here.
  * ---------------------------------------------------------------------- */
 
 const PERSIST_DELAY = 350
 let persistTimer: ReturnType<typeof setTimeout> | undefined
-let persistChain: Promise<void> = Promise.resolve()
-
-async function putAppearance(appearance: AppearanceSettings) {
-  const res = await fetch("/api/settings")
-  if (!res.ok) throw new Error(`GET /api/settings ${res.status}`)
-  const current = normalizeSettings(await res.json())
-  const put = await fetch("/api/settings", {
-    method: "PUT",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ ...current, appearance }),
-  })
-  if (!put.ok) throw new Error(`PUT /api/settings ${put.status}`)
-}
 
 function schedulePersist() {
   if (persistTimer) clearTimeout(persistTimer)
   persistTimer = setTimeout(() => {
     const appearance = snapshot
-    persistChain = persistChain
-      .then(() => putAppearance(appearance))
-      .catch(() => {
-        toast.error("Couldn't save appearance settings.")
-      })
+    void writeSettings((current) => ({ ...current, appearance })).catch(() => {
+      toast.error("Couldn't save appearance settings.")
+    })
   }, PERSIST_DELAY)
 }
 

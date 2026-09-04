@@ -34,6 +34,9 @@ import type { AppSettingsApi } from "./use-app-settings"
 import { useMemoryStore } from "./use-memory-store"
 
 
+/** How long "Forget everything" stays armed before it disarms itself. */
+const CONFIRM_TIMEOUT = 5000
+
 function factCount(file: MemoryFile) {
   return memoryFactLines(file.content).filter((line) => !line.startsWith("#"))
     .length
@@ -197,6 +200,15 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
     { id: string; name: string }[] | null
   >(null)
   const [newCategory, setNewCategory] = React.useState("")
+  // Same arm-then-confirm as Settings → Data: this shreds every note in one
+  // click, and the files are the only copy.
+  const [armed, setArmed] = React.useState(false)
+
+  React.useEffect(() => {
+    if (!armed) return
+    const timer = setTimeout(() => setArmed(false), CONFIRM_TIMEOUT)
+    return () => clearTimeout(timer)
+  }, [armed])
 
   const setMemory = React.useCallback(
     (patch: Partial<AppSettings["memory"]>) =>
@@ -462,16 +474,43 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
             Add
           </Button>
           {store.files.length > 0 ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="ghost"
-              onClick={() => void store.clear()}
-              className="ml-auto text-[12.5px] text-destructive hover:bg-destructive/10 hover:text-destructive"
-            >
-              <Trash2 />
-              Forget everything
-            </Button>
+            armed ? (
+              <div className="ml-auto flex items-center gap-1">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setArmed(false)}
+                  className="text-[12.5px]"
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="destructive"
+                  onClick={() => {
+                    setArmed(false)
+                    void store.clear()
+                  }}
+                  className="text-[12.5px]"
+                >
+                  <Trash2 />
+                  Delete every note
+                </Button>
+              </div>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                onClick={() => setArmed(true)}
+                className="ml-auto text-[12.5px] text-destructive hover:bg-destructive/10 hover:text-destructive"
+              >
+                <Trash2 />
+                Forget everything
+              </Button>
+            )
           ) : null}
         </div>
       </SettingsRow>

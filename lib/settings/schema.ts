@@ -405,32 +405,9 @@ export function normalizeSettings(raw: unknown): AppSettings {
       ),
       zoom: asZoom(appearance.zoom),
     },
-    providers: {
-      ...DEFAULT_SETTINGS.providers,
-      ...asObject(value.providers),
-      ollama: {
-        ...DEFAULT_SETTINGS.providers.ollama,
-        ...asObject(asObject(value.providers).ollama),
-      },
-      pi: {
-        ...DEFAULT_SETTINGS.providers.pi,
-        ...asObject(asObject(value.providers).pi),
-      },
-      cursorAgent: {
-        ...DEFAULT_SETTINGS.providers.cursorAgent,
-        ...asObject(asObject(value.providers).cursorAgent),
-      },
-      claudeCode: normalizeClaudeCode(asObject(value.providers).claudeCode),
-      mock: {
-        ...DEFAULT_SETTINGS.providers.mock,
-        ...asObject(asObject(value.providers).mock),
-      },
-      acp: {
-        agents: normalizeAcpAgents(asObject(asObject(value.providers).acp).agents),
-      },
-    },
+    providers: normalizeProviders(value.providers),
     modelProviders: normalizeModelProviders(value.modelProviders),
-    chat: { ...DEFAULT_SETTINGS.chat, ...asObject(value.chat) },
+    chat: normalizeChat(value.chat),
     files: {
       anyPath: asObject(value.files).anyPath !== false,
     },
@@ -450,6 +427,60 @@ export function normalizeSettings(raw: unknown): AppSettings {
   }
 }
 
+/**
+ * Field by field rather than a spread over the defaults: a hand-edited or
+ * downgraded file can carry a number where a string belongs, and a
+ * `baseUrl: 123` reaching `normalizeBaseUrl` throws far from here — in the
+ * routes that list models or run a turn.
+ */
+function normalizeProviders(raw: unknown): ProviderSettings {
+  const fallback = DEFAULT_SETTINGS.providers
+  const value = asObject(raw)
+  const ollama = asObject(value.ollama)
+  const pi = asObject(value.pi)
+  const cursorAgent = asObject(value.cursorAgent)
+  const mock = asObject(value.mock)
+  return {
+    active: asString(value.active) ?? fallback.active,
+    ollama: {
+      enabled: asBoolean(ollama.enabled, fallback.ollama.enabled),
+      baseUrl: asString(ollama.baseUrl) ?? fallback.ollama.baseUrl,
+    },
+    pi: {
+      enabled: asBoolean(pi.enabled, fallback.pi.enabled),
+      binPath: asString(pi.binPath) ?? fallback.pi.binPath,
+      workspace: asString(pi.workspace) ?? fallback.pi.workspace,
+    },
+    cursorAgent: {
+      enabled: asBoolean(cursorAgent.enabled, fallback.cursorAgent.enabled),
+      binPath: asString(cursorAgent.binPath) ?? fallback.cursorAgent.binPath,
+    },
+    claudeCode: normalizeClaudeCode(value.claudeCode),
+    mock: { enabled: asBoolean(mock.enabled, fallback.mock.enabled) },
+    acp: { agents: normalizeAcpAgents(asObject(value.acp).agents) },
+  }
+}
+
+/** Same rule as `normalizeProviders`: every field checked, not spread. */
+function normalizeChat(raw: unknown): ChatSettings {
+  const fallback = DEFAULT_SETTINGS.chat
+  const value = asObject(raw)
+  return {
+    defaultModel: asString(value.defaultModel) ?? fallback.defaultModel,
+    defaultEffort: asString(value.defaultEffort) ?? fallback.defaultEffort,
+    showSuggestions: asBoolean(value.showSuggestions, fallback.showSuggestions),
+    autoTitle: asBoolean(value.autoTitle, fallback.autoTitle),
+    notificationSounds: asBoolean(
+      value.notificationSounds,
+      fallback.notificationSounds
+    ),
+    desktopNotifications: asBoolean(
+      value.desktopNotifications,
+      fallback.desktopNotifications
+    ),
+  }
+}
+
 const PERMISSION_MODES = new Set<PermissionMode>(["read-only", "edits", "full"])
 
 /**
@@ -459,11 +490,13 @@ const PERMISSION_MODES = new Set<PermissionMode>(["read-only", "edits", "full"])
  */
 function normalizeClaudeCode(raw: unknown): ClaudeCodeSettings {
   const fallback = DEFAULT_SETTINGS.providers.claudeCode
-  const merged = { ...fallback, ...asObject(raw) }
+  const value = asObject(raw)
   return {
-    ...merged,
-    permissionMode: PERMISSION_MODES.has(merged.permissionMode as PermissionMode)
-      ? (merged.permissionMode as PermissionMode)
+    enabled: asBoolean(value.enabled, fallback.enabled),
+    binPath: asString(value.binPath) ?? fallback.binPath,
+    workspace: asString(value.workspace) ?? fallback.workspace,
+    permissionMode: PERMISSION_MODES.has(value.permissionMode as PermissionMode)
+      ? (value.permissionMode as PermissionMode)
       : fallback.permissionMode,
   }
 }
@@ -480,23 +513,39 @@ const DSH_SANDBOX_MODES: DshSandboxMode[] = [
 ]
 
 /**
+ * The key an ACP agent is stored under. It becomes the `acp:<id>` provider id
+ * *and* a directory name under the data dir (`lib/acp-runtime`), so — like a
+ * memory category and a model-provider slug — it is validated against a
+ * separator-free alphabet rather than escaped: `..` and `__proto__` are not
+ * things to sanitise, they are keys to drop. It is also exactly what the
+ * settings UI mints (`agent-2`, `agent-3`, …).
+ */
+export const ACP_AGENT_ID_RE = /^[a-z0-9-]{1,32}$/
+
+/**
  * The one open-ended dictionary in the settings file: built-in agents are
  * merged over their defaults (so a settings.json predating ACP still gains the
  * `dsh` entry), and user-added ones are validated field by field because there
- * is no default to fall back on.
+ * is no default to fall back on. A key outside `ACP_AGENT_ID_RE` never
+ * survives, and the merge is built on a null-prototype object so a `__proto__`
+ * key in the file could not reach `Object.prototype` on its way out.
  */
 function normalizeAcpAgents(raw: unknown): Record<string, AcpAgentSettings> {
   const defaults = DEFAULT_SETTINGS.providers.acp.agents
   const stored = asObject(raw)
-  const merged: Record<string, AcpAgentSettings> = {}
+  const merged: Record<string, AcpAgentSettings> = Object.create(null)
   for (const [id, fallback] of Object.entries(defaults)) {
     merged[id] = normalizeAcpAgent(stored[id], fallback)
   }
   for (const [id, entry] of Object.entries(stored)) {
     if (id in merged) continue
+    if (!ACP_AGENT_ID_RE.test(id)) continue
     merged[id] = normalizeAcpAgent(entry, { ...DEFAULT_DSH_AGENT, name: id, kind: "generic", command: "" })
   }
-  return merged
+  // Spread back onto a plain object: `{...}` copies own keys as data
+  // properties, so even `__proto__` stays inert, and the rest of the app gets
+  // an ordinary object to work with.
+  return { ...merged }
 }
 
 function normalizeAcpAgent(
@@ -619,6 +668,10 @@ function normalizeMemory(raw: unknown): MemorySettings {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined
+}
+
+function asBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === "boolean" ? value : fallback
 }
 
 function asStringRecord(value: unknown): Record<string, string> | undefined {
