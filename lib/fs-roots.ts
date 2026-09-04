@@ -38,7 +38,10 @@ export async function realPath(path: string): Promise<string> {
   for (;;) {
     try {
       const real = await realpath(current)
-      return tail.length ? join(real, ...tail.reverse()) : real
+      if (!tail.length) return real
+      // Collected leaf-first while walking up; joined root-first.
+      tail.reverse()
+      return join(real, ...tail)
     } catch {
       const parent = dirname(current)
       if (parent === current) return full

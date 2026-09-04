@@ -1,5 +1,6 @@
 import "server-only"
 
+import { randomBytes } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
@@ -131,9 +132,7 @@ export async function writeDshPatch(
   // A concurrent turn may spawn a dsh that reads this overlay at any moment, so
   // it is replaced rather than rewritten: a reader sees the whole old file or
   // the whole new one, never a half-written one.
-  const tmp = `${path}.${process.pid.toString(36)}${Math.random()
-    .toString(36)
-    .slice(2, 8)}.tmp`
+  const tmp = `${path}.${process.pid.toString(36)}${randomBytes(3).toString("hex")}.tmp`
   await writeFile(tmp, serialized, "utf8")
   await rename(tmp, path)
   return path

@@ -473,8 +473,8 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
             <Plus />
             Add
           </Button>
-          {store.files.length > 0 ? (
-            armed ? (
+          {store.files.length > 0 &&
+            (armed ? (
               <div className="ml-auto flex items-center gap-1">
                 <Button
                   type="button"
@@ -510,8 +510,7 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
                 <Trash2 />
                 Forget everything
               </Button>
-            )
-          ) : null}
+            ))}
         </div>
       </SettingsRow>
     </SettingsSection>
