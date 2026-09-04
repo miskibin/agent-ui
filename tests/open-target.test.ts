@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { cmdCommandLine, cmdShimArgs, editorArgv } from "@/lib/open-target"
+import {
+  cmdCommandLine,
+  cmdShimArgs,
+  editorArgv,
+  terminalArgv,
+} from "@/lib/open-target"
 
 /**
  * "Open in …" hands a path an agent named to a program on this machine. Two
@@ -104,4 +109,22 @@ test("a macOS bundle with no shim opens through `open -a`", () => {
     editorArgv({ bin: "", app: "Zed", line: "colon" }, { path: "/p/a.ts", line: 9 }),
     ["open", "-a", "Zed", "/p/a.ts"]
   )
+})
+
+test("a Windows terminal reaches cmd.exe as `start`, not as a switch", () => {
+  // `launch` drops the leading `cmd.exe` and lets `spawnViaCmd` write the
+  // switches, so whatever the spec puts next is the command cmd.exe runs — a
+  // second `/c` here was one cmd.exe tried to execute.
+  for (const id of ["powershell", "cmd"]) {
+    const argv = terminalArgv("win32", id, "pwsh.exe", "C:\\repo")
+    assert.ok(argv, id)
+    assert.equal(argv[0], "cmd.exe", id)
+    const args = cmdShimArgs(argv.slice(1))
+    assert.deepEqual(args.slice(0, 3), ["/d", "/s", "/c"], id)
+    assert.ok(args[3].startsWith('""start"'), `${id}: ${args[3]}`)
+  }
+})
+
+test("an unknown terminal id is null rather than the first one installed", () => {
+  assert.equal(terminalArgv("win32", "nope", "", "C:\\repo"), null)
 })

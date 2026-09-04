@@ -36,6 +36,18 @@ export type MessageMetadata = {
    * inspectable in the thread rather than something the user has to trust.
    */
   handoff?: HandoffMarker
+  /**
+   * On a *user* message: exactly what the person typed, before the composer
+   * added anything — a skill prefix, the fenced contents of an attached file,
+   * the note naming the files it could not read.
+   *
+   * It exists for the memory boundary. `content` is what the model was sent,
+   * and everything the composer folded into it is content the user did not
+   * write; the extractor (`lib/memory/extract`) is only ever allowed the
+   * user's own words, so it reads this and falls back to `content` only for
+   * turns stored before the field existed.
+   */
+  typedText?: string
 }
 
 /** Exactly what the UI renders: `ChatMessageData` plus provenance. */

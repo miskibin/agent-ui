@@ -6,6 +6,7 @@ import { promisify } from "node:util"
 import { NextResponse } from "next/server"
 
 import { expandHome } from "@/lib/fs-paths"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import type { FolderInfo } from "@/lib/folder"
 
 export const runtime = "nodejs"
@@ -27,6 +28,8 @@ const MAX_BRANCHES = 200
  * alone a shell word.
  */
 export async function GET(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const raw = new URL(req.url).searchParams.get("path")?.trim() ?? ""
   if (!raw) {
     return NextResponse.json({ error: "path is required" }, { status: 400 })

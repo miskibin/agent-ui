@@ -3,6 +3,7 @@ import { stat } from "node:fs/promises"
 import { NextResponse } from "next/server"
 
 import { gitStatus } from "@/lib/git-status"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { getSession } from "@/lib/store/sessions"
 
 export const runtime = "nodejs"
@@ -18,9 +19,8 @@ export const dynamic = "force-dynamic"
  * cross-site request is refused outright.
  */
 export async function GET(req: Request) {
-  if (req.headers.get("sec-fetch-site") === "cross-site") {
-    return NextResponse.json({ error: "Cross-site request" }, { status: 403 })
-  }
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const id = new URL(req.url).searchParams.get("session")?.trim() ?? ""
   const session = id ? await getSession(id) : null
   const path = session?.cwd?.trim()

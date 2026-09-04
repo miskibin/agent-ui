@@ -5,6 +5,7 @@ import { dirname, isAbsolute, join } from "node:path"
 import { NextResponse } from "next/server"
 
 import { defaultBrowseRoot, expandHome } from "@/lib/fs-paths"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import type { FolderEntry, FolderListing } from "@/lib/folder"
 
 export const runtime = "nodejs"
@@ -36,6 +37,8 @@ const MAX_GIT_PROBES = 150
  * the ones that are.
  */
 export async function GET(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const raw = new URL(req.url).searchParams.get("path")?.trim() ?? ""
   const requested = raw ? expandHome(raw) : defaultBrowseRoot()
 

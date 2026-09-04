@@ -6,6 +6,7 @@ import {
   setHarnessBinaryPath,
 } from "@/lib/harness-binary"
 import { listProviders } from "@/lib/providers/registry"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings, writeSettings } from "@/lib/settings/server"
 import { pickWindowsFile } from "@/lib/windows-file-dialog"
 
@@ -21,6 +22,8 @@ export type ConfigureBinaryResponse =
  * harness's binary, and return the refreshed provider list.
  */
 export async function POST(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   if (process.platform !== "win32") {
     return NextResponse.json(
       { error: "Configuring a harness binary from the picker is Windows-only." },

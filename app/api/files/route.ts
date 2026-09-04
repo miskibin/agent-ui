@@ -6,8 +6,9 @@ import { Readable } from "node:stream"
 
 import { NextResponse } from "next/server"
 
-import { isWithinKnownRoot } from "@/lib/fs-roots"
-import { readSettings } from "@/lib/settings/server"
+import { isWithinKnownRoot, isWithinReal } from "@/lib/fs-roots"
+import { crossOriginRefusal } from "@/lib/request-origin"
+import { dataDir, readSettings } from "@/lib/settings/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -20,10 +21,12 @@ export const dynamic = "force-dynamic"
  * served over http, and a browser will not fetch a `file://` subresource from
  * it. `lib/local-media` rewrites the image paths in an answer to point here.
  *
- * Two things bound it, neither of them the path:
+ * Three things bound it, none of them the path:
  *
  * - a cross-site request is refused, so another page in the same browser
  *   cannot use this route to read the disk;
+ * - the app's own data directory is refused outright, `files.anyPath` or not:
+ *   it holds settings.json, and settings.json holds the user's API keys;
  * - the response is served `nosniff`, sandboxed and non-executable, so a file
  *   that happens to be HTML or SVG cannot run script on the app's origin.
  *
@@ -61,10 +64,9 @@ export async function GET(req: Request) {
 
   // A page on another origin must not be able to probe this machine's disk
   // through the app. Same-origin fetches, the app's own <img> tags and direct
-  // navigation all send something other than `cross-site`.
-  if (req.headers.get("sec-fetch-site") === "cross-site") {
-    return NextResponse.json({ error: "Cross-site request" }, { status: 403 })
-  }
+  // navigation are the only ones that get through.
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
 
   const path = expandHome(raw)
   if (!isAbsolutePath(path)) {
@@ -72,6 +74,13 @@ export async function GET(req: Request) {
       { error: "path must be absolute" },
       { status: 400 }
     )
+  }
+
+  // Same refusal `POST /api/open` makes, and for the same reason: the data
+  // directory is one of the app's own folders, so the `anyPath` check below
+  // would happily wave it through.
+  if (await isWithinReal(dataDir(), path)) {
+    return NextResponse.json({ error: "That path is not readable" }, { status: 403 })
   }
 
   const settings = await readSettings()

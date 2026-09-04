@@ -3,6 +3,7 @@ import path from "node:path"
 import { NextResponse } from "next/server"
 
 import { walkCached } from "@/lib/fs-search"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { getSession } from "@/lib/store/sessions"
 
 export const runtime = "nodejs"
@@ -49,6 +50,8 @@ function score(candidate: string, query: string): number {
 }
 
 export async function GET(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const params = new URL(req.url).searchParams
   const sessionId = params.get("session")?.trim() ?? ""
   const query = (params.get("q") ?? "").trim().toLowerCase()

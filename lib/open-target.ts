@@ -221,26 +221,23 @@ const TERMINALS: Record<string, TerminalSpec[]> = {
       paths: ["%LOCALAPPDATA%\\Microsoft\\WindowsApps\\wt.exe"],
       argv: (bin, dir) => [bin, "-d", dir],
     },
+    /*
+     * No `/c` after `cmd.exe`: `launch` routes anything starting with `cmd`
+     * through `spawnViaCmd`, which drops that first element and prepends its
+     * own `/d /s /c`. Spelling the switch here too left cmd.exe running a
+     * command called `/c` — the window never opened.
+     */
     {
       id: "powershell",
       name: "PowerShell",
       bins: ["pwsh", "powershell"],
-      argv: (bin, dir) => [
-        "cmd.exe",
-        "/c",
-        "start",
-        "",
-        "/d",
-        dir,
-        bin,
-        "-NoExit",
-      ],
+      argv: (bin, dir) => ["cmd.exe", "start", "", "/d", dir, bin, "-NoExit"],
     },
     {
       id: "cmd",
       name: "Command Prompt",
       bins: ["cmd"],
-      argv: (_bin, dir) => ["cmd.exe", "/c", "start", "", "/d", dir, "cmd.exe"],
+      argv: (_bin, dir) => ["cmd.exe", "start", "", "/d", dir, "cmd.exe"],
     },
   ],
 }
@@ -601,6 +598,24 @@ export async function openTerminal(options: {
   if (!terminal) throw new Error("No terminal found on this machine")
   await launch(terminal.argv(terminal.bin, options.dir), options.dir)
   return { id: terminal.id, name: terminal.name }
+}
+
+/**
+ * The argv one terminal is launched with — pure, and exported for the same
+ * reason `editorArgv` is. On Windows it matters twice over: `launch` hands a
+ * `cmd.exe` argv to `spawnViaCmd`, which strips that first element and adds
+ * its own `/d /s /c`, so the element after it is the command cmd.exe runs.
+ */
+export function terminalArgv(
+  platform: string,
+  id: string,
+  bin: string,
+  dir: string
+): string[] | null {
+  const spec = (TERMINALS[platform] ?? TERMINALS.linux).find(
+    (terminal) => terminal.id === id
+  )
+  return spec ? spec.argv(bin, dir) : null
 }
 
 /** True when `id` names an installed editor — a stale setting is not "the first one". */

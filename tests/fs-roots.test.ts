@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync } from "node:fs"
+import { mkdtempSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import { test } from "node:test"
@@ -19,7 +19,7 @@ import { test } from "node:test"
 const DATA_DIR = mkdtempSync(join(tmpdir(), "agent-ui-fs-roots-"))
 process.env.AGENT_UI_DIR = DATA_DIR
 
-const { isWithin, isWithinKnownRoot } = await import("@/lib/fs-roots")
+const { isWithin, isWithinKnownRoot, realPath } = await import("@/lib/fs-roots")
 const { createSession } = await import("@/lib/store/sessions")
 const { normalizeSettings } = await import("@/lib/settings/schema")
 
@@ -94,4 +94,28 @@ test("the app's own data directory counts as one of its folders", async () => {
   // extra refusal is asserted over HTTP in tests/e2e.
   assert.equal(await isWithinKnownRoot(join(DATA_DIR, "settings.json"), settings), true)
   assert.equal(isWithin(DATA_DIR, join(DATA_DIR, "settings.json")), true)
+})
+
+test("a symlink out of a chat folder is not inside it", async () => {
+  // The lexical check believes this one: `<chat>/escape/notes.md` starts with
+  // the chat folder's own path, and lands wherever the link points.
+  const secret = join(OUTSIDE_DIR, "notes.md")
+  writeFileSync(secret, "not the agent's to read\n", "utf8")
+  symlinkSync(OUTSIDE_DIR, join(CHAT_DIR, "escape"), "dir")
+  const through = join(CHAT_DIR, "escape", "notes.md")
+
+  assert.equal(isWithin(CHAT_DIR, through), true)
+  assert.equal(await isWithinKnownRoot(through, settings), false)
+  assert.equal(await realPath(through), await realPath(secret))
+})
+
+test("a file that does not exist yet resolves through the folders that do", async () => {
+  // A path with nothing at the end of it still has to be placed, and the
+  // symlink it passes through still counts.
+  const missing = join(CHAT_DIR, "escape", "chart-not-written-yet.png")
+  assert.equal(await isWithinKnownRoot(missing, settings), false)
+  assert.equal(
+    await realPath(join(CHAT_DIR, "sub", "deeper", "chart.png")),
+    join(await realPath(CHAT_DIR), "sub", "deeper", "chart.png")
+  )
 })

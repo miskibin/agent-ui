@@ -10,6 +10,7 @@ import {
 } from "@/lib/memory/server"
 import { isValidMemoryCategory } from "@/lib/memory/types"
 import { normalizeBaseUrl, probeOllama } from "@/lib/providers/ollama-api"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
 
 export const runtime = "nodejs"
@@ -42,6 +43,8 @@ export async function GET() {
 
 /** Writes one category from the settings editor. Empty content removes it. */
 export async function PUT(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   let body: { category?: string; content?: string }
   try {
     body = (await req.json()) as typeof body
@@ -64,6 +67,8 @@ export async function PUT(req: Request) {
 
 /** `?category=x` drops one file; no query at all wipes the whole store. */
 export async function DELETE(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const category = new URL(req.url).searchParams.get("category")?.trim()
   if (!category) {
     await clearMemory()

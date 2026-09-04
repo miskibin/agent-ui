@@ -23,8 +23,9 @@ import {
   newId,
   seedAssistantMessage,
 } from "@/lib/message-stream"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
-import { getSession, readMessages, writeMessages } from "@/lib/store/sessions"
+import { getSession, readMessages, upsertMessages } from "@/lib/store/sessions"
 import type { SessionPatch, StoredMessage } from "@/lib/store/types"
 
 export const runtime = "nodejs"
@@ -57,6 +58,14 @@ type ChatBody = {
   userMessageId?: string
   assistantMessageId?: string
   attachments?: unknown
+  /**
+   * What the user actually typed, when `prompt` is more than that — the
+   * composer prepends a skill and appends the text of every attached file.
+   * Stored beside the message and handed to the memory extractor in place of
+   * `content`, so a file the agent was given cannot write itself into a store
+   * that is pasted into every later conversation.
+   */
+  typedText?: string
 }
 
 /**
@@ -67,6 +76,8 @@ type ChatBody = {
  * stream exactly.
  */
 export async function POST(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   let body: ChatBody
   try {
     body = (await req.json()) as ChatBody
@@ -111,12 +122,16 @@ export async function POST(req: Request) {
     body.attachments
   )
 
+  const typedText = body.typedText?.trim()
   const userMessage: StoredMessage = {
     id: body.userMessageId || newId(),
     content: prompt,
     sender: "user",
     createdAt: Date.now(),
     ...(attachments.length ? { attachments } : null),
+    // Only when it says something `content` does not; an unchanged prompt is
+    // its own typed text and does not need storing twice.
+    ...(typedText && typedText !== prompt ? { metadata: { typedText } } : null),
   }
 
   const shouldTitle =
@@ -124,7 +139,7 @@ export async function POST(req: Request) {
     prior.length === 0 &&
     (!session.title || session.title === "New chat")
 
-  await writeMessages(sessionId, [...prior, userMessage], {
+  await upsertMessages(sessionId, [userMessage], {
     providerId,
     model,
     ...(shouldTitle ? { title: deriveSessionTitle(prompt) } : null),
@@ -348,9 +363,12 @@ export async function POST(req: Request) {
       ...(agentSessions ? { agentSessions } : null),
     }
     try {
-      await writeMessages(
+      // By id, into whatever the file now holds — never the array this turn
+      // read minutes ago. An edit, a deleted turn or another agent's message
+      // that landed while this one streamed has to survive the write.
+      await upsertMessages(
         sessionId!,
-        keep ? [...prior, userMessage, finished] : [...prior, userMessage],
+        keep ? [userMessage, finished] : [userMessage],
         patch
       )
     } catch {
