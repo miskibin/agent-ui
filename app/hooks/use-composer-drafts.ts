@@ -8,7 +8,7 @@ import type {
   ChatInputMentionItem,
 } from "@/components/ui/chat-input"
 import * as api from "@/lib/api-client"
-import { readDrafts, writeDraft } from "@/lib/drafts"
+import { createDraftWriter, readDrafts } from "@/lib/drafts"
 
 import { EMPTY_MENTIONS } from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
@@ -38,15 +38,17 @@ export function useComposerDrafts({
   const { activeIdRef, composerRef, sessionsRef } = refs
   /** Each chat's composer state while it is not the open one (files included). */
   const draftsRef = React.useRef(new Map<string, ChatInputDraft>())
-  const draftTimerRef = React.useRef<ReturnType<typeof setTimeout> | undefined>(
-    undefined
-  )
+  const writerRef = React.useRef(createDraftWriter(DRAFT_SAVE_MS))
+  /** Chats deleted while open — the effect below must not park them again. */
+  const forgottenRef = React.useRef(new Set<string>())
 
   React.useEffect(() => {
     const composer = composerRef.current
     if (!composer) return
     const id = activeId
     const drafts = draftsRef.current
+    const forgotten = forgottenRef.current
+    const writer = writerRef.current
     const parked = drafts.get(id)
     composer.setDraft(
       parked ?? {
@@ -56,6 +58,13 @@ export function useComposerDrafts({
       }
     )
     return () => {
+      // Leaving this chat: its half-written text goes to localStorage now,
+      // because `setDraft` above is about to hand `onTextChange` the next
+      // chat's text and re-arm the timer.
+      writer.flush()
+      // A chat deleted while it was the open one is gone from the map on
+      // purpose; parking it here would put it back, File objects and all.
+      if (forgotten.delete(id)) return
       drafts.set(id, composer.getDraft())
     }
   }, [activeId, composerRef])
@@ -64,17 +73,23 @@ export function useComposerDrafts({
   const handleTextChange = React.useCallback(
     (text: string) => {
       draftStore.set(text)
-      const sessionId = activeIdRef.current
-      if (!sessionId) return
-      if (draftTimerRef.current !== undefined) {
-        clearTimeout(draftTimerRef.current)
-      }
-      draftTimerRef.current = setTimeout(() => {
-        draftTimerRef.current = undefined
-        writeDraft(sessionId, text)
-      }, DRAFT_SAVE_MS)
+      writerRef.current.schedule(activeIdRef.current, text)
     },
     [activeIdRef, draftStore]
+  )
+
+  /**
+   * A deleted chat's draft, dropped everywhere it is held: the parked copy,
+   * the write still on the timer, and the park the switch effect would
+   * otherwise make on its way out.
+   */
+  const forgetDraft = React.useCallback(
+    (id: string) => {
+      draftsRef.current.delete(id)
+      writerRef.current.forget(id)
+      if (id && id === activeIdRef.current) forgottenRef.current.add(id)
+    },
+    [activeIdRef]
   )
 
   /** `@` in the composer → files under the chat's folder. */
@@ -112,5 +127,5 @@ export function useComposerDrafts({
     [composerRef]
   )
 
-  return { draftsRef, handleTextChange, handleMentions, handleQuote }
+  return { forgetDraft, handleTextChange, handleMentions, handleQuote }
 }

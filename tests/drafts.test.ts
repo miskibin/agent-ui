@@ -25,9 +25,14 @@ let store: Store = {
   },
 }
 
-const { clearDraft, readDrafts, readStash, writeDraft, writeStash } = await import(
-  "@/lib/drafts"
-)
+const {
+  clearDraft,
+  createDraftWriter,
+  readDrafts,
+  readStash,
+  writeDraft,
+  writeStash,
+} = await import("@/lib/drafts")
 
 beforeEach(() => {
   backing = new Map()
@@ -126,4 +131,32 @@ test("the stash is capped and malformed entries are dropped", () => {
   assert.deepEqual(readStash(), [
     { id: "ok", text: "t", createdAt: 0, fileNames: [], skills: [] },
   ])
+})
+
+test("switching chats lands the pending write instead of cancelling it", () => {
+  // 300s: nothing here may depend on a timer actually firing.
+  const writer = createDraftWriter(300_000)
+  writer.schedule("s1", "half a thought")
+  // The chat switch: the composer is handed the next chat's draft, which
+  // calls straight back in with its text.
+  writer.schedule("s2", "")
+  assert.deepEqual(readDrafts(), { s1: "half a thought" })
+
+  writer.schedule("s2", "typed here")
+  writer.flush()
+  assert.deepEqual(readDrafts(), { s1: "half a thought", s2: "typed here" })
+})
+
+test("a forgotten chat's pending draft is never written", () => {
+  const writer = createDraftWriter(300_000)
+  writer.schedule("s1", "about to be deleted")
+  writer.forget("s1")
+  writer.flush()
+  assert.deepEqual(readDrafts(), {})
+
+  // Only that chat's write is dropped.
+  writer.schedule("s2", "kept")
+  writer.forget("s1")
+  writer.flush()
+  assert.deepEqual(readDrafts(), { s2: "kept" })
 })

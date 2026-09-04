@@ -35,6 +35,7 @@ import type { SessionMeta, StoredMessage } from "@/lib/store/types"
 
 import { EMPTY_MESSAGES, type QueuedMessage, type SessionRun } from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
+import type { LoadThread } from "./use-threads"
 import type { RunPrompt } from "./use-turn-runner"
 
 /**
@@ -49,6 +50,7 @@ import type { RunPrompt } from "./use-turn-runner"
 export function useChatTurns({
   refs,
   runPrompt,
+  loadThread,
   activeId,
   sessions,
   providers,
@@ -75,6 +77,7 @@ export function useChatTurns({
 }: {
   refs: ChatRefs
   runPrompt: RunPrompt
+  loadThread: LoadThread
   activeId: string
   sessions: SessionMeta[]
   providers: ProviderInfo[]
@@ -279,6 +282,15 @@ export function useChatTurns({
           toast.error(errorMessage(err, "Could not start a new chat"))
           return
         }
+      } else if (threadsRef.current[sessionId] === undefined) {
+        /**
+         * The composer stays live while a transcript is still loading, and a
+         * queued message can land on a chat the LRU has since dropped. Seeding
+         * the turn from a thread that has not arrived would leave the chat as
+         * this one exchange — which the next inline edit then persists over
+         * the real history — so wait for the body and take its own prior.
+         */
+        prior = (await loadThread(sessionId)) ?? EMPTY_MESSAGES
       }
 
       // An unanswered ask block is treated as skipped once the user types on.
@@ -298,6 +310,9 @@ export function useChatTurns({
       void runPrompt({
         sessionId,
         prompt: content,
+        // What the memory extractor is shown: the prompt carries the skills
+        // prefix, the fenced attachments and the file note as well.
+        typedText: text,
         prior,
         providerId: runProvider,
         model: runModel,
@@ -323,6 +338,7 @@ export function useChatTurns({
       chosenPermission,
       effort,
       handleNewChat,
+      loadThread,
       model,
       openFolder,
       patchLocal,
@@ -458,6 +474,10 @@ export function useChatTurns({
           sessionId,
           prompt,
           prior: next,
+          // The turn below the one being re-run is gone: seed over `prior`
+          // rather than onto the thread. `typedText` is not knowable here —
+          // the stored message is all that is left of what was typed.
+          replacePrior: true,
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,

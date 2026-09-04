@@ -14,6 +14,9 @@ const MAX_CACHED_THREADS = 4
 
 export type Threads = ReturnType<typeof useThreads>
 
+/** Resolves with the transcript, whoever's fetch it ends up being. */
+export type LoadThread = (id: string) => Promise<StoredMessage[] | undefined>
+
 /**
  * The transcripts themselves, loaded lazily per chat and kept on a tiny LRU:
  * opening chats must not retain every transcript for the lifetime of the
@@ -25,7 +28,9 @@ export function useThreads(refs: ChatRefs) {
   const [threads, setThreads] = React.useState<
     Record<string, StoredMessage[]>
   >({})
-  const inflightRef = React.useRef(new Set<string>())
+  const inflightRef = React.useRef(
+    new Map<string, Promise<StoredMessage[] | undefined>>()
+  )
   const threadAccessRef = React.useRef<string[]>([])
 
   const cacheThread = React.useCallback(
@@ -62,23 +67,36 @@ export function useThreads(refs: ChatRefs) {
     [abortsRef, activeIdRef]
   )
 
+  /**
+   * Loads one transcript and hands it back. It is the promise that is deduped,
+   * not just the fetch: a caller that cannot run without the body — `send`,
+   * seeding a turn onto the history — has to be able to await a load someone
+   * else already started, not fall through to an empty thread.
+   */
   const loadThread = React.useCallback(
-    async (id: string) => {
-      if (!id) return
-      if (threadsRef.current[id] !== undefined) return
-      if (inflightRef.current.has(id)) return
-      inflightRef.current.add(id)
-      try {
-        const loaded = await api.fetchMessages(id)
-        // A run may have seeded the thread while this was in flight.
-        setThreads((prev) =>
-          prev[id] !== undefined ? prev : cacheThread(prev, id, loaded)
-        )
-      } catch (err) {
-        toast.error(errorMessage(err, "Could not load this chat"))
-      } finally {
-        inflightRef.current.delete(id)
-      }
+    async (id: string): Promise<StoredMessage[] | undefined> => {
+      if (!id) return undefined
+      const cached = threadsRef.current[id]
+      if (cached !== undefined) return cached
+      const inflight = inflightRef.current.get(id)
+      if (inflight) return inflight
+      const pending = (async () => {
+        try {
+          const loaded = await api.fetchMessages(id)
+          // A run may have seeded the thread while this was in flight.
+          setThreads((prev) =>
+            prev[id] !== undefined ? prev : cacheThread(prev, id, loaded)
+          )
+          return loaded
+        } catch (err) {
+          toast.error(errorMessage(err, "Could not load this chat"))
+          return undefined
+        } finally {
+          inflightRef.current.delete(id)
+        }
+      })()
+      inflightRef.current.set(id, pending)
+      return pending
     },
     [cacheThread, threadsRef]
   )

@@ -3,7 +3,6 @@
 import * as React from "react"
 import { toast } from "sonner"
 
-import type { ChatInputDraft } from "@/components/ui/chat-input"
 import * as api from "@/lib/api-client"
 import { errorMessage, omit } from "@/lib/chat-helpers"
 import { clearDraft } from "@/lib/drafts"
@@ -13,6 +12,7 @@ import type { SessionMeta, StoredMessage } from "@/lib/store/types"
 
 import type { QueuedMessage, SessionRun } from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
+import type { LoadThread } from "./use-threads"
 
 /**
  * The mutations that cross concerns: opening a chat has to re-point the
@@ -42,7 +42,7 @@ export function useChatActions({
   adoptAgent,
   closePreview,
   closeNav,
-  draftsRef,
+  forgetDraft,
 }: {
   refs: ChatRefs
   sessions: SessionMeta[]
@@ -70,7 +70,7 @@ export function useChatActions({
     id: string,
     body: StoredMessage[]
   ) => Record<string, StoredMessage[]>
-  loadThread: (id: string) => Promise<void>
+  loadThread: LoadThread
   adoptAgent: (
     session: SessionMeta | undefined,
     list: ProviderInfo[],
@@ -78,7 +78,8 @@ export function useChatActions({
   ) => void
   closePreview: () => void
   closeNav: () => void
-  draftsRef: React.RefObject<Map<string, ChatInputDraft>>
+  /** Drops a deleted chat's parked draft — see `use-composer-drafts`. */
+  forgetDraft: (id: string) => void
 }) {
   const {
     abortsRef,
@@ -189,7 +190,7 @@ export function useChatActions({
       abortsRef.current.get(id)?.abort()
       abortsRef.current.delete(id)
       setQueues((prev) => omit(prev, id))
-      draftsRef.current.delete(id)
+      forgetDraft(id)
       clearDraft(id)
       setThreads((prev) => {
         if (prev[id] === undefined) return prev
@@ -216,7 +217,7 @@ export function useChatActions({
       abortsRef,
       activeIdRef,
       closePreview,
-      draftsRef,
+      forgetDraft,
       setActiveId,
       setFailures,
       setQueues,
@@ -233,7 +234,7 @@ export function useChatActions({
       for (const id of ids) {
         abortsRef.current.get(id)?.abort()
         abortsRef.current.delete(id)
-        draftsRef.current.delete(id)
+        forgetDraft(id)
         clearDraft(id)
       }
       setQueues((prev) => {
@@ -281,7 +282,7 @@ export function useChatActions({
     },
     [
       abortsRef,
-      draftsRef,
+      forgetDraft,
       setActiveId,
       setFailures,
       setQueues,

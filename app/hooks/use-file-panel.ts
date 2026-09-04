@@ -350,11 +350,18 @@ export function useFilePanel({
    * component, decides what a location means. The line becomes the panel's
    * focus, so `app/page.tsx:120` opens on line 120.
    */
+  const focusNonceRef = React.useRef(0)
   const handleFileReferenceClick = React.useCallback(
     (messageId: string, reference: string, line?: number) => {
       const path = reference.replace(/:\d+(?::\d+)?$/, "")
       const file = previewFromTurn(messageId, path) ?? { path }
-      openPreview(line ? { ...file, focusLine: line } : file)
+      // A second click on the same chip is a fresh request to look at that
+      // line; the nonce is what tells the panel so after it has scrolled away.
+      openPreview(
+        line
+          ? { ...file, focusLine: line, focusNonce: ++focusNonceRef.current }
+          : file
+      )
     },
     [openPreview, previewFromTurn]
   )

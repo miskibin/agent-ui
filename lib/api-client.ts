@@ -271,6 +271,14 @@ export type ChatRequest = {
   assistantMessageId: string
   /** Images the composer resolved as vision-eligible for this turn. */
   attachments?: MessageAttachmentData[]
+  /**
+   * Exactly what the user typed, before the skill prefix, the attachment
+   * fences and the "Attached: …" note the composer adds. The memory extractor
+   * is fed this instead of `content`, so a file the turn merely carried cannot
+   * write itself into every future prompt. Absent when it is not known — a
+   * regenerate re-runs a stored message, whose typed half is long gone.
+   */
+  typedText?: string
 }
 
 /** Streams `POST /api/chat`, handing every SSE event to `onEvent`. */
