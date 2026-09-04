@@ -23,7 +23,8 @@
  */
 
 import { spawnSync } from "node:child_process"
-import { createWriteStream } from "node:fs"
+import { createHash } from "node:crypto"
+import { createReadStream, createWriteStream } from "node:fs"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
@@ -126,6 +127,37 @@ async function download(url, destination) {
   await pipeline(Readable.fromWeb(response.body), createWriteStream(destination))
 }
 
+/**
+ * nodejs.org publishes SHASUMS256.txt beside every artifact, so a download is
+ * checked before anything is unpacked from it: an archive that does not match
+ * is a truncated transfer or a mirror that lied, and either way it must not
+ * become the runtime the app ships.
+ */
+async function verifyArchive(archive, archiveName, workDir) {
+  const sumsPath = path.join(workDir, "SHASUMS256.txt")
+  await download(`https://nodejs.org/dist/${NODE_VERSION}/SHASUMS256.txt`, sumsPath)
+  const line = (await fs.readFile(sumsPath, "utf8"))
+    .split("\n")
+    .find((entry) => entry.trimEnd().endsWith(` ${archiveName}`))
+  if (!line) {
+    throw new Error(`No SHASUMS256 entry for ${archiveName} in ${NODE_VERSION}`)
+  }
+  const expected = line.trim().split(/\s+/)[0]
+  const actual = await sha256(archive)
+  if (actual !== expected) {
+    throw new Error(
+      `Checksum mismatch for ${archiveName}\n  expected ${expected}\n  got      ${actual}`
+    )
+  }
+  log(`sha256 ok: ${archiveName}`)
+}
+
+async function sha256(file) {
+  const hash = createHash("sha256")
+  await pipeline(createReadStream(file), hash)
+  return hash.digest("hex")
+}
+
 /** Extracts a single member out of the Node archive. */
 async function extractNodeBinary(archive, build, workDir, destination) {
   if (build.ext === "zip") {
@@ -185,6 +217,7 @@ async function prepareNode(triple) {
     log(`downloading ${url}`)
     const archive = path.join(workDir, archiveName)
     await download(url, archive)
+    await verifyArchive(archive, archiveName, workDir)
     await fs.mkdir(BIN_DIR, { recursive: true })
     await extractNodeBinary(archive, build, workDir, destination)
     log(`node sidecar -> ${path.relative(ROOT, destination)}`)

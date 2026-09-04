@@ -24,8 +24,10 @@ import type {
  * Metadata is deliberately split from message bodies: the sidebar, the chat
  * route and the settings page only ever read the small index, and a thread's
  * messages are loaded lazily when it is opened. Writes go to a temp file and
- * are renamed into place, and every index mutation runs through a one-slot
- * queue so concurrent requests cannot interleave a read-modify-write.
+ * are renamed into place, and every write — index, transcript and journal
+ * alike — runs through one one-slot queue, so concurrent requests cannot
+ * interleave a read-modify-write and the delete that removes all three files
+ * cannot land in the middle of a turn writing them.
  */
 
 const MAX_TITLE = 120
@@ -85,8 +87,13 @@ async function readJson<T>(path: string, fallback: T): Promise<T> {
 let queue: Promise<unknown> = Promise.resolve()
 let indexCache: SessionMeta[] | null = null
 
-/** Serializes index read-modify-writes within this process. */
-function withIndexLock<T>(task: () => Promise<T>): Promise<T> {
+/**
+ * Serializes every store read-modify-write in this process. One queue rather
+ * than one per file: a turn writes the transcript, the index and the journal
+ * for the same chat, and `deleteSession` removes all three — the only ordering
+ * that is safe is "no two of those at once".
+ */
+function withStoreLock<T>(task: () => Promise<T>): Promise<T> {
   const run = queue.then(task, task)
   queue = run.catch(() => {})
   return run
@@ -197,7 +204,7 @@ export function getSession(id: string): Promise<SessionMeta | null> {
 }
 
 export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
-  return withIndexLock(async () => {
+  return withStoreLock(async () => {
     const now = Date.now()
     const session: SessionMeta = {
       id: newSessionId(),
@@ -230,7 +237,7 @@ export function patchSession(
   id: string,
   patch: SessionPatch
 ): Promise<SessionMeta | null> {
-  return withIndexLock(async () => {
+  return withStoreLock(async () => {
     const sessions = await readIndex()
     const index = sessions.findIndex((session) => session.id === id)
     if (index < 0) return null
@@ -249,7 +256,7 @@ export function patchSession(
 }
 
 export function deleteSession(id: string): Promise<boolean> {
-  return withIndexLock(async () => {
+  return withStoreLock(async () => {
     const sessions = await readIndex()
     if (!sessions.some((session) => session.id === id)) return false
     await writeIndex(reindex(sessions.filter((session) => session.id !== id)))
@@ -261,7 +268,7 @@ export function deleteSession(id: string): Promise<boolean> {
 
 /** Wipes every thread — the Data section of the settings page calls this. */
 export function clearSessions(): Promise<number> {
-  return withIndexLock(async () => {
+  return withStoreLock(async () => {
     const sessions = await readIndex()
     await writeIndex([])
     await Promise.all(
@@ -284,18 +291,66 @@ export async function readMessages(id: string): Promise<StoredMessage[]> {
   return Array.isArray(raw) ? raw : []
 }
 
-/** Writes the thread and keeps `messageCount` / `updatedAt` in step. */
-export async function writeMessages(
+/** Replaces the thread and keeps `messageCount` / `updatedAt` in step. */
+export function writeMessages(
   id: string,
   messages: StoredMessage[],
   patch: SessionPatch = {}
 ): Promise<SessionMeta | null> {
-  if (!isValidSessionId(id)) return null
-  await writeJsonAtomic(messagesPath(id), messages)
-  return withIndexLock(async () => {
+  return commitMessages(id, () => messages, patch)
+}
+
+/**
+ * Merges rows into the stored thread by id: a message the file does not have
+ * is appended, one it has is replaced where it stands.
+ *
+ * This is how a streaming turn persists, and the difference matters. A turn
+ * starts by reading the transcript and ends minutes later; writing back the
+ * array it started from would quietly undo everything that happened in
+ * between — an edited earlier message, a deleted turn, a message the user sent
+ * to another agent in the same chat. Only the two rows the turn actually owns
+ * are its to write.
+ */
+export function upsertMessages(
+  id: string,
+  messages: StoredMessage[],
+  patch: SessionPatch = {}
+): Promise<SessionMeta | null> {
+  return commitMessages(
+    id,
+    (current) => {
+      const next = [...current]
+      for (const message of messages) {
+        const at = next.findIndex((entry) => entry.id === message.id)
+        if (at < 0) next.push(message)
+        else next[at] = message
+      }
+      return next
+    },
+    patch
+  )
+}
+
+/**
+ * The transcript write, under the store lock and gated on the index.
+ *
+ * A chat deleted while its turn was still streaming must stay deleted: the
+ * index is the record of what exists, so a write for a chat that is no longer
+ * in it writes nothing rather than re-creating `sessions/<id>.json` as an
+ * orphan nothing will ever clean up.
+ */
+function commitMessages(
+  id: string,
+  resolve: (current: StoredMessage[]) => StoredMessage[],
+  patch: SessionPatch
+): Promise<SessionMeta | null> {
+  if (!isValidSessionId(id)) return Promise.resolve(null)
+  return withStoreLock(async () => {
     const sessions = await readIndex()
     const index = sessions.findIndex((session) => session.id === id)
     if (index < 0) return null
+    const messages = resolve(await readMessages(id))
+    await writeJsonAtomic(messagesPath(id), messages)
     const next: SessionMeta = {
       ...applyPatch(sessions[index], patch),
       messageCount: messages.length,
@@ -310,15 +365,6 @@ export async function writeMessages(
 /* Journal                                                                     */
 /* -------------------------------------------------------------------------- */
 
-let journalQueue: Promise<unknown> = Promise.resolve()
-
-/** Serializes journal read-modify-writes the way the index has its own lock. */
-function withJournalLock<T>(task: () => Promise<T>): Promise<T> {
-  const run = journalQueue.then(task, task)
-  journalQueue = run.catch(() => {})
-  return run
-}
-
 export async function readJournal(id: string): Promise<JournalEvent[]> {
   if (!isValidSessionId(id)) return []
   return normalizeJournal(await readJson<unknown>(journalPath(id), []))
@@ -328,13 +374,19 @@ export async function readJournal(id: string): Promise<JournalEvent[]> {
  * Appends a turn's events and returns the journal as it now stands. Seqs are
  * only ever handed out here, so they stay monotonic per chat even when the
  * cap drops the front of the file.
+ *
+ * Under the store lock and gated on the index for the same reason the
+ * transcript is: the journal of a chat that was deleted mid-turn must not be
+ * written back after `deleteSession` removed it.
  */
 export function appendJournal(
   id: string,
   events: NewJournalEvent[]
 ): Promise<JournalEvent[]> {
   if (!isValidSessionId(id) || events.length === 0) return readJournal(id)
-  return withJournalLock(async () => {
+  return withStoreLock(async () => {
+    const sessions = await readIndex()
+    if (!sessions.some((session) => session.id === id)) return []
     const existing = normalizeJournal(
       await readJson<unknown>(journalPath(id), [])
     )

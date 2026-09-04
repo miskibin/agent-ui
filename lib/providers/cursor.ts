@@ -43,6 +43,9 @@ const HEADLINE_IDS = [
   "gpt-5.5-high",
 ]
 
+/** The environment's own override, captured before any provider rewrites it. */
+const INHERITED_BIN = process.env.CURSOR_AGENT_BIN
+
 const MODEL_CACHE_MS = 5 * 60 * 1000
 let modelCache: { at: number; key: string; models: ModelOption[] } | null = null
 
@@ -60,9 +63,16 @@ export function createCursorProvider(
    * `lib/agent-runtime` resolves the binary from `CURSOR_AGENT_BIN`, so the
    * settings override is applied by pointing that variable at it for this
    * process before anything spawns.
+   *
+   * Clearing the setting has to unset it again: the variable outlives the
+   * provider that wrote it, so a stale one would keep spawning a binary the
+   * user has since removed from settings. What the process was *started* with
+   * is the user's own override and is restored rather than dropped.
    */
   const applyBinOverride = () => {
     if (binPath) process.env.CURSOR_AGENT_BIN = binPath
+    else if (INHERITED_BIN) process.env.CURSOR_AGENT_BIN = INHERITED_BIN
+    else delete process.env.CURSOR_AGENT_BIN
   }
 
   const detect = (): { available: boolean; reason?: string } => {

@@ -124,9 +124,15 @@ export async function* runPiAgent(
     child.once("error", () => resolve(1))
   })
 
+  // Decoding per chunk would tear a multi-byte character in half wherever the
+  // pipe happened to break; the stream's own decoder holds the tail back until
+  // the rest of the sequence arrives.
+  child.stdout?.setEncoding("utf8")
+  child.stderr?.setEncoding("utf8")
+
   const stderrChunks: string[] = []
-  child.stderr?.on("data", (chunk: Buffer | string) => {
-    stderrChunks.push(String(chunk))
+  child.stderr?.on("data", (chunk: string) => {
+    stderrChunks.push(chunk)
   })
 
   const onAbort = () => killPi(child)
@@ -191,7 +197,7 @@ export async function* runPiAgent(
 
     for await (const chunk of readStdout(child.stdout)) {
       if (options.signal?.aborted) break
-      for (const line of lines.push(String(chunk))) {
+      for (const line of lines.push(chunk)) {
         for (const mapped of mapLine(line)) {
           if (mapped.type === "error") sawError = true
           if (mapped.type === "text" && mapped.text.trim()) sawText = true
@@ -249,9 +255,10 @@ export async function* runPiAgent(
  * A stream torn down by a failed spawn rejects; the `error` event carries the
  * real reason, so swallow the tear-down and let the caller report that.
  */
-async function* readStdout(stdout: NodeJS.ReadableStream) {
+async function* readStdout(stdout: NodeJS.ReadableStream): AsyncGenerator<string> {
   try {
-    yield* stdout
+    // Strings, not Buffers: the stream was given an encoding after the spawn.
+    yield* stdout as AsyncIterable<string>
   } catch {
     /* reported from the child's `error` event instead */
   }

@@ -13,7 +13,7 @@ import type {
   NewJournalEvent,
   WorktreeSnapshot,
 } from "@/lib/handoff/types"
-import { appendJournal, readJournal } from "@/lib/store/sessions"
+import { appendJournal, getSession, readJournal } from "@/lib/store/sessions"
 import type { SessionMeta } from "@/lib/store/types"
 
 /**
@@ -135,6 +135,13 @@ export async function commitTurn(args: {
   })
 
   // Every other provider's entry is left exactly as it was: switching agents
-  // must not cost the one being switched away from its resumable session.
-  return { ...args.prepared.agentSessions, [args.providerId]: entry }
+  // must not cost the one being switched away from its resumable session. The
+  // record to merge into is the one the index holds *now*, not the snapshot
+  // this turn started from — a second agent may have finished a turn of its
+  // own in this chat while this one was streaming, and replaying the old
+  // record would drop the session it just minted.
+  const current =
+    (await getSession(args.sessionId))?.agentSessions ??
+    args.prepared.agentSessions
+  return { ...current, [args.providerId]: entry }
 }

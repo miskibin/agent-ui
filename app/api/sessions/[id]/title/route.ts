@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { canComplete, complete } from "@/lib/completion"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
 import { getSession, patchSession, readMessages } from "@/lib/store/sessions"
 
@@ -29,9 +30,8 @@ const SYSTEM = [
  */
 export async function POST(req: Request, ctx: Ctx) {
   // A model call on the user's key, from a page on another origin — no.
-  if (req.headers.get("sec-fetch-site") === "cross-site") {
-    return NextResponse.json({ error: "Cross-site request" }, { status: 403 })
-  }
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const { id } = await ctx.params
   const session = await getSession(id)
   if (!session) {

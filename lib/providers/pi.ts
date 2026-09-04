@@ -1,6 +1,7 @@
 import "server-only"
 
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { randomBytes } from "node:crypto"
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { ModelOption } from "@/components/ui/model-picker"
@@ -380,5 +381,10 @@ async function writeModelsConfig(
   // Owner-only: this overlay carries every hosted source's API key.
   // (Both modes are advisory on Windows, which has no POSIX bits.)
   await mkdir(configDir, { recursive: true, mode: 0o700 })
-  await writeFile(path, serialized, { encoding: "utf8", mode: 0o600 })
+  // A concurrent turn may spawn a pi that reads this file at any moment, so it
+  // is replaced rather than rewritten: a reader sees the whole old file or the
+  // whole new one, never a half-written one.
+  const tmp = `${path}.${process.pid.toString(36)}${randomBytes(3).toString("hex")}.tmp`
+  await writeFile(tmp, serialized, { encoding: "utf8", mode: 0o600 })
+  await rename(tmp, path)
 }

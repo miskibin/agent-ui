@@ -4,6 +4,8 @@ import { promisify } from "node:util"
 
 import { NextResponse } from "next/server"
 
+import { realPath } from "@/lib/fs-roots"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { getSession } from "@/lib/store/sessions"
 
 export const runtime = "nodejs"
@@ -22,9 +24,8 @@ const GIT_TIMEOUT_MS = 5_000
  * it; git only ever sees a relative path as an argument after `--`.
  */
 export async function POST(req: Request) {
-  if (req.headers.get("sec-fetch-site") === "cross-site") {
-    return NextResponse.json({ error: "Cross-site request" }, { status: 403 })
-  }
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   let body: { sessionId?: string; path?: string }
   try {
     body = (await req.json()) as typeof body
@@ -47,17 +48,17 @@ export async function POST(req: Request) {
     )
   }
   const resolvedRoot = path.resolve(root)
-  const target = path.resolve(resolvedRoot, requested)
-  if (
-    target !== resolvedRoot &&
-    !target.startsWith(resolvedRoot + path.sep)
-  ) {
+  // Real paths on both sides: a symlink in the folder must not become a way of
+  // running `git checkout` against a file outside it.
+  const realRoot = await realPath(resolvedRoot)
+  const target = await realPath(path.resolve(resolvedRoot, requested))
+  if (target !== realRoot && !target.startsWith(realRoot + path.sep)) {
     return NextResponse.json(
       { error: "That path is outside the chat's folder" },
       { status: 403 }
     )
   }
-  const relative = path.relative(resolvedRoot, target)
+  const relative = path.relative(realRoot, target)
 
   const git = (args: string[]) =>
     run("git", args, { cwd: resolvedRoot, timeout: GIT_TIMEOUT_MS, windowsHide: true })

@@ -30,6 +30,13 @@ export const HANDOFF_BUDGET = 8_000
 const MAX_REQUESTS = 3
 /** File rows before the list itself is trimmed. */
 const MAX_FILE_ROWS = 40
+/**
+ * Git rows carried into the render at all. `status --porcelain` on a dirty
+ * checkout can run to thousands of lines, and the block never prints more than
+ * `MAX_FILE_ROWS` of them — but the merge below reads every row on every pass
+ * of the shedding loop, which is where an uncapped list costs real time.
+ */
+const MAX_CONTEXT_FILE_ROWS = 200
 /** Error entries that survive any budget. */
 const PROTECTED_ERRORS = 3
 
@@ -80,7 +87,9 @@ export function buildHandoff(input: HandoffInput): HandoffResult | undefined {
     fileRows: (input.diffStat?.length
       ? input.diffStat
       : (input.current?.status ?? [])
-    ).filter((row) => row.trim()),
+    )
+      .filter((row) => row.trim())
+      .slice(0, MAX_CONTEXT_FILE_ROWS),
   }
 
   // Oldest-first shedding: the protected set (the warning, and the newest few
@@ -207,10 +216,13 @@ function summarize(
   }
 
   // The diff (or the dirty list) names files no tool call touched — a script
-  // that wrote a chart, a build that regenerated a lockfile.
+  // that wrote a chart, a build that regenerated a lockfile. Merging stops at
+  // `MAX_FILE_ROWS`: everything past it is sliced off below and counted as the
+  // limit either way, and this runs once per pass of the shedding loop.
   const fileList = [...paths]
   const keys = paths.map(pathKey)
   for (const row of context.fileRows) {
+    if (fileList.length >= MAX_FILE_ROWS) break
     const key = rowKey(row)
     if (keys.some((known) => sameKey(known, key))) continue
     keys.push(key)
@@ -247,6 +259,9 @@ function describeTarget(paths: string[] | undefined) {
 }
 
 function addPath(paths: string[], path: string) {
+  // Same reasoning as the row merge: past `MAX_FILE_ROWS` a path can neither
+  // be printed nor change a count, and the scan here is quadratic.
+  if (paths.length >= MAX_FILE_ROWS) return
   const key = pathKey(path)
   if (!key || paths.some((known) => sameKey(pathKey(known), key))) return
   paths.push(path)

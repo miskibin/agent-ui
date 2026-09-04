@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server"
 
 import { listSourceModels, type ModelSource } from "@/lib/model-providers/server"
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
 
 export const runtime = "nodejs"
@@ -14,6 +15,8 @@ export const dynamic = "force-dynamic"
  * failed fetch the client has to special-case.
  */
 export async function POST(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   let body: unknown
   try {
     body = await req.json()

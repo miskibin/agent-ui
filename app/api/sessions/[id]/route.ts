@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { crossOriginRefusal } from "@/lib/request-origin"
 import {
   deleteSession,
   getSession,
@@ -29,6 +30,8 @@ export async function GET(_req: Request, ctx: Ctx) {
  * provider-side conversation id). `order` moves the row to that sidebar index.
  */
 export async function PATCH(req: Request, ctx: Ctx) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const { id } = await ctx.params
   let body: SessionPatch
   try {
@@ -65,6 +68,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
  * a deleted turn. Streaming turns are written by `app/api/chat` instead.
  */
 export async function PUT(req: Request, ctx: Ctx) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const { id } = await ctx.params
   let body: { messages?: StoredMessage[] }
   try {
@@ -82,7 +87,9 @@ export async function PUT(req: Request, ctx: Ctx) {
   return NextResponse.json({ session })
 }
 
-export async function DELETE(_req: Request, ctx: Ctx) {
+export async function DELETE(req: Request, ctx: Ctx) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   const { id } = await ctx.params
   const deleted = await deleteSession(id)
   if (!deleted) {

@@ -56,6 +56,51 @@ export function writeDraft(sessionId: string, text: string) {
   write(DRAFTS_KEY, drafts)
 }
 
+export type DraftWriter = ReturnType<typeof createDraftWriter>
+
+/**
+ * The composer's debounced write, per chat.
+ *
+ * Only one write is ever pending, because only one chat is open — but a chat
+ * switch calls straight back in with the *new* chat's text, so the pending
+ * write of the chat being left has to land before the timer is re-armed.
+ * Cancelling it instead is how the last keystrokes of every quickly abandoned
+ * chat used to be lost.
+ */
+export function createDraftWriter(delayMs: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let pending: { sessionId: string; text: string } | null = null
+
+  const cancel = () => {
+    if (timer !== undefined) clearTimeout(timer)
+    timer = undefined
+    pending = null
+  }
+
+  /** Writes whatever the timer is holding, now. */
+  const flush = () => {
+    const write = pending
+    cancel()
+    if (write) writeDraft(write.sessionId, write.text)
+  }
+
+  return {
+    flush,
+    /** Queues one chat's draft, flushing another chat's pending write first. */
+    schedule(sessionId: string, text: string) {
+      if (pending && pending.sessionId !== sessionId) flush()
+      if (!sessionId) return
+      if (timer !== undefined) clearTimeout(timer)
+      pending = { sessionId, text }
+      timer = setTimeout(flush, delayMs)
+    },
+    /** Drops a pending write for a chat that is not there to write it for. */
+    forget(sessionId: string) {
+      if (pending?.sessionId === sessionId) cancel()
+    },
+  }
+}
+
 /** Drops a deleted chat's draft, so the store does not outgrow the chats. */
 export function clearDraft(sessionId: string) {
   const drafts = readDrafts()

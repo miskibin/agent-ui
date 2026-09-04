@@ -272,19 +272,27 @@ export class ClaudeCodeTranslator {
   }
 
   private toolResults(event: ClaudeCodeCliEvent, out: AgentStreamEvent[]) {
-    for (const block of event.message?.content ?? []) {
-      if (block.type !== "tool_result" || !block.tool_use_id) continue
-      // Bash publishes stdout and stderr but no structured exit code, so this
-      // is usually absent — and absent is what it stays. `exitCodeFrom` reads
-      // a field a backend actually published and never infers one from prose.
-      const exitCode = exitCodeFrom(event.tool_use_result)
+    const blocks = (event.message?.content ?? []).filter(
+      (block): block is ClaudeCodeBlock & { tool_use_id: string } =>
+        block.type === "tool_result" && Boolean(block.tool_use_id)
+    )
+    // `tool_use_result` hangs off the *message*, not the block, so it can only
+    // be attributed when the message carries a single result. Parallel tool
+    // calls come back batched, and handing every one of them the same exit code
+    // and the same stdout would be an invention.
+    const result = blocks.length === 1 ? event.tool_use_result : undefined
+    // Bash publishes stdout and stderr but no structured exit code, so this is
+    // usually absent — and absent is what it stays. `exitCodeFrom` reads a
+    // field a backend actually published and never infers one from prose.
+    const exitCode = exitCodeFrom(result)
+    for (const block of blocks) {
       out.push({
         type: "tool",
         id: block.tool_use_id,
         name: this.toolNames.get(block.tool_use_id) ?? "tool",
         // The field is absent, not false, on a plain success.
         status: block.is_error === true ? "error" : "done",
-        output: formatToolResult(block.content, event.tool_use_result),
+        output: formatToolResult(block.content, result),
         ...(exitCode === undefined ? null : { exitCode }),
       })
     }

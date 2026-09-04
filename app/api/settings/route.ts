@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings, writeSettings } from "@/lib/settings/server"
 
 export const runtime = "nodejs"
@@ -10,6 +11,8 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   let body: unknown
   try {
     body = await req.json()

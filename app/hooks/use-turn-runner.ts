@@ -43,8 +43,15 @@ export type RunPromptArgs = {
   attachments?: MessageAttachmentData[]
   animate?: boolean
   titleFrom?: string
+  /** What the user actually typed, when the prompt is more than that. */
+  typedText?: string
   /** The app wrote this prompt, not the user — keep it out of the list. */
   internal?: boolean
+  /**
+   * Seed over `prior` instead of onto whatever the thread now holds — only
+   * regenerate, which means to drop the turn it is re-running.
+   */
+  replacePrior?: boolean
 }
 
 export type RunPrompt = (args: RunPromptArgs) => Promise<void>
@@ -106,14 +113,29 @@ export function useTurnRunner({
         ...(args.internal ? { internal: true } : null),
         ...(args.attachments?.length ? { attachments: args.attachments } : null),
       }
-      const seeded = [...prior, userMessage, seedAssistantMessage(assistantId)]
+      const assistantMessage = seedAssistantMessage(assistantId)
+      /**
+       * The pair is appended to what the thread *now* holds, not written over
+       * `prior`: a queued message is sent from the ending turn's `finally`,
+       * one paint before the mirrors catch up, so the `prior` it carries is
+       * still missing the error text and the handoff marker that turn just
+       * wrote. Only a regenerate means to truncate, and it says so.
+       */
+      const seedOver = (current: StoredMessage[] | undefined) => [
+        ...(args.replacePrior || current === undefined ? prior : current),
+        userMessage,
+        assistantMessage,
+      ]
 
       abortsRef.current.get(sessionId)?.abort()
       const controller = new AbortController()
       abortsRef.current.set(sessionId, controller)
 
       const paint = () => {
-        setThreads((prev) => ({ ...prev, [sessionId]: seeded }))
+        setThreads((prev) => ({
+          ...prev,
+          [sessionId]: seedOver(prev[sessionId]),
+        }))
         setRuns((prev) => ({
           ...prev,
           [sessionId]: { startedAt, stage: "thinking" },
@@ -134,7 +156,7 @@ export function useTurnRunner({
         providerId: args.providerId,
         model: args.model,
         updatedAt: startedAt,
-        messageCount: seeded.length,
+        messageCount: prior.length + 2,
       })
 
       const patchAssistant = (
@@ -419,6 +441,7 @@ export function useTurnRunner({
             userMessageId: userMessage.id,
             assistantMessageId: assistantId,
             attachments: args.attachments,
+            typedText: args.typedText,
           },
           { onEvent, onTurnState, signal: controller.signal }
         )

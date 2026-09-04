@@ -28,7 +28,12 @@ import type { AppSettingsApi } from "./use-app-settings"
 
 const PRESET_SLUGS = new Set(MODEL_PROVIDER_PRESETS.map((preset) => preset.slug))
 
-export function ModelProvidersSection({ settings, loaded, update }: AppSettingsApi) {
+export function ModelProvidersSection({
+  settings,
+  loaded,
+  update,
+  flush,
+}: AppSettingsApi) {
   const entries = settings.modelProviders
 
   // Presets in their shipped order, then user-added slugs alphabetically —
@@ -97,6 +102,7 @@ export function ModelProvidersSection({ settings, loaded, update }: AppSettingsA
               removable={!PRESET_SLUGS.has(slug)}
               onPatch={patchEntry}
               onRemove={removeEntry}
+              onFlush={flush}
             />
           ))
         : null}
@@ -112,6 +118,7 @@ type ModelProviderRowProps = {
   removable: boolean
   onPatch: (slug: string, changes: Partial<ModelProviderEntry>) => void
   onRemove: (slug: string) => void
+  onFlush: () => Promise<void>
 }
 
 function ModelProviderRow({
@@ -120,6 +127,7 @@ function ModelProviderRow({
   removable,
   onPatch,
   onRemove,
+  onFlush,
 }: ModelProviderRowProps) {
   const [probing, setProbing] = React.useState(false)
   const [result, setResult] = React.useState<
@@ -137,6 +145,9 @@ function ModelProviderRow({
     setProbing(true)
     setResult(null)
     try {
+      // The route reads settings.json, so a base URL or key typed a moment ago
+      // has to be on disk before the probe — otherwise this tests the old one.
+      await onFlush()
       const outcome = await probeModelProvider(slug)
       setResult(outcome)
     } catch (err) {
@@ -147,7 +158,7 @@ function ModelProviderRow({
     } finally {
       setProbing(false)
     }
-  }, [slug])
+  }, [slug, onFlush])
 
   return (
     <SettingsRow

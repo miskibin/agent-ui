@@ -33,6 +33,7 @@ import { TodoPanel } from "@/components/ui/todo-list"
 import { providerSessionHints } from "@/lib/handoff/types"
 import { APP_SLASH_COMMANDS } from "@/lib/slash-commands"
 import type { StoredMessage } from "@/lib/store/types"
+import { CACHE_ACTIVE_KEY, CACHE_INDEX_KEY, writeCache } from "@/lib/ui-cache"
 import { cn } from "@/lib/utils"
 
 import { EMPTY_MESSAGES, type SessionRun } from "./hooks/chat-types"
@@ -251,7 +252,7 @@ export default function ChatPage() {
   })
 
   const draftStore = useDraftStore()
-  const { draftsRef, handleTextChange, handleMentions, handleQuote } =
+  const { forgetDraft, handleTextChange, handleMentions, handleQuote } =
     useComposerDrafts({ refs, activeId, draftStore })
 
   const {
@@ -282,7 +283,7 @@ export default function ChatPage() {
     adoptAgent,
     closePreview,
     closeNav,
-    draftsRef,
+    forgetDraft,
   })
 
   const runPrompt = useTurnRunner({
@@ -329,6 +330,20 @@ export default function ChatPage() {
     () => openSettings("memory"),
     [openSettings]
   )
+  /**
+   * Settings → Data has deleted every chat. The page behind the panel still
+   * holds the whole index, the open thread and its queue in memory, and would
+   * re-seed the sidebar from its own snapshot on the next reload, so all of it
+   * goes at once — the panel only tells us it happened.
+   */
+  const handleSessionsCleared = React.useCallback(() => {
+    setSessions([])
+    setActiveId("")
+    setThreads({})
+    setQueues({})
+    writeCache(CACHE_INDEX_KEY, [])
+    writeCache(CACHE_ACTIVE_KEY, "")
+  }, [setActiveId, setQueues, setSessions, setThreads])
   /** The sidebar, ⌘K and `/settings`, none of which name a section. */
   const pushSettings = React.useCallback(() => openSettings(), [openSettings])
   /** The void wrapper the sidebar, the palette and ⌘N all share. */
@@ -348,6 +363,7 @@ export default function ChatPage() {
   } = useChatTurns({
     refs,
     runPrompt,
+    loadThread,
     activeId,
     sessions,
     providers,
@@ -684,6 +700,9 @@ export default function ChatPage() {
                        still scrolls the whole height of the pane. */
                     className="pb-[calc(var(--composer-height,7rem)+0.5rem)]"
                     messages={listMessages}
+                    /* One mounted list shows every chat in turn: the key is
+                       what resets the scroller's follow state on a switch. */
+                    conversationKey={activeId}
                     isGenerating={isGenerating}
                     generationStage={activeRun?.stage ?? "idle"}
                     generationLabel={activeRun?.status}
@@ -858,6 +877,7 @@ export default function ChatPage() {
             dataDir={dataDir}
             section={settingsSection}
             onClose={closeSettings}
+            onSessionsCleared={handleSessionsCleared}
           />
         </div>
       ) : null}

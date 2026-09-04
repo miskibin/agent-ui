@@ -9,6 +9,7 @@ import type {
   ProviderCapabilities,
   ProviderInfo,
 } from "@/lib/providers/types"
+import { writeSettings } from "@/lib/settings/client"
 import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
 import { LineBuffer } from "@/lib/stream-framing"
 import type { UsageReport } from "@/lib/usage"
@@ -56,17 +57,16 @@ export function fetchDataDir(): Promise<string> {
     .then((data) => data.dataDir)
 }
 
-/** Read-modify-write of the whole settings object — the file holds one blob. */
+/**
+ * Read-modify-write of the whole settings object — the file holds one blob,
+ * and every writer in the app goes through the same serialized chain so two
+ * of them cannot both read, then each overwrite the other's subtree.
+ */
 async function updateSettings(
   patch: (current: AppSettings) => AppSettings
 ): Promise<AppSettings> {
-  const current = await fetchSettings()
-  const res = await fetch("/api/settings", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch(current)),
-  })
-  return json<AppSettings>(res)
+  await writeSettings(patch)
+  return fetchSettings()
 }
 
 /** Pushes a folder to the front of the picker's MRU list. */
@@ -271,6 +271,14 @@ export type ChatRequest = {
   assistantMessageId: string
   /** Images the composer resolved as vision-eligible for this turn. */
   attachments?: MessageAttachmentData[]
+  /**
+   * Exactly what the user typed, before the skill prefix, the attachment
+   * fences and the "Attached: …" note the composer adds. The memory extractor
+   * is fed this instead of `content`, so a file the turn merely carried cannot
+   * write itself into every future prompt. Absent when it is not known — a
+   * regenerate re-runs a stored message, whose typed half is long gone.
+   */
+  typedText?: string
 }
 
 /** Streams `POST /api/chat`, handing every SSE event to `onEvent`. */

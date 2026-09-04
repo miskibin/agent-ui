@@ -9,6 +9,8 @@ import type { AppSettings } from "@/lib/settings/schema"
 import type { SessionMeta } from "@/lib/store/types"
 import { CACHE_ACTIVE_KEY, readCache } from "@/lib/ui-cache"
 
+import type { LoadThread } from "./use-threads"
+
 /**
  * First paint, then first fetch.
  *
@@ -44,7 +46,7 @@ export function useChatBootstrap({
     fallback?: string
   ) => void
   setSessionsLoaded: (loaded: boolean) => void
-  loadThread: (id: string) => Promise<void>
+  loadThread: LoadThread
 }) {
   React.useEffect(() => {
     let cancelled = false

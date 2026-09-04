@@ -326,10 +326,17 @@ export function SettingsView({
   dataDir,
   section,
   onClose,
+  onSessionsCleared,
 }: {
   dataDir: string
   section?: SettingsSectionId
   onClose?: () => void
+  /**
+   * Called once "Clear all chats" has actually deleted them. The chat page
+   * behind this panel still holds the old index in memory (and in its
+   * localStorage snapshot), so it has to be told rather than left to notice.
+   */
+  onSessionsCleared?: () => void
 }) {
   const [active, setActive] = React.useState<SettingsSectionId>(
     section ?? "appearance"
@@ -351,7 +358,9 @@ export function SettingsView({
   React.useEffect(() => {
     if (!onClose) return
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") onClose()
+      // A Radix select, dropdown or popover closes on Escape and marks the
+      // event handled; the panel is not what that Escape was aimed at.
+      if (event.key === "Escape" && !event.defaultPrevented) onClose()
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -411,7 +420,11 @@ export function SettingsView({
             {active === "editor" ? <EditorSection {...settings} /> : null}
             {active === "usage" ? <UsageSection /> : null}
             {active === "data" ? (
-              <DataSection dataDir={dataDir} {...settings} />
+              <DataSection
+                dataDir={dataDir}
+                onSessionsCleared={onSessionsCleared}
+                {...settings}
+              />
             ) : null}
 
 

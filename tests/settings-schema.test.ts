@@ -105,6 +105,63 @@ test("a user-added ACP agent survives, validated field by field", () => {
   assert.ok(settings.providers.acp.agents.dsh)
 })
 
+test("a provider field of the wrong type never reaches the routes", () => {
+  // `baseUrl: 123` used to be written straight back and then thrown on far
+  // from here, in whatever route next asked Ollama for a model list.
+  const settings = normalizeSettings({
+    providers: {
+      active: 7,
+      ollama: { enabled: "yes", baseUrl: 123 },
+      pi: { binPath: [], workspace: null },
+      cursorAgent: { enabled: 1 },
+      claudeCode: { enabled: "no", binPath: 5, permissionMode: "sideways" },
+      mock: { enabled: "true" },
+    },
+    chat: { defaultModel: 3, autoTitle: "no", desktopNotifications: 0 },
+  })
+  assert.deepEqual(settings.providers.ollama, DEFAULT_SETTINGS.providers.ollama)
+  assert.deepEqual(settings.providers.pi, DEFAULT_SETTINGS.providers.pi)
+  assert.deepEqual(
+    settings.providers.cursorAgent,
+    DEFAULT_SETTINGS.providers.cursorAgent
+  )
+  assert.deepEqual(
+    settings.providers.claudeCode,
+    DEFAULT_SETTINGS.providers.claudeCode
+  )
+  assert.deepEqual(settings.providers.mock, DEFAULT_SETTINGS.providers.mock)
+  assert.equal(settings.providers.active, DEFAULT_SETTINGS.providers.active)
+  assert.deepEqual(settings.chat, DEFAULT_SETTINGS.chat)
+  // …and a well-typed value beside a garbled one still lands.
+  const mixed = normalizeSettings({
+    providers: { ollama: { enabled: false, baseUrl: 123 } },
+    chat: { autoTitle: false, defaultModel: 3 },
+  })
+  assert.equal(mixed.providers.ollama.enabled, false)
+  assert.equal(mixed.providers.ollama.baseUrl, DEFAULT_SETTINGS.providers.ollama.baseUrl)
+  assert.equal(mixed.chat.autoTitle, false)
+})
+
+test("an ACP key that is not a plain slug is dropped", () => {
+  // The key becomes a provider id and a directory name, so `..` escaping the
+  // data dir and `__proto__` reaching Object.prototype are both keys to drop.
+  // Parsed rather than written as a literal, because that is how the file
+  // arrives — and because `__proto__` in a literal is a prototype, not a key.
+  const settings = normalizeSettings(
+    JSON.parse(`{"providers":{"acp":{"agents":{
+      "..": { "command": "escape" },
+      "a/b": { "command": "escape" },
+      "__proto__": { "command": "polluted" },
+      "Agent-2": { "command": "shouty" },
+      "agent-2": { "command": "keep-me" }
+    }}}}`)
+  )
+  const agents = settings.providers.acp.agents
+  assert.deepEqual(Object.keys(agents).sort(), ["agent-2", "dsh"])
+  assert.equal(agents["agent-2"]!.command, "keep-me")
+  assert.equal(({} as Record<string, unknown>).command, undefined)
+})
+
 test("recent folders are de-duplicated, trimmed and capped", () => {
   const many = Array.from({ length: MAX_RECENT_FOLDERS + 5 }, (_, i) => `/p/${i}`)
   assert.equal(normalizeSettings({ recentFolders: many }).recentFolders.length, MAX_RECENT_FOLDERS)

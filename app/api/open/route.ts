@@ -11,7 +11,9 @@ import {
 } from "@/lib/open-target"
 import { expandHome } from "@/lib/fs-paths"
 import { resolveInRoot } from "@/lib/fs-search"
-import { isWithin, isWithinKnownRoot } from "@/lib/fs-roots"
+import { isWithinKnownRoot, isWithinReal } from "@/lib/fs-roots"
+import { crossOriginRefusal } from "@/lib/request-origin"
+import type { AppSettings } from "@/lib/settings/schema"
 import { dataDir, readSettings } from "@/lib/settings/server"
 import { getSession } from "@/lib/store/sessions"
 
@@ -49,9 +51,8 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  if (req.headers.get("sec-fetch-site") === "cross-site") {
-    return NextResponse.json({ error: "Cross-site request" }, { status: 403 })
-  }
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
   let body: OpenBody
   try {
     body = (await req.json()) as OpenBody
@@ -85,21 +86,8 @@ export async function POST(req: Request) {
   }
 
   const settings = await readSettings()
-  if (isWithin(dataDir(), target)) {
-    return NextResponse.json(
-      { error: "The app's data folder cannot be opened from a chat" },
-      { status: 403 }
-    )
-  }
-  if (!settings.files.anyPath && !(await isWithinKnownRoot(target, settings))) {
-    return NextResponse.json(
-      {
-        error:
-          "Opening paths outside the app's folders is off — turn on Local files in settings.",
-      },
-      { status: 403 }
-    )
-  }
+  const denied = await refuseTarget(target, settings)
+  if (denied) return denied
 
   let info = await stat(/*turbopackIgnore: true*/ target).catch(() => null)
   if (!info && root) {
@@ -108,6 +96,11 @@ export async function POST(req: Request) {
     // panel does — the folder's own walk, deepest unique suffix wins.
     const found = await resolveInRoot(root, requested)
     if (found) {
+      // The walk can land anywhere under the chat's folder — the data
+      // directory included, when the chat is pinned at home — so the repaired
+      // path has to pass the same two checks the requested one did.
+      const refusedRepair = await refuseTarget(found.absolute, settings)
+      if (refusedRepair) return refusedRepair
       target = found.absolute
       info = await stat(/*turbopackIgnore: true*/ target).catch(() => null)
     }
@@ -143,4 +136,28 @@ export async function POST(req: Request) {
     const message = err instanceof Error ? err.message : "Could not open"
     return NextResponse.json({ error: message }, { status: 500 })
   }
+}
+
+/**
+ * The two refusals every path this route opens has to survive — factored out
+ * because the repaired path is a *different* path, and running these once on
+ * the one that was asked for says nothing about the one that gets launched.
+ */
+async function refuseTarget(target: string, settings: AppSettings) {
+  if (await isWithinReal(dataDir(), target)) {
+    return NextResponse.json(
+      { error: "The app's data folder cannot be opened from a chat" },
+      { status: 403 }
+    )
+  }
+  if (!settings.files.anyPath && !(await isWithinKnownRoot(target, settings))) {
+    return NextResponse.json(
+      {
+        error:
+          "Opening paths outside the app's folders is off — turn on Local files in settings.",
+      },
+      { status: 403 }
+    )
+  }
+  return null
 }
