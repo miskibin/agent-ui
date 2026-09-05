@@ -23,6 +23,29 @@ export function canComplete(settings: AppSettings, modelId: string): boolean {
   return enabledModelSources(settings).some((entry) => entry.slug === source)
 }
 
+/**
+ * What the endpoint actually said, rather than just the number it said it
+ * with. A pulled-and-since-deleted Ollama model answers 404 with `model
+ * "gemma4:e4b" not found, try pulling it first` — which names the fix, where a
+ * bare "(404)" leaves the user guessing which thing was not found.
+ */
+async function failureText(res: Response, label: string): Promise<string> {
+  const body = await res.text().catch(() => "")
+  let detail = body.trim()
+  try {
+    const parsed = JSON.parse(body) as {
+      error?: string | { message?: string }
+    }
+    const message =
+      typeof parsed.error === "string" ? parsed.error : parsed.error?.message
+    if (message) detail = message
+  } catch {
+    /* not JSON — the raw body is the detail */
+  }
+  detail = detail.replace(/\s+/g, " ").slice(0, 300)
+  return detail ? `${label} (${res.status}): ${detail}` : `${label} (${res.status})`
+}
+
 export async function complete(
   settings: AppSettings,
   modelId: string,
@@ -48,7 +71,7 @@ export async function complete(
       cache: "no-store",
       signal,
     })
-    if (!res.ok) throw new Error(`Ollama /api/chat failed (${res.status})`)
+    if (!res.ok) throw new Error(await failureText(res, "Ollama /api/chat failed"))
     const data = (await res.json()) as { message?: { content?: string } }
     return data.message?.content?.trim() ?? ""
   }
@@ -78,7 +101,9 @@ export async function complete(
     signal,
   })
   if (!res.ok) {
-    throw new Error(`${entry.name} chat/completions failed (${res.status})`)
+    throw new Error(
+      await failureText(res, `${entry.name} chat/completions failed`)
+    )
   }
   const data = (await res.json()) as {
     choices?: Array<{ message?: { content?: string } }>
