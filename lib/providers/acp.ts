@@ -1,4 +1,5 @@
 import "server-only"
+import { ensureOllama } from "@/lib/providers/ollama-autostart"
 
 import { readFile, mkdir, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -23,6 +24,7 @@ import type {
   AcpAgentSettings,
   DshSandboxMode,
 } from "@/lib/settings/schema"
+import { hasDeepSeekCredentials } from "@/lib/providers/acp-availability"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import type {
   AgentProvider,
@@ -180,7 +182,15 @@ export function createAcpProvider(
       if (!available) {
         return { ...base, unavailableReason: reason, configureBinary }
       }
-      if (baseUrl && !(await probeOllama(baseUrl))) {
+      // dsh can use its hosted DeepSeek route without the optional Ollama
+      // overlay. A configured local URL should not hide that capability when
+      // the local server is temporarily unavailable.
+      if (
+        baseUrl &&
+        !hasDeepSeekCredentials(agent) &&
+        !(await ensureOllama(baseUrl)) &&
+        !(await probeOllama(baseUrl))
+      ) {
         return { ...base, unavailableReason: `No server at ${baseUrl}` }
       }
       return { ...base, available: true }
@@ -213,6 +223,12 @@ export function createAcpProvider(
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
+      if (isDsh && baseUrl && options.model?.startsWith("ollama/")) {
+        if (!(await ensureOllama(baseUrl)) && !(await probeOllama(baseUrl))) {
+          yield { type: "error", message: `Could not start or reach Ollama at ${baseUrl}. Check that Ollama is installed.` }
+          return
+        }
+      }
       // A per-chat folder beats the one workspace from settings — for the
       // spawn cwd and for the root `fs/*` requests are confined to alike.
       const root = options.cwd?.trim()

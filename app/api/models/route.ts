@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 
 import { getProvider, resolveActiveProviderId } from "@/lib/providers/registry"
+import { ensureOllama } from "@/lib/providers/ollama-autostart"
+import { readSettings } from "@/lib/settings/server"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -14,6 +16,12 @@ export const dynamic = "force-dynamic"
 export async function GET(req: Request) {
   const requested = new URL(req.url).searchParams.get("provider")?.trim()
   const providerId = requested || (await resolveActiveProviderId())
+  if (providerId === "ollama") {
+    const settings = await readSettings()
+    if (settings.providers.ollama.enabled) {
+      await ensureOllama(settings.providers.ollama.baseUrl)
+    }
+  }
   const provider = await getProvider(providerId)
 
   if (!provider) {

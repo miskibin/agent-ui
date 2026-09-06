@@ -11,7 +11,9 @@ import type {
   TurnStateFrame,
 } from "@/lib/handoff/types"
 import { buildMemoryContext } from "@/lib/memory/context"
+import { ensureOllama } from "@/lib/providers/ollama-autostart"
 import { getProvider } from "@/lib/providers/registry"
+import { splitModelId } from "@/lib/model-providers/ids"
 import type {
   AgentStreamEvent,
   ChatTurn,
@@ -100,6 +102,14 @@ export async function POST(req: Request) {
   }
 
   const providerId = body.providerId?.trim() || session.providerId
+  const model = body.model?.trim() || session.model
+  const settings = await readSettings()
+  const needsOllama =
+    providerId === "ollama" ||
+    (providerId === "pi" && splitModelId(model).source === "ollama")
+  if (needsOllama && (providerId === "pi" ? settings.providers.pi.enabled : settings.providers.ollama.enabled)) {
+    await ensureOllama(settings.providers.ollama.baseUrl)
+  }
   const provider = await getProvider(providerId)
   if (!provider) {
     return NextResponse.json(
@@ -115,8 +125,6 @@ export async function POST(req: Request) {
     )
   }
 
-  const model = body.model?.trim() || session.model
-  const settings = await readSettings()
   const prior = await readMessages(sessionId)
   const attachments: MessageAttachmentData[] = sanitizeAttachments(
     body.attachments

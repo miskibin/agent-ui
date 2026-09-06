@@ -1,4 +1,5 @@
 import "server-only"
+import { ensureOllama } from "@/lib/providers/ollama-autostart"
 
 import { randomBytes } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
@@ -107,10 +108,10 @@ export function createPiProvider(
       // A catalog is what makes the harness usable, and either kind of source
       // supplies one. Ollama being down only matters when nothing else is
       // configured — a hosted key alone is a working setup.
-      if (baseUrl && (await probeOllama(baseUrl))) {
+      if (sources.length > 0) return { ...base, available: true }
+      if (baseUrl && ((await ensureOllama(baseUrl)) || (await probeOllama(baseUrl)))) {
         return { ...base, available: true }
       }
-      if (sources.length > 0) return { ...base, available: true }
       return {
         ...base,
         unavailableReason: baseUrl

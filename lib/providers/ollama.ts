@@ -1,4 +1,5 @@
 import "server-only"
+import { ensureOllama } from "@/lib/providers/ollama-autostart"
 
 import type { OllamaSettings } from "@/lib/settings/schema"
 import { withPromptContext } from "@/lib/providers/system-prefix"
@@ -74,7 +75,7 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
         return { ...base, unavailableReason: "Disabled in settings" }
       }
       if (!baseUrl) return { ...base, unavailableReason: "No base URL set" }
-      const reachable = await probeOllama(baseUrl)
+      const reachable = (await ensureOllama(baseUrl)) || (await probeOllama(baseUrl))
       return reachable
         ? { ...base, available: true }
         : { ...base, unavailableReason: `No server at ${baseUrl}` }
