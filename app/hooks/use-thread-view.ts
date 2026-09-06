@@ -4,6 +4,7 @@ import * as React from "react"
 
 import { collectChatChanges } from "@/components/chat-changes"
 import { contextTurnUsage } from "@/components/context-usage"
+import { parseAskQuestionInput } from "@/components/ui/ask-question"
 import type { ModelOption } from "@/components/ui/model-picker"
 import { findPendingAsk, isInternalMessage } from "@/lib/ask-tools"
 import type { StoredMessage } from "@/lib/store/types"
@@ -108,21 +109,35 @@ export function useThreadView({
    * live turn is left alone — its card is only rendered once it settles, so
    * rebuilding it per token would be pure waste.
    */
+  const pendingAsk = React.useMemo(
+    () => {
+      const ask = findPendingAsk(messages)
+      return ask && parseAskQuestionInput(ask.input) ? ask : null
+    },
+    [messages]
+  )
+
   const listMessages = React.useMemo(() => {
     const live = isGenerating ? visibleMessages.length - 1 : -1
     let patched = false
     const next = visibleMessages.map((message, index) => {
-      const withFiles = index === live ? message : withTurnFiles(message)
+      let withFiles = index === live ? message : withTurnFiles(message)
+      // The active form lives above the composer. Keep its stored tool intact
+      // so answering it restores the summary in the original turn.
+      if (pendingAsk && message.id === pendingAsk.messageId) {
+        withFiles = {
+          ...withFiles,
+          tools: withFiles.tools?.filter((tool) => tool.id !== pendingAsk.toolId),
+          parts: withFiles.parts?.filter(
+            (part) => part.type !== "tool" || part.tool.id !== pendingAsk.toolId
+          ),
+        }
+      }
       if (withFiles !== message) patched = true
       return withFiles
     })
     return patched ? next : visibleMessages
-  }, [isGenerating, visibleMessages])
-
-  const pendingAsk = React.useMemo(
-    () => findPendingAsk(messages) !== null,
-    [messages]
-  )
+  }, [isGenerating, pendingAsk, visibleMessages])
 
   /**
    * Chats waiting on an answer, across every loaded thread — what the dock

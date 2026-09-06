@@ -23,7 +23,9 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 - **Agent-native output.** Reasoning, tool lifecycles, structured questions,
   markdown, code, diagrams, artifacts, token usage, and failures are
   first-class parts of the conversation. A plan the agent writes is rendered as
-  a card with a Build button that starts the work.
+  a card with a Build button that starts the work. Unanswered questions stay above the
+  composer while you scroll; submitting or skipping restores their summary in
+  the transcript.
 - **Workspace-aware files.** Give each chat a folder, inspect changed files and
   diffs beside the transcript, then open them in your editor or terminal.
 - **Local persistence.** Chats, settings, provider sessions, and optional memory

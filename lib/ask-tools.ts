@@ -31,7 +31,7 @@ export function findPendingAsk(messages: StoredMessage[]) {
     ? message.tools
     : toolsFromParts(message.parts ?? [])
   const tool = tools.find(isOpenAskTool)
-  return tool ? { messageId: message.id, toolId: tool.id } : null
+  return tool ? { messageId: message.id, toolId: tool.id, input: tool.input } : null
 }
 
 /** Marks one ask block answered (or skipped), in both `tools` and `parts`. */

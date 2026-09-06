@@ -17,6 +17,7 @@ import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
+import { PendingQuestion } from "@/components/pending-question"
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
 import { ChatInput } from "@/components/ui/chat-input"
@@ -413,6 +414,11 @@ export default function ChatPage() {
     isGenerating,
   })
 
+  /* The composer only cares *whether* an answer is owed. `pendingAsk` is a new
+     object every time the transcript is rewritten, so the memoized composer
+     takes the boolean and stays off the per-token render path. */
+  const hasPendingAsk = pendingAsk !== null
+
   const { sessionItems, pinnedItems, folderGroups, sessionMenuActions } =
     useSidebarItems({
       refs,
@@ -480,7 +486,7 @@ export default function ChatPage() {
         placeholder={
           isGenerating
             ? undefined
-            : pendingAsk
+            : hasPendingAsk
               ? "Add more optional details…"
               : activeProviderName
                 ? `Ask ${activeProviderName}…`
@@ -559,11 +565,11 @@ export default function ChatPage() {
       handleStash,
       handleStop,
       handleTextChange,
+      hasPendingAsk,
       isEmptyChat,
       isGenerating,
       model,
       models,
-      pendingAsk,
       permissionModes,
       pickerGroups,
       providerId,
@@ -794,6 +800,14 @@ export default function ChatPage() {
                     items={todos}
                     running={isGenerating}
                   />
+                  {pendingAsk ? (
+                    <PendingQuestion
+                      key={`${activeId}:${pendingAsk.messageId}:${pendingAsk.toolId}`}
+                      {...pendingAsk}
+                      disabled={isGenerating}
+                      onAnswer={handleAskAnswer}
+                    />
+                  ) : null}
                   {composer}
                   {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
                     <PromptSuggestions
