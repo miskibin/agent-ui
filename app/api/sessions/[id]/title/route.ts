@@ -56,11 +56,14 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   const settings = await readSettings()
-  const candidates = [session.model, settings.memory.model].filter(
-    (model): model is string => !!model && canComplete(settings, model)
-  )
-  const model = candidates[0]
-  if (!model) {
+  const candidates = [
+    ...new Set(
+      [session.model, settings.memory.model].filter(
+        (model): model is string => !!model && canComplete(settings, model)
+      )
+    ),
+  ]
+  if (candidates.length === 0) {
     return NextResponse.json(
       {
         error:
@@ -70,15 +73,27 @@ export async function POST(req: Request, ctx: Ctx) {
     )
   }
 
-  let title: string
-  try {
-    title = await complete(settings, model, [
-      { role: "system", content: SYSTEM },
-      { role: "user", content: `Conversation:\n\n${transcript}\n\nTitle:` },
-    ])
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Could not generate a title"
-    return NextResponse.json({ error: message }, { status: 502 })
+  /**
+   * Every candidate, not just the first: a model that was configured once and
+   * has since been deleted from the Ollama server answers 404, and falling
+   * through to the next one is the difference between a renamed chat and a
+   * naming feature that stays broken until the user finds the stale setting.
+   */
+  let title = ""
+  let failure = ""
+  for (const model of candidates) {
+    try {
+      title = await complete(settings, model, [
+        { role: "system", content: SYSTEM },
+        { role: "user", content: `Conversation:\n\n${transcript}\n\nTitle:` },
+      ])
+      if (title.trim()) break
+    } catch (err) {
+      failure = err instanceof Error ? err.message : "Could not generate a title"
+    }
+  }
+  if (!title.trim() && failure) {
+    return NextResponse.json({ error: failure }, { status: 502 })
   }
   const cleaned = title
     .split("\n")[0]

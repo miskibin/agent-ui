@@ -38,6 +38,9 @@ import type { ChatRefs } from "./use-chat-refs"
 import type { LoadThread } from "./use-threads"
 import type { RunPrompt } from "./use-turn-runner"
 
+/** What the Build button under a plan card says, in the user's own voice. */
+const BUILD_PROMPT = "Go ahead and implement the plan above."
+
 /**
  * Everything that starts, stops or rewrites a turn.
  *
@@ -60,6 +63,9 @@ export function useChatTurns({
   capabilities,
   visionModels,
   chosenPermission,
+  effectivePermission,
+  permissionModes,
+  choosePermission,
   autoTitle,
   patchLocal,
   setSessions,
@@ -87,6 +93,10 @@ export function useChatTurns({
   capabilities: ProviderCapabilities | null
   visionModels: string[]
   chosenPermission: PermissionMode | ""
+  /** What the composer shows — the pick, else the harness's own default. */
+  effectivePermission: PermissionMode | ""
+  permissionModes: readonly PermissionMode[]
+  choosePermission: (mode: PermissionMode) => void
   autoTitle: boolean | undefined
   patchLocal: (id: string, patch: Partial<SessionMeta>) => void
   setSessions: React.Dispatch<React.SetStateAction<SessionMeta[]>>
@@ -108,7 +118,18 @@ export function useChatTurns({
   const { abortsRef, activeIdRef, drainQueueRef, sessionsRef, threadsRef } = refs
 
   const send = React.useCallback(
-    async (text: string, files: File[], skills: string[], targetId?: string) => {
+    async (
+      text: string,
+      files: File[],
+      skills: string[],
+      targetId?: string,
+      /**
+       * This one turn's mode, overriding the composer's. The Build button
+       * leaves plan mode and sends in the same click, and a state update is
+       * not visible to the closure that would read it.
+       */
+      permissionOverride?: PermissionMode
+    ) => {
       const trimmed = text.trim()
       if (!trimmed && files.length === 0) return
 
@@ -131,7 +152,7 @@ export function useChatTurns({
        */
       const runPermission: PermissionMode | undefined = detached
         ? ((target.permissionMode as PermissionMode | undefined) || undefined)
-        : chosenPermission || undefined
+        : permissionOverride || chosenPermission || undefined
       const runEffort = detached
         ? undefined
         : capabilities?.effort
@@ -498,6 +519,26 @@ export function useChatTurns({
     ]
   )
 
+  /**
+   * The Build button under a plan card.
+   *
+   * A plan is a proposal, so building it is two things at once: leaving the
+   * mode that could only write it down — where the harness has one — and
+   * asking, in the chat's own transcript, for the work. The mode rides along
+   * as this turn's override because the state it also sets lands a render too
+   * late for the send that follows it.
+   */
+  const handlePlanBuild = React.useCallback(() => {
+    const leaving =
+      effectivePermission === "plan"
+        ? (["edits", "full"] as const).find((mode) =>
+            permissionModes.includes(mode)
+          )
+        : undefined
+    if (leaving) choosePermission(leaving)
+    void send(BUILD_PROMPT, [], [], undefined, leaving)
+  }, [choosePermission, effectivePermission, permissionModes, send])
+
   const handleDeleteMessage = React.useCallback(
     (messageId: string) => {
       const sessionId = activeId
@@ -514,6 +555,7 @@ export function useChatTurns({
     handleSend,
     handleStop,
     handleAskAnswer,
+    handlePlanBuild,
     handleEditMessage,
     handleRegenerate,
     handleDeleteMessage,

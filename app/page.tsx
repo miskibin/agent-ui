@@ -357,6 +357,7 @@ export default function ChatPage() {
     handleSend,
     handleStop,
     handleAskAnswer,
+    handlePlanBuild,
     handleEditMessage,
     handleRegenerate,
     handleDeleteMessage,
@@ -373,6 +374,9 @@ export default function ChatPage() {
     capabilities,
     visionModels,
     chosenPermission,
+    effectivePermission,
+    permissionModes,
+    choosePermission,
     autoTitle: settings?.chat.autoTitle,
     patchLocal,
     setSessions,
@@ -708,6 +712,7 @@ export default function ChatPage() {
                     generationLabel={activeRun?.status}
                     onEditMessage={handleEditMessage}
                     onAskAnswer={handleAskAnswer}
+                    onPlanBuild={handlePlanBuild}
                     onOpenFile={handleOpenFile}
                     onChangeFileClick={handleChangeFileClick}
                     onFileReferenceClick={handleFileReferenceClick}
@@ -784,7 +789,11 @@ export default function ChatPage() {
                   {/* The plan the turn is working through, collapsed to one
                       line. Keyed by chat so switching threads never carries a
                       disclosure — or a plan — across. */}
-                  <TodoPanel key={activeId} items={todos} />
+                  <TodoPanel
+                    key={activeId}
+                    items={todos}
+                    running={isGenerating}
+                  />
                   {composer}
                   {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
                     <PromptSuggestions
