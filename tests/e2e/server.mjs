@@ -19,7 +19,8 @@ import { fileURLToPath } from "node:url"
  */
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..")
-const STANDALONE = path.join(ROOT, ".next", "standalone")
+const BUILD_DIR = process.env.AGENT_UI_BUILD_DIR || ".next"
+const STANDALONE = path.join(ROOT, BUILD_DIR, "standalone")
 
 /** Where the tests park their data directories and fixtures. */
 const SCRATCH = process.env.AGENT_UI_E2E_TMP ?? path.join(tmpdir(), "agent-ui-e2e")
@@ -84,7 +85,7 @@ export function ensureBuild({ force = false } = {}) {
  * `scripts/prepare-desktop.mjs` describes.
  */
 async function stageAssets() {
-  await fs.cp(path.join(ROOT, ".next", "static"), path.join(STANDALONE, ".next", "static"), {
+  await fs.cp(path.join(ROOT, BUILD_DIR, "static"), path.join(STANDALONE, BUILD_DIR, "static"), {
     recursive: true,
     force: true,
   })

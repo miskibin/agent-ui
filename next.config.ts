@@ -2,6 +2,8 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   agentRules: false,
+  // Isolate verification builds from the server used by the desktop app.
+  distDir: process.env.AGENT_UI_BUILD_DIR || ".next",
   // Self-contained production server (`node .next/standalone/server.js`):
   // fast cold start, no node_modules install on the target machine.
   output: "standalone",
