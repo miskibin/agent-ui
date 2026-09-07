@@ -1,0 +1,50 @@
+{
+  "$schema": "https://unpkg.com/knip@latest/schema.json",
+  "entry": [
+    "app/**/{page,layout,route,error,loading,not-found}.tsx",
+    "app/**/route.ts",
+    "instrumentation.ts",
+    "scripts/*.mjs",
+    "tests/**/*.{ts,mjs}",
+    "src-tauri/**/*.mjs"
+  ],
+  "project": [
+    "**/*.{ts,tsx,mjs}"
+  ],
+  "ignore": [
+    "lib/theme/themes/generated.ts",
+    ".next/**",
+    ".next-review/**",
+    "src-tauri/target/**",
+    "components/ui/**",
+    "lib/cursor-agent-types.ts",
+    "lib/cursor-stream.ts",
+    "lib/cursor-agent.ts",
+    "lib/cursor-transport-failure.ts",
+    "lib/agent-runtime.ts",
+    "lib/mock-agent.ts",
+    "lib/layout-transition.ts",
+    "hooks/use-click-outside.ts"
+  ],
+  "ignoreDependencies": [
+    "@tauri-apps/cli",
+    "tailwindcss",
+    "@tailwindcss/postcss",
+    "@radix-ui/react-label",
+    "@radix-ui/react-tabs",
+    "@radix-ui/react-toggle",
+    "tw-animate-css",
+    "@tailwindcss/typography",
+    "@types/diff"
+  ],
+  "rules": {
+    "types": "off",
+    "nsTypes": "off",
+    "exports": "warn",
+    "duplicates": "off"
+  },
+  "ignoreExportsUsedInFile": true,
+  "ignoreBinaries": [
+    "agent-ui-no-such-binary-.*"
+  ]
+}

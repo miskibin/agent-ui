@@ -6,6 +6,7 @@
 
 Everything in `components/ui/**`, `hooks/use-click-outside.ts`, and these lib files:
 `lib/cursor-agent-types.ts`, `lib/cursor-stream.ts`, `lib/cursor-agent.ts`,
+`lib/cursor-transport-failure.ts`,
 `lib/agent-runtime.ts`, `lib/mock-agent.ts`, `lib/layout-transition.ts`
 comes from **[miskibin/chat-components](https://github.com/miskibin/chat-components)** — the shadcn/ui registry this app is built to showcase. These files must stay byte-identical to upstream.
 
@@ -209,7 +210,11 @@ one interface:
   `soft` relaxes the greys down to a floor. Each level is emitted as its own small
   `[data-contrast]` block carrying only the tokens it moves, and the light half is guarded with
   `:not(.dark)` — the extra attribute would otherwise outrank the *dark* base block. Repair
-  moves lightness only, never hue or chroma. `tests/theme-contrast.test.ts` is the net: every
+  moves lightness only, never hue or chroma; the one thing that can lower chroma is the sRGB
+  gamut map at the emit step, and only down to what a display can reach, because a ratio
+  measured against an unrenderable colour is a ratio nobody sees. Parsing goes through
+  `culori/fn`, so hex, `hsl()`, `oklab()` and `color()` tokens reach the repair path rather
+  than being passed through. `tests/theme-contrast.test.ts` is the net: every
   shipped theme, both modes, all three levels.
 
   The typeface is the one token the user may pin across themes:
