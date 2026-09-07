@@ -635,6 +635,20 @@ one interface:
   `app/layout.tsx`) schedules the startup check off the critical path and owns the toasts.
   The updater public key in `tauri.conf.json` is a placeholder — see "Updater" in README.md.
 
+  Because that payload is downloaded by every user on every update, two settings exist only
+  to keep it small, and both read as harmless tidying to anyone who does not know why.
+  `bundle.targets` lists every target *except* `msi`: WiX packed the same files into an
+  installer about twice the size of the NSIS one (v0.6.0 shipped 478 MB beside 235 MB) and the
+  updater consumes NSIS regardless, so `"all"` only ever published a second, larger download of
+  the same app. And `outputFileTracingExcludes` in `next.config.ts` drops `sharp` with its
+  libvips prebuilds — 46 MB, more than half the standalone bundle — which Next traces into every
+  server build whether or not the optimizer is reachable. `images: { unoptimized: true }` is the
+  other half of that one and is not decoration: it is what removes `/_next/image`, and without
+  it the exclusion turns a build-time saving into a runtime crash. Every image in this app is a
+  plain `<img>` over a `data:` URL, a remote host or `/api/files`, so nothing wants the
+  optimizer. The two together take the staged payload from 108 MB to 59 MB; `du -sh
+  .next/standalone .next/static` is the check.
+
 ## Non-negotiable conventions
 
 - **Performance first.** Pages are pure client components: nothing on the critical path waits

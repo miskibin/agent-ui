@@ -45,7 +45,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis", "app", "dmg", "deb", "appimage"],
     "createUpdaterArtifacts": true,
     "category": "DeveloperTool",
     "shortDescription": "Local-first chat UI for coding agents",
