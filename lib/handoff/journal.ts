@@ -4,6 +4,13 @@ import type {
   JournalTool,
   NewJournalEvent,
 } from "@/lib/handoff/types"
+import {
+  collectToolPaths,
+  commandProgram,
+  commandSegments,
+  commandTokens,
+  extractToolCommand,
+} from "@/lib/tool-paths"
 
 /**
  * The chat's event journal: what happened, not what was said.
@@ -129,8 +136,12 @@ export function toolJournalEvent(
   const name = event.name.trim() || "tool"
   if (isPlanTool(name)) return null
   const args = parseArgs(event.input)
-  const paths = toolPaths(args)
-  const command = isShellTool(name) ? asString(args.command, args.cmd, args.script) : undefined
+  // Both reads are recursive (`lib/tool-paths`): a harness that puts its
+  // arguments under `rawInput`, or its files under `locations[]`, is the
+  // common case rather than the exotic one, and a flat read of `args.path`
+  // journals an edit with no file.
+  const paths = collectToolPaths(args, { maxPaths: MAX_JOURNAL_PATHS })
+  const command = isShellTool(name) ? extractToolCommand(args) : undefined
   return {
     name,
     status: event.status,
@@ -194,35 +205,69 @@ function isPlanTool(name: string) {
   return kind === "plan" || kind === "todo" || kind === "todowrite"
 }
 
-/**
- * Commands worth calling out as a test run. A heuristic on the command text,
- * kept narrow: a false positive here mislabels a section of the handoff.
- */
-const TEST_COMMAND =
-  /(^|[\s;&|(])(npm|pnpm|yarn|bun)\s+(run\s+)?test|(^|[\s;&|(])(vitest|jest|pytest|mocha|ava|tox|phpunit|rspec)\b|(^|[\s;&|(])(cargo|go|dotnet|mix|swift)\s+test\b|(^|[\s;&|(])python\s+-m\s+(pytest|unittest)\b|(^|[\s;&|(])(gradlew?|mvn)\s+.*\btest\b|(^|[\s;&|(])make\s+test\b/i
+/** Test runners that are a test run whatever they are handed. */
+const TEST_RUNNERS = new Set([
+  "vitest",
+  "jest",
+  "pytest",
+  "mocha",
+  "ava",
+  "tox",
+  "phpunit",
+  "rspec",
+  "gotestsum",
+  "nextest",
+])
+/** Package managers whose *script* decides. */
+const SCRIPT_RUNNERS = new Set(["npm", "pnpm", "yarn", "bun", "deno"])
+/** `npx vitest` — the runner is the argument. */
+const EXEC_RUNNERS = new Set(["npx", "pnpx", "bunx", "dlx", "uvx"])
+/** Toolchains with a `test` subcommand. */
+const TEST_SUBCOMMAND = new Set(["cargo", "go", "dotnet", "mix", "swift", "make", "just", "task"])
+/** Build tools where `test` may be one goal among several. */
+const TEST_GOAL = new Set(["mvn", "gradle", "gradlew", "./gradlew"])
 
+/**
+ * Commands worth calling out as a test run.
+ *
+ * Classified on the *program*, not by a regex over the whole line: `ls tests`
+ * and `git commit -m "add test"` say the word and run nothing, while
+ * `cd api && npm test` says it inside a command a single anchored pattern
+ * cannot see. Each `&&`-separated segment is judged on what it actually
+ * invokes, which is also why this stays narrow — a false positive here
+ * mislabels a whole section of the handoff.
+ */
 export function looksLikeTestCommand(command: string) {
-  return TEST_COMMAND.test(command)
+  return commandSegments(command).some(isTestSegment)
 }
 
-/** File paths a call named, under the argument spellings the harnesses use. */
-function toolPaths(args: Record<string, unknown>): string[] {
-  const found: string[] = []
-  const push = (value: unknown) => {
-    if (typeof value !== "string") return
-    const path = value.trim()
-    if (!path || found.includes(path)) return
-    if (found.length < MAX_JOURNAL_PATHS) found.push(path)
+function isTestSegment(segment: string) {
+  const { program, args } = commandTokens(segment)
+  if (!program) return false
+  if (TEST_RUNNERS.has(program)) return true
+
+  const words = args.filter((arg) => !arg.startsWith("-"))
+  if (EXEC_RUNNERS.has(program)) {
+    return words.length > 0 && TEST_RUNNERS.has(commandProgram(words[0]))
   }
-  push(args.path)
-  push(args.filePath)
-  push(args.file_path)
-  push(args.target_file)
-  push(args.file)
-  push(args.abs_path)
-  if (Array.isArray(args.paths)) for (const entry of args.paths) push(entry)
-  if (Array.isArray(args.files)) for (const entry of args.files) push(entry)
-  return found
+  if (SCRIPT_RUNNERS.has(program)) {
+    // `npm test`, `npm run test`, `pnpm run test:unit`.
+    const script = words[0] === "run" || words[0] === "run-script" ? words[1] : words[0]
+    return isTestScriptName(script)
+  }
+  if (TEST_SUBCOMMAND.has(program)) return isTestScriptName(words[0])
+  if (TEST_GOAL.has(program)) return words.some(isTestScriptName)
+  if (program === "python" || program === "python3") {
+    const moduleIndex = args.indexOf("-m")
+    const moduleName = moduleIndex >= 0 ? args[moduleIndex + 1] : undefined
+    return moduleName === "pytest" || moduleName === "unittest"
+  }
+  return false
+}
+
+/** A script whose name *is* the word: `test`, `test:unit`, `test-e2e`. */
+function isTestScriptName(word: string | undefined) {
+  return !!word && /^test([:_-].*)?$/.test(word)
 }
 
 function parseArgs(input: string | undefined): Record<string, unknown> {
@@ -236,13 +281,6 @@ function parseArgs(input: string | undefined): Record<string, unknown> {
     /* a raw string argument carries no fields to read */
   }
   return {}
-}
-
-function asString(...values: unknown[]) {
-  for (const value of values) {
-    if (typeof value === "string" && value.trim()) return value
-  }
-  return undefined
 }
 
 /** One line, budgeted — the journal never stores a wall of text. */

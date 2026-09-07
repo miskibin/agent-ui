@@ -1,4 +1,8 @@
 import type { ChatSidebarItemData } from "@/components/ui/chat-sidebar"
+import {
+  normalizeFolder,
+  normalizeFolderForComparison,
+} from "@/lib/folder-identity"
 import type { SessionMeta } from "@/lib/store/types"
 
 /**
@@ -42,9 +46,20 @@ export type SessionGroups = {
 
 const EMPTY_GROUPS: SessionGroups = { pinned: [], folders: [] }
 
-/** Trailing separators only: two spellings of one folder must not split it. */
-function normalizeFolder(cwd: string | undefined) {
-  return (cwd ?? "").trim().replace(/[\\/]+$/, "")
+/**
+ * The folder as it is *shown*: trailing separators trimmed, nothing else
+ * touched, so the header and the row menu name the path the user gave.
+ */
+function displayFolder(cwd: string | undefined) {
+  return normalizeFolder(cwd ?? "")
+}
+
+/**
+ * The folder as it is *compared*, which on Windows also folds separators and
+ * case — `C:\repo` and `c:/repo/` are one section, not two.
+ */
+function folderKey(cwd: string | undefined) {
+  return normalizeFolderForComparison(cwd)
 }
 
 /** The last `count` segments of a path, joined the way the path spells them. */
@@ -76,8 +91,8 @@ export function groupIdForSession(
   session: Pick<SessionMeta, "pinned" | "cwd">
 ) {
   if (session.pinned) return PINNED_GROUP_ID
-  const cwd = normalizeFolder(session.cwd)
-  return cwd ? `folder:${cwd}` : NO_FOLDER_GROUP_ID
+  const key = folderKey(session.cwd)
+  return key ? `folder:${key}` : NO_FOLDER_GROUP_ID
 }
 
 /**
@@ -105,7 +120,10 @@ export function groupSessions(
       pinned.push(item)
       continue
     }
-    const cwd = normalizeFolder(session.cwd)
+    // Keyed by identity, labelled by the first spelling seen — two chats that
+    // spell one Windows folder differently share a section, and the section
+    // still says what the user typed.
+    const cwd = displayFolder(session.cwd)
     const id = groupIdForSession(session)
     const bucket = buckets.get(id) ?? { cwd, entries: [] }
     bucket.entries.push({ meta: session, item })

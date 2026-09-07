@@ -1,8 +1,9 @@
 import "server-only"
 
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises"
+import { mkdir, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 
+import { writeFileAtomic } from "@/lib/atomic-write"
 import { dataDir } from "@/lib/settings/server"
 import { migrateAgentSessions } from "@/lib/handoff/cursor"
 import { appendEvents, normalizeJournal } from "@/lib/handoff/journal"
@@ -63,13 +64,15 @@ export function newSessionId() {
   return `s${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`
 }
 
+/**
+ * Writes through `lib/atomic-write`: temp file, fsync, rename, fsync of the
+ * directory. The rename alone already keeps a reader from seeing half a file;
+ * the two syncs are what keep a crash from leaving a renamed-into-place file
+ * of zeroes where a chat's transcript used to be.
+ */
 async function writeJsonAtomic(path: string, value: unknown) {
   await mkdir(sessionsDir(), { recursive: true })
-  const tmp = `${path}.${process.pid.toString(36)}${Math.random()
-    .toString(36)
-    .slice(2, 8)}.tmp`
-  await writeFile(tmp, JSON.stringify(value), "utf8")
-  await rename(tmp, path)
+  await writeFileAtomic(path, JSON.stringify(value))
 }
 
 async function readJson<T>(path: string, fallback: T): Promise<T> {

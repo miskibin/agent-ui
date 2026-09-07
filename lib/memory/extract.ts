@@ -15,6 +15,7 @@ import {
   readMemoryFiles,
   writeMemoryFile,
 } from "@/lib/memory/server"
+import { parseJsonObject } from "@/lib/json-rescue"
 import { normalizeBaseUrl, probeOllama } from "@/lib/providers/ollama-api"
 
 /**
@@ -218,8 +219,13 @@ async function askForCategories(
   const raw = data.message?.content?.trim()
   if (!raw) return []
 
-  const parsed = JSON.parse(raw) as { categories?: unknown }
-  if (!Array.isArray(parsed.categories)) return []
+  // The schema-shaped request answers with bare JSON; the `format: "json"`
+  // fallback is a small model left to its own devices, and one of those will
+  // open with "Here is the JSON:" or fence the object. `extractJsonObject`
+  // finds the object in either, so a whole extraction is not lost to a
+  // preamble.
+  const parsed = parseJsonObject<{ categories?: unknown }>(raw)
+  if (!parsed || !Array.isArray(parsed.categories)) return []
   return parsed.categories.flatMap((entry): ExtractedCategory[] => {
     if (!entry || typeof entry !== "object") return []
     const record = entry as Record<string, unknown>
