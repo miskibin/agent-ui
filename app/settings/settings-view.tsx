@@ -71,7 +71,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
         label: "Chat",
         icon: MessageSquare,
         keywords:
-          "reasoning effort suggestions automatic titles conversation notification sounds audio chime desktop notifications badge handoff switching agents",
+          "reasoning effort suggestions automatic titles conversation notification sounds audio chime desktop notifications badge handoff switching agents worktree origin branch settle archive",
       },
     ],
   },
@@ -114,7 +114,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
         label: "Usage",
         icon: Coins,
         keywords:
-          "usage cost spend price tokens input output per model folder budget billing estimate",
+          "usage cost spend price tokens input output per model folder budget billing estimate override custom prices rate",
       },
       {
         id: "data",
@@ -418,7 +418,7 @@ export function SettingsView({
             {active === "chat" ? <ChatSection {...settings} /> : null}
             {active === "memory" ? <MemorySection {...settings} /> : null}
             {active === "editor" ? <EditorSection {...settings} /> : null}
-            {active === "usage" ? <UsageSection /> : null}
+            {active === "usage" ? <UsageSection {...settings} /> : null}
             {active === "data" ? (
               <DataSection
                 dataDir={dataDir}

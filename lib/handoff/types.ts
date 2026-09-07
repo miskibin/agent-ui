@@ -14,6 +14,8 @@
  * messages, and the stored user message is exactly what the user typed).
  */
 
+import { sameFolder } from "@/lib/folder-identity"
+
 /**
  * What `git` said about the working folder at the end of a turn — cheap on
  * purpose: one `rev-parse` and one `porcelain` status, no index or tree of
@@ -160,11 +162,15 @@ export type ProviderSessionHint = {
 }
 
 /**
- * Two folders are the same conversation only when they are the same string
- * after trimming; an empty one (the app's own cwd) matches another empty one.
+ * Two folders are the same conversation when they name the same place: an
+ * empty one (the app's own cwd) matches another empty one, and on Windows
+ * `C:\repo`, `C:\repo\` and `c:/repo` all match each other. A stored id whose
+ * folder merely *spells* itself differently is still resumable —
+ * `lib/folder-identity` owns that judgement, and the stored path itself is
+ * never rewritten.
  */
 export function sameWorkingFolder(a?: string, b?: string) {
-  return (a ?? "").trim() === (b ?? "").trim()
+  return sameFolder(a, b)
 }
 
 /**

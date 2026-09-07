@@ -9,15 +9,22 @@ import { formatCost } from "@/lib/model-pricing"
 import { formatTokens, type UsageReport, type UsageTotals } from "@/lib/usage"
 import { cn } from "@/lib/utils"
 
+import { PriceOverridesSection } from "./price-overrides-section"
 import { SettingsRow, SettingsSection } from "./section"
+import type { AppSettingsApi } from "./use-app-settings"
 
 /**
  * What every chat on this machine has cost, over a window.
  *
- * Read-only, and read from one route: `GET /api/usage` walks the store and
- * answers with rows already grouped, so this page never sees a transcript.
- * Cost is an estimate off `lib/model-pricing`'s list prices, which is why a
- * row that could not be priced says so instead of contributing a zero.
+ * Read from one route: `GET /api/usage` walks the store and answers with rows
+ * already grouped, so this page never sees a transcript. Cost is an estimate
+ * off `lib/model-pricing`'s list prices — corrected by whatever the user has
+ * put in `usage.priceOverrides` — which is why a row that could not be priced
+ * says so instead of contributing a zero.
+ *
+ * The one thing here that writes is the price editor below the tables, and it
+ * writes through the same settings chain as every other section. The route
+ * prices server-side, so the tables are re-read once an edit has landed.
  */
 
 const RANGES = [
@@ -28,8 +35,10 @@ const RANGES = [
 
 type RangeId = (typeof RANGES)[number]["id"]
 
-export function UsageSection() {
+export function UsageSection(settings: AppSettingsApi) {
   const [range, setRange] = React.useState<RangeId>("30")
+  /** Bumped when a price edit has been written, to re-read the priced rows. */
+  const [pricedAt, setPricedAt] = React.useState(0)
   /**
    * The answer *and* the window it answers for, in one piece of state, so
    * "still loading" is derived rather than set: switching the window shows the
@@ -62,7 +71,9 @@ export function UsageSection() {
     return () => {
       cancelled = true
     }
-  }, [days])
+  }, [days, pricedAt])
+
+  const onPriced = React.useCallback(() => setPricedAt(Date.now()), [])
 
   const loading = loaded?.days !== days
   const report = loading ? null : (loaded?.report ?? null)
@@ -136,7 +147,13 @@ export function UsageSection() {
                 label="Input"
                 value={formatTokens(totals?.inputTokens ?? 0)}
                 exact={totals?.inputTokens ?? 0}
-                hint="tokens"
+                // Cache reads and writes are billed but are not context, so
+                // they are named beside the number rather than inside it.
+                hint={
+                  (totals?.cacheTokens ?? 0) > 0
+                    ? `tokens · ${formatTokens(totals?.cacheTokens ?? 0)} cached`
+                    : "tokens"
+                }
               />
               <Stat
                 label="Output"
@@ -201,6 +218,12 @@ export function UsageSection() {
           </SettingsRow>
         </>
       ) : null}
+
+      <PriceOverridesSection
+        models={report?.models ?? []}
+        onSaved={onPriced}
+        {...settings}
+      />
     </SettingsSection>
   )
 }

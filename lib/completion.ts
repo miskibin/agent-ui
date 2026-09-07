@@ -1,5 +1,6 @@
 import "server-only"
 
+import { parseJsonObject } from "@/lib/json-rescue"
 import { splitModelId } from "@/lib/model-providers/ids"
 import { enabledModelSources } from "@/lib/model-providers/server"
 import { normalizeBaseUrl } from "@/lib/providers/ollama-api"
@@ -109,4 +110,33 @@ export async function complete(
     choices?: Array<{ message?: { content?: string } }>
   }
   return data.choices?.[0]?.message?.content?.trim() ?? ""
+}
+
+/** Longest chat title kept; the sidebar row is narrow. */
+export const MAX_TITLE_CHARS = 60
+
+/**
+ * Whatever a model said, as a sidebar row.
+ *
+ * The JSON is unwrapped *before* anything is truncated, which is the order
+ * that matters: a model asked for `{"title": "…"}` that answers with prose
+ * around it would otherwise be clipped mid-object, and the user would end up
+ * with a chat called `{"title": "Fix the streaming rec`. A model that ignored
+ * the JSON request and answered with the title alone takes the same path —
+ * `extractJsonObject` finds no object, and the raw line is cleaned as before.
+ *
+ * Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License,
+ * (c) 2026 T3 Tools Inc.
+ */
+export function sanitizeTitle(raw: string): string {
+  const parsed = parseJsonObject<{ title?: unknown }>(raw)
+  const text = typeof parsed?.title === "string" ? parsed.title : raw
+  const cleaned = (text.split("\n").find((line) => line.trim()) ?? "")
+    .replace(/^title:\s*/i, "")
+    .replace(/^["'“”‘’\s]+|["'“”‘’\s.]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+  return cleaned.length <= MAX_TITLE_CHARS
+    ? cleaned
+    : `${cleaned.slice(0, MAX_TITLE_CHARS - 1).trimEnd()}…`
 }

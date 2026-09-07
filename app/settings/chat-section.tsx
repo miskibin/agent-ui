@@ -2,6 +2,7 @@
 
 import * as React from "react"
 
+import { Input } from "@/components/ui/input"
 import { DEFAULT_MODEL_EFFORTS } from "@/components/ui/model-picker"
 import {
   Select,
@@ -13,7 +14,10 @@ import {
 import { Skeleton } from "@/components/ui/skeleton"
 import { Switch } from "@/components/ui/switch"
 import { requestNotificationPermission } from "@/lib/notifications"
-import type { AppSettings } from "@/lib/settings/schema"
+import {
+  MAX_AUTO_SETTLE_DAYS,
+  type AppSettings,
+} from "@/lib/settings/schema"
 
 import { SettingsRow, SettingsSection } from "./section"
 import type { AppSettingsApi } from "./use-app-settings"
@@ -30,6 +34,12 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
   const setHandoff = React.useCallback(
     (enabled: boolean) =>
       update((current) => ({ ...current, handoff: { enabled } })),
+    [update]
+  )
+
+  const setCheckpoints = React.useCallback(
+    (enabled: boolean) =>
+      update((current) => ({ ...current, checkpoints: { enabled } })),
     [update]
   )
 
@@ -120,6 +130,71 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
               // one; the desktop shell asks through its own plugin.
               if (desktopNotifications) void requestNotificationPermission()
             }}
+          />
+        }
+      />
+
+      <SettingsRow
+        title="New worktrees start from origin"
+        htmlFor="chat-worktrees-from-origin"
+        description="Branch a new worktree off the remote's head rather than whatever this checkout is sitting on. Off starts it from the current local branch."
+        control={
+          <Switch
+            id="chat-worktrees-from-origin"
+            checked={chat.newWorktreesStartFromOrigin}
+            onCheckedChange={(newWorktreesStartFromOrigin) =>
+              setChat({ newWorktreesStartFromOrigin })
+            }
+          />
+        }
+      />
+
+      <SettingsRow
+        title="Settle finished chats after"
+        htmlFor="chat-auto-settle"
+        description="Days a chat with nothing new happening in it is left alone before it settles itself. 0 never settles one."
+        control={
+          <div className="flex items-center gap-2">
+            <Input
+              id="chat-auto-settle"
+              type="number"
+              min={0}
+              max={MAX_AUTO_SETTLE_DAYS}
+              step={1}
+              inputMode="numeric"
+              value={String(chat.autoSettleAfterDays)}
+              onChange={(event) => {
+                const days = Number(event.target.value)
+                if (!Number.isFinite(days)) return
+                setChat({
+                  autoSettleAfterDays: Math.min(
+                    MAX_AUTO_SETTLE_DAYS,
+                    Math.max(0, Math.round(days))
+                  ),
+                })
+              }}
+              className="h-8 w-20 text-[12.5px] tabular-nums"
+            />
+            <span className="text-[12px] text-muted-foreground">
+              {chat.autoSettleAfterDays === 0 ? "never" : "days"}
+            </span>
+          </div>
+        }
+      />
+
+      {/* Two `git` reads around a turn, in a chat that has a folder — and the
+          only thing that makes "restore the files to before this turn" an
+          option at all. Turning it off leaves the turns already captured
+          restorable; it simply stops taking new ones. */}
+      <SettingsRow
+        title="Turn checkpoints"
+        htmlFor="chat-checkpoints"
+        description="Snapshot the chat's folder around every turn, so you can put the files back the way they were before it ran."
+        control={
+          <Switch
+            id="chat-checkpoints"
+            checked={settings.checkpoints.enabled}
+            onCheckedChange={setCheckpoints}
           />
         }
       />

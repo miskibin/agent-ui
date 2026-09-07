@@ -364,3 +364,55 @@ test("formatTokens keeps the number readable at every size", () => {
   assert.equal(formatTokens(1_250_000), "1.25M")
   assert.equal(formatTokens(12_500_000), "12.5M")
 })
+
+/* -------------------------------------------------------------------------- */
+/* Cache tokens                                                                */
+/* -------------------------------------------------------------------------- */
+
+test("cache reads and writes are billed but stay out of the context number", () => {
+  const turns = usageTurns({}, [
+    turn({
+      model: "claude-sonnet-5",
+      providerId: "claudeCode",
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      // Written by a harness that reports the split; absent everywhere else.
+      cachedInputTokens: 1_000_000,
+      cacheCreationTokens: 1_000_000,
+      finishedAt: NOW,
+    } as Partial<NonNullable<StoredMessage["metadata"]>>),
+  ])
+  assert.equal(turns.length, 1)
+  assert.equal(turns[0].inputTokens, 1_000_000)
+  assert.equal(turns[0].cachedInputTokens, 1_000_000)
+  // $2 input + $0.20 cache read + $2.50 cache write.
+  assert.ok(Math.abs((turns[0].cost ?? 0) - 4.7) < 1e-9)
+
+  const usage = chatUsage([
+    turn({
+      model: "claude-sonnet-5",
+      providerId: "claudeCode",
+      inputTokens: 1_000,
+      outputTokens: 100,
+      cachedInputTokens: 30_000,
+      cacheCreationTokens: 8_000,
+      finishedAt: NOW,
+    } as Partial<NonNullable<StoredMessage["metadata"]>>),
+  ])
+  // `tokens` is what the conversation weighs; the cache halves are counted
+  // beside it, because a 30k cache read says nothing about the context.
+  assert.equal(usage?.tokens, 1_100)
+  assert.equal(usage?.cacheTokens, 38_000)
+})
+
+test("a turn stored before the cache split still aggregates as it did", () => {
+  const turns = usageTurns({}, [
+    turn({ model: "openai/gpt-4o", inputTokens: 100, outputTokens: 50 }),
+  ])
+  assert.equal(turns[0].cachedInputTokens, 0)
+  assert.equal(turns[0].cacheCreationTokens, 0)
+  assert.equal(
+    turns[0].cost,
+    (100 * 2.5 + 50 * 10) / 1_000_000
+  )
+})

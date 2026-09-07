@@ -3,7 +3,11 @@ import "server-only"
 import { existsSync } from "node:fs"
 
 import type { ModelOption } from "@/components/ui/model-picker"
-import { hasCursorAgentBinary, isMockForced } from "@/lib/agent-runtime"
+import {
+  hasCursorAgentBinary,
+  isMockForced,
+  resolveAgentCommand,
+} from "@/lib/agent-runtime"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import type { CursorAgentSettings } from "@/lib/settings/schema"
 import type {
@@ -48,6 +52,88 @@ const INHERITED_BIN = process.env.CURSOR_AGENT_BIN
 
 const MODEL_CACHE_MS = 5 * 60 * 1000
 let modelCache: { at: number; key: string; models: ModelOption[] } | null = null
+
+/**
+ * Cursor's CLI is also an ACP agent, and publishes its real model list as one
+ * extension method off the handshake — `cursor/list_available_models`, which
+ * needs no session and answers in a round-trip. That list is the one Cursor's
+ * own picker shows; `agent models` prints dozens of aliases beside it, which
+ * is why the scrape below needs `HEADLINE_IDS` to be usable at all. So the
+ * extension is tried first and the scrape is what happens when it is not
+ * there — an older CLI, a build without the `acp` subcommand.
+ *
+ * Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
+ */
+const CURSOR_ACP_TIMEOUT_MS = 12_000
+
+/** `{ models: [{ value, name }] }`, with everything unusable dropped. */
+export function parseCursorAcpModels(
+  response: unknown
+): { id: string; name: string }[] {
+  const models =
+    response && typeof response === "object"
+      ? (response as { models?: unknown }).models
+      : undefined
+  if (!Array.isArray(models)) return []
+  const seen = new Set<string>()
+  const listed: { id: string; name: string }[] = []
+  for (const entry of models) {
+    if (!entry || typeof entry !== "object") continue
+    const record = entry as { value?: unknown; name?: unknown }
+    const id = typeof record.value === "string" ? record.value.trim() : ""
+    const name = typeof record.name === "string" ? record.name.trim() : ""
+    if (!id || !name || seen.has(id)) continue
+    seen.add(id)
+    listed.push({ id, name })
+  }
+  return listed
+}
+
+async function listModelsOverAcp(): Promise<{ id: string; name: string }[]> {
+  const { cmd, args } = resolveAgentCommand()
+  const { acpExtensionRequest } = await import("@/lib/acp-agent")
+  const response = await acpExtensionRequest<unknown>(
+    { command: cmd, args: [...args, "acp"], cwd: process.cwd(), env: {} },
+    "cursor/list_available_models",
+    {},
+    CURSOR_ACP_TIMEOUT_MS
+  )
+  return parseCursorAcpModels(response)
+}
+
+/**
+ * The scraped list is long and alias-heavy, so the familiar ids are pulled to
+ * the front and the rest dropped. The ACP list is already the curated one, so
+ * it is passed through whole — filtering it to `HEADLINE_IDS` would throw away
+ * exactly the models Cursor added since this constant was written.
+ */
+function toModelOptions(
+  listed: { id: string; name: string }[],
+  curated: boolean
+): ModelOption[] {
+  if (curated) {
+    return listed.slice(0, 40).map((item) => ({
+      id: item.id,
+      name: item.name,
+      badge: badgeFor(item.id),
+    }))
+  }
+  const byId = new Map(listed.map((model) => [model.id, model]))
+  const headline = HEADLINE_IDS.filter((id) => byId.has(id)).map((id) => {
+    const item = byId.get(id)!
+    return {
+      id: item.id,
+      name: item.name.replace(/\s*\(.*?\)\s*/g, "").trim() || item.name,
+      badge: badgeFor(item.id),
+    }
+  })
+  if (headline.length > 0) return headline
+  return listed.slice(0, 20).map((item) => ({
+    id: item.id,
+    name: item.name,
+    badge: badgeFor(item.id),
+  }))
+}
 
 /**
  * The local `cursor-agent` CLI. `lib/cursor-agent` owns the spawn + protocol
@@ -128,25 +214,18 @@ export function createCursorProvider(
         if (Date.now() - modelCache.at < MODEL_CACHE_MS) return modelCache.models
       }
       applyBinOverride()
-      const { listCursorModels } = await import("@/lib/cursor-agent")
-      const listed = await listCursorModels()
-      const byId = new Map(listed.map((model) => [model.id, model]))
-      const headline = HEADLINE_IDS.filter((id) => byId.has(id)).map((id) => {
-        const item = byId.get(id)!
-        return {
-          id: item.id,
-          name: item.name.replace(/\s*\(.*?\)\s*/g, "").trim() || item.name,
-          badge: badgeFor(item.id),
-        }
-      })
-      const models: ModelOption[] =
-        headline.length > 0
-          ? headline
-          : listed.slice(0, 20).map((item) => ({
-              id: item.id,
-              name: item.name,
-              badge: badgeFor(item.id),
-            }))
+      // A CLI without the `acp` subcommand exits before the handshake, and one
+      // without the extension answers "method not found" — both land here as a
+      // rejection, and both mean "fall back to the scrape".
+      const curated = await listModelsOverAcp().catch(() => [])
+      const listed =
+        curated.length > 0
+          ? curated
+          : await (async () => {
+              const { listCursorModels } = await import("@/lib/cursor-agent")
+              return listCursorModels()
+            })()
+      const models = toModelOptions(listed, curated.length > 0)
       modelCache = { at: Date.now(), key, models }
       return models
     },

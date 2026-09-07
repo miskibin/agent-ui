@@ -21,6 +21,78 @@ import type { SessionRun } from "./chat-types"
  */
 const turnFilesCache = new WeakMap<StoredMessage, StoredMessage>()
 
+/** What the composer's ArrowUp recall walks, oldest first. */
+export type PromptHistoryItem = { id: string; text: string }
+
+const EMPTY_HISTORY: PromptHistoryItem[] = []
+
+/**
+ * The last list built, and the list it was built from. One entry is enough —
+ * one chat is open at a time — and it exists for identity, not for speed: the
+ * composer is memoized, so a fresh array every frame of a streaming turn would
+ * rebuild it (and the pickers inside it) on every token. The entries only
+ * change when a prompt is sent, edited or deleted, so the previous array is
+ * returned whenever the ids and the texts still match.
+ */
+let lastPrompts: PromptHistoryItem[] = EMPTY_HISTORY
+
+/**
+ * What the user actually typed, in order — `metadata.typedText` where the
+ * composer folded an attachment or a skill into the prompt, the stored content
+ * otherwise. The app's own turns (an Ask Question answer) are not prompts and
+ * never come back on ArrowUp.
+ */
+function promptHistory(messages: StoredMessage[]): PromptHistoryItem[] {
+  const next: PromptHistoryItem[] = []
+  for (const message of messages) {
+    if (message.sender !== "user" || isInternalMessage(message)) continue
+    const text = message.metadata?.typedText ?? message.content
+    if (text.trim()) next.push({ id: message.id, text })
+  }
+  if (next.length === 0) return EMPTY_HISTORY
+  const previous = lastPrompts
+  const same =
+    previous.length === next.length &&
+    next.every(
+      (entry, index) =>
+        entry.id === previous[index].id && entry.text === previous[index].text
+    )
+  if (same) return previous
+  lastPrompts = next
+  return next
+}
+
+/**
+ * The context window the backend itself reported for the newest turn that
+ * reported one. It outranks the model catalog: a CLI harness answers under an
+ * id the catalog has never heard of (`claude-code`'s bare `sonnet`), so
+ * without this the composer's meter has no total and does not show at all.
+ */
+function reportedContextWindow(messages: StoredMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.sender !== "assistant") continue
+    const window = message.metadata?.contextWindow
+    if (window) return window
+  }
+  return undefined
+}
+
+/**
+ * When the newest answer settled. The offer to compact before resuming reads
+ * it, and it is the turn's own clock rather than the chat's `updatedAt` —
+ * which a rename, a pin or a folder change also moves.
+ */
+function lastTurnAt(messages: StoredMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.sender !== "assistant") continue
+    const finished = message.metadata?.finishedAt
+    if (finished) return finished
+  }
+  return undefined
+}
+
 export function withTurnFiles(message: StoredMessage): StoredMessage {
   const cached = turnFilesCache.get(message)
   if (cached) return cached
@@ -100,8 +172,10 @@ export function useThreadView({
    */
   const contextTurn = contextTurnUsage(messages)
   const contextTotal = React.useMemo(
-    () => models.find((option) => option.id === model)?.contextLength,
-    [model, models]
+    () =>
+      reportedContextWindow(deferredMessages) ??
+      models.find((option) => option.id === model)?.contextLength,
+    [deferredMessages, model, models]
   )
   /**
    * What the chat has spent so far: the composer's context ring takes the
@@ -113,6 +187,11 @@ export function useThreadView({
     [deferredMessages]
   )
   const activeCost = usage?.cost ?? null
+  /** For the meter's "compact before resuming?" offer — see `context-usage`. */
+  const lastTurnFinishedAt = React.useMemo(
+    () => lastTurnAt(deferredMessages),
+    [deferredMessages]
+  )
 
   /**
    * The transcript as the list sees it: same objects, except where a turn's
@@ -190,6 +269,16 @@ export function useThreadView({
     [activeId, runs, threads]
   )
 
+  /**
+   * The prompts the composer's ArrowUp walks. Derived from the deferred
+   * transcript and identity-stable, so a streaming turn never rebuilds the
+   * memoized composer for it.
+   */
+  const history = React.useMemo(
+    () => promptHistory(deferredMessages),
+    [deferredMessages]
+  )
+
   /** Every file the chat changed, across its turns — the header's count. */
   const chatChanges = React.useMemo(
     () =>
@@ -206,9 +295,11 @@ export function useThreadView({
     contextTurn,
     contextTotal,
     activeCost,
+    lastTurnFinishedAt,
     usage,
     pendingRequest,
     waitingCount,
     chatChanges,
+    history,
   }
 }

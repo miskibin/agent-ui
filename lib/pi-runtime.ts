@@ -3,6 +3,8 @@ import "server-only"
 import { existsSync, readFileSync } from "node:fs"
 import path from "node:path"
 
+import { pathDirs } from "@/lib/agent-runtime-paths"
+
 /**
  * Locates the `pi` CLI (https://pi.dev) without loading `child_process`, so a
  * request that never reaches the harness — a provider listing, a chat on
@@ -79,10 +81,6 @@ function packageEntry(dir: string): string | null {
   } catch {
     return null
   }
-}
-
-function pathDirs(): string[] {
-  return (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)
 }
 
 function existsOnPath(names: string[]): boolean {

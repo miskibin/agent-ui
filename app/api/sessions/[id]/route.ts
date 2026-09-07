@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server"
 
+import { deleteCheckpointRefs } from "@/lib/checkpoints"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import {
   deleteSession,
   getSession,
+  normalizeWorktree,
   patchSession,
+  readLifecyclePatch,
   readMessages,
   writeMessages,
 } from "@/lib/store/sessions"
@@ -27,7 +30,9 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 /**
  * Rename, pin, reorder and per-chat settings (working folder, branch, the
- * provider-side conversation id). `order` moves the row to that sidebar index.
+ * worktree it was started in, the provider-side conversation id) plus the
+ * chat's lifecycle — settled, snoozed, woken, visited. `order` moves the row
+ * to that sidebar index.
  */
 export async function PATCH(req: Request, ctx: Ctx) {
   const refused = crossOriginRefusal(req)
@@ -53,6 +58,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
         : undefined,
     cwd: typeof body.cwd === "string" ? body.cwd : undefined,
     gitBranch: typeof body.gitBranch === "string" ? body.gitBranch : undefined,
+    // Set when a chat moves into a worktree the picker just made for it.
+    worktree: normalizeWorktree(body.worktree),
+    // Settle / snooze / wake / visit — see `lib/session-lifecycle`. A patch
+    // carrying only these leaves `updatedAt` where it was.
+    ...readLifecyclePatch(body),
     // "" clears it — the chat falls back to the harness's configured policy.
     permissionMode:
       typeof body.permissionMode === "string" ? body.permissionMode : undefined,
@@ -91,6 +101,21 @@ export async function DELETE(req: Request, ctx: Ctx) {
   const refused = crossOriginRefusal(req)
   if (refused) return refused
   const { id } = await ctx.params
+  /**
+   * The chat's checkpoints are refs in the *user's* repository, and the
+   * commits they point at are only unreachable once the refs are gone — so a
+   * deleted conversation would otherwise leave every worktree it passed
+   * through pinned forever. Done before the session record goes, because that
+   * record is the only thing that knows which folder they are in, and never
+   * allowed to fail the delete: a chat the user asked to remove is removed.
+   */
+  const session = await getSession(id)
+  const cwd = session?.cwd?.trim()
+  if (cwd) {
+    await deleteCheckpointRefs(cwd, id).catch(() => {
+      /* refs the user can prune themselves; the chat still goes */
+    })
+  }
   const deleted = await deleteSession(id)
   if (!deleted) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })

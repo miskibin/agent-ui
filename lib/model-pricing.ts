@@ -16,26 +16,53 @@ export type ModelPrice = {
   input: number
   /** $ per 1M output tokens. */
   output: number
+  /**
+   * $ per 1M input tokens served from the prompt cache. Absent where the
+   * host does not publish one, and then derived — see `CACHE_READ_RATIO`.
+   */
+  cacheRead?: number
+  /** $ per 1M input tokens written *into* the cache. */
+  cacheWrite?: number
+}
+
+/**
+ * Anthropic prices caching as a fixed multiple of a model's own input rate
+ * across the whole family — a read at a tenth, a five-minute write at a
+ * quarter more — so the per-model figures below are that rule applied to each
+ * entry's input price rather than nine hand-copied pairs that could drift
+ * apart. Every other table has no published pair at all and falls back to the
+ * same two ratios, which is the closest thing to a convention the hosts have.
+ */
+const CACHE_READ_RATIO = 0.1
+const CACHE_WRITE_RATIO = 1.25
+
+function anthropic(input: number, output: number): ModelPrice {
+  return {
+    input,
+    output,
+    cacheRead: input * CACHE_READ_RATIO,
+    cacheWrite: input * CACHE_WRITE_RATIO,
+  }
 }
 
 const ANTHROPIC: Record<string, ModelPrice> = {
-  "claude-fable-5-1": { input: 10, output: 50 },
-  "claude-fable-5": { input: 10, output: 50 },
-  "claude-mythos-5-1": { input: 10, output: 50 },
-  "claude-opus-5": { input: 5, output: 25 },
-  "claude-opus-4-8": { input: 5, output: 25 },
-  "claude-opus-4-7": { input: 5, output: 25 },
-  "claude-opus-4-6": { input: 5, output: 25 },
-  "claude-opus-4-5": { input: 5, output: 25 },
-  "claude-opus-4-1": { input: 15, output: 75 },
-  "claude-opus-4": { input: 15, output: 75 },
-  "claude-sonnet-5": { input: 2, output: 10 },
-  "claude-sonnet-4-6": { input: 3, output: 15 },
-  "claude-sonnet-4-5": { input: 3, output: 15 },
-  "claude-sonnet-4": { input: 3, output: 15 },
-  "claude-3-7-sonnet": { input: 3, output: 15 },
-  "claude-haiku-4-5": { input: 1, output: 5 },
-  "claude-3-5-haiku": { input: 0.8, output: 4 },
+  "claude-fable-5-1": anthropic(10, 50),
+  "claude-fable-5": anthropic(10, 50),
+  "claude-mythos-5-1": anthropic(10, 50),
+  "claude-opus-5": anthropic(5, 25),
+  "claude-opus-4-8": anthropic(5, 25),
+  "claude-opus-4-7": anthropic(5, 25),
+  "claude-opus-4-6": anthropic(5, 25),
+  "claude-opus-4-5": anthropic(5, 25),
+  "claude-opus-4-1": anthropic(15, 75),
+  "claude-opus-4": anthropic(15, 75),
+  "claude-sonnet-5": anthropic(2, 10),
+  "claude-sonnet-4-6": anthropic(3, 15),
+  "claude-sonnet-4-5": anthropic(3, 15),
+  "claude-sonnet-4": anthropic(3, 15),
+  "claude-3-7-sonnet": anthropic(3, 15),
+  "claude-haiku-4-5": anthropic(1, 5),
+  "claude-3-5-haiku": anthropic(0.8, 4),
 }
 
 const OPENAI: Record<string, ModelPrice> = {
@@ -134,6 +161,41 @@ const CLAUDE_CODE_ALIASES: Record<string, string> = {
 }
 
 /**
+ * A user's own price table, keyed exactly as the app spells a model id —
+ * `<source>/<model>` for a hosted one, the bare tag for a harness that only
+ * ever reports one (`sonnet`, `gpt-5-codex`). Prices are dollars per million
+ * tokens, same units as the tables above, and `0` means free rather than
+ * unknown: it is the one way to tell this app that a model on a subscription,
+ * a local box or a free tier costs nothing.
+ *
+ * Kept as a plain record so it can be persisted verbatim in settings.json
+ * (`usage.priceOverrides`) and passed straight in here.
+ */
+export type ModelPriceOverrides = Record<string, ModelPrice>
+
+/**
+ * The override for one id, if the user wrote one.
+ *
+ * Exact match on the trimmed id first — an override is written against the id
+ * the usage table showed, so a prefix rule here would let `gpt-5` silently
+ * re-price `gpt-5-nano`. The case-insensitive second pass exists only for a
+ * hand-typed key, and still matches the *whole* id.
+ */
+function overrideFor(
+  id: string,
+  overrides: ModelPriceOverrides | undefined
+): ModelPrice | null {
+  if (!overrides) return null
+  const direct = overrides[id]
+  if (direct) return direct
+  const lower = id.toLowerCase()
+  for (const [key, price] of Object.entries(overrides)) {
+    if (key.trim().toLowerCase() === lower) return price
+  }
+  return null
+}
+
+/**
  * The price of a model id, or `null` when it is not one this table knows.
  * `ollama/…` is a local model, as is any bare id run by the Ollama harness;
  * a bare id from another harness (`cursor` running `gpt-5`) is priced by
@@ -146,9 +208,19 @@ const CLAUDE_CODE_ALIASES: Record<string, string> = {
  * per-token bill at all — but it is the same estimate the CLI itself prints
  * as `total_cost_usd`, and it beats showing nothing.
  */
-export function priceForModel(modelId: string, providerId?: string): ModelPrice | null {
+export function priceForModel(
+  modelId: string,
+  providerId?: string,
+  overrides?: ModelPriceOverrides
+): ModelPrice | null {
   const id = modelId.trim()
   if (!id) return null
+  // The user's table wins over every rule below, including the ones that
+  // answer without consulting a table at all: an override is the only way to
+  // say what a model this app has never heard of costs, and the only way to
+  // correct one it prices wrongly.
+  const own = overrideFor(id, overrides)
+  if (own) return own
   const cut = id.indexOf("/")
   if (cut <= 0) {
     if (providerId === "ollama") return FREE
@@ -160,16 +232,29 @@ export function priceForModel(modelId: string, providerId?: string): ModelPrice 
   const model = id.slice(cut + 1).toLowerCase()
   if (source === "ollama") return FREE
 
-  const own = BY_SOURCE[source]
-  if (own) return longestPrefix(own, model)
+  const table = BY_SOURCE[source]
+  if (table) return longestPrefix(table, model)
 
   // An aggregator: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, …
   const bare = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model
-  for (const table of ALL_TABLES) {
-    const hit = longestPrefix(table, bare) ?? longestPrefix(table, model)
+  for (const candidate of ALL_TABLES) {
+    const hit = longestPrefix(candidate, bare) ?? longestPrefix(candidate, model)
     if (hit) return hit
   }
   return null
+}
+
+/**
+ * Every token a turn was billed for, split the way the backends report it.
+ * `inputTokens` is the *uncached* half: a harness that reports cache reads
+ * and writes separately (claude-code does) hands them over separately, and
+ * they are charged at their own rates rather than folded in at the full one.
+ */
+export type TurnTokens = {
+  inputTokens: number
+  outputTokens: number
+  cachedInputTokens?: number
+  cacheCreationTokens?: number
 }
 
 /** Dollars for one turn, or `null` when the model's price is unknown. */
@@ -177,11 +262,38 @@ export function estimateCost(
   modelId: string,
   inputTokens: number,
   outputTokens: number,
-  providerId?: string
+  providerId?: string,
+  cache?: Pick<TurnTokens, "cachedInputTokens" | "cacheCreationTokens">,
+  overrides?: ModelPriceOverrides
 ): number | null {
-  const price = priceForModel(modelId, providerId)
+  const price = priceForModel(modelId, providerId, overrides)
   if (!price) return null
-  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000
+  const cacheRead = price.cacheRead ?? price.input * CACHE_READ_RATIO
+  const cacheWrite = price.cacheWrite ?? price.input * CACHE_WRITE_RATIO
+  return (
+    (inputTokens * price.input +
+      outputTokens * price.output +
+      (cache?.cachedInputTokens ?? 0) * cacheRead +
+      (cache?.cacheCreationTokens ?? 0) * cacheWrite) /
+    1_000_000
+  )
+}
+
+/**
+ * Where a model's price came from, for a UI that has to say so: an override
+ * the user wrote, this file's own list prices, or nothing at all. "unpriced"
+ * is not "free" — see `lib/usage`, which counts such a turn's tokens and
+ * keeps it out of every sum.
+ */
+export type PriceSource = "override" | "builtin" | "unpriced"
+
+export function priceSource(
+  modelId: string,
+  providerId?: string,
+  overrides?: ModelPriceOverrides
+): PriceSource {
+  if (overrideFor(modelId.trim(), overrides)) return "override"
+  return priceForModel(modelId, providerId) ? "builtin" : "unpriced"
 }
 
 /** `$0.0042`, `$1.30`, `free` — sized to the magnitude of the number. */

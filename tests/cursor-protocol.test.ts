@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import { after, test } from "node:test"
 
 import { compareVersions, versionParts } from "@/lib/agent-runtime"
+import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import {
   mapToolEvent,
   readUsage,
@@ -215,4 +219,203 @@ test("the newest Windows bundle is picked by number, not by code point", () => {
   assert.ok(compareVersions([2026, 10, 1], [2026, 9, 2]) > 0)
   assert.ok(compareVersions([2026, 8, 11], [2026, 8, 5]) > 0)
   assert.equal(compareVersions([2026, 9, 2], [2026, 9, 2]), 0)
+})
+
+/* -------------------------------------------------------------------------- */
+/*                       the streaming turn, end to end                       */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `runCursorAgent` is the spawn and the state machine around the translators
+ * above, and the three things asserted below only exist in that state machine:
+ * a reply that is nothing but a transport diagnostic must fail the turn rather
+ * than be stored as the answer, and a turn that ends underneath a running tool
+ * call must close its row instead of leaving it spinning forever.
+ *
+ * The CLI is stood in for by a script on `CURSOR_AGENT_BIN` that replays a
+ * fixture of `--output-format stream-json` lines, so this exercises the real
+ * spawn, the real framing and the real teardown without the binary.
+ */
+
+const scratch = mkdtempSync(path.join(tmpdir(), "agent-ui-cursor-"))
+const fixturePath = path.join(scratch, "fixture.jsonl")
+const fakeAgent = path.join(scratch, "fake-agent")
+
+writeFileSync(
+  fakeAgent,
+  `#!${process.execPath}\n` +
+    `const fs = require("node:fs")\n` +
+    `fs.writeSync(1, fs.readFileSync(process.env.AGENT_UI_TEST_FIXTURE, "utf8"))\n` +
+    `const hold = Number(process.env.AGENT_UI_TEST_HOLD_MS || "0")\n` +
+    `const code = Number(process.env.AGENT_UI_TEST_EXIT || "0")\n` +
+    `if (hold > 0) setTimeout(() => process.exit(code), hold)\n` +
+    `else process.exit(code)\n`,
+  { mode: 0o755 }
+)
+
+const inheritedBin = process.env.CURSOR_AGENT_BIN
+process.env.CURSOR_AGENT_BIN = fakeAgent
+process.env.AGENT_UI_TEST_FIXTURE = fixturePath
+
+after(() => {
+  if (inheritedBin === undefined) delete process.env.CURSOR_AGENT_BIN
+  else process.env.CURSOR_AGENT_BIN = inheritedBin
+  delete process.env.AGENT_UI_TEST_FIXTURE
+  delete process.env.AGENT_UI_TEST_HOLD_MS
+  delete process.env.AGENT_UI_TEST_EXIT
+  rmSync(scratch, { recursive: true, force: true })
+})
+
+function stage(
+  lines: Record<string, unknown>[],
+  options: { exit?: number; holdMs?: number } = {}
+) {
+  writeFileSync(
+    fixturePath,
+    lines.map((line) => JSON.stringify(line)).join("\n") + "\n"
+  )
+  process.env.AGENT_UI_TEST_EXIT = String(options.exit ?? 0)
+  process.env.AGENT_UI_TEST_HOLD_MS = String(options.holdMs ?? 0)
+}
+
+function assistant(text: string, timestamp: number): Record<string, unknown> {
+  return {
+    type: "assistant",
+    timestamp_ms: timestamp,
+    message: { content: [{ type: "text", text }] },
+  }
+}
+
+const startedTool = {
+  type: "tool_call",
+  subtype: "started",
+  call_id: "call-1",
+  tool_call: { shellToolCall: { args: { command: "npm run dev" } } },
+}
+
+async function runToEnd(signal?: AbortSignal) {
+  const { runCursorAgent } = await import("@/lib/cursor-agent")
+  const events: AgentStreamEvent[] = []
+  for await (const event of runCursorAgent({
+    prompt: "hi",
+    model: "auto",
+    workspace: scratch,
+    ...(signal ? { signal } : {}),
+  })) {
+    events.push(event)
+  }
+  return events
+}
+
+const CONNECT_ERROR =
+  "Error: ConnectError: [unavailable] upstream connect error or disconnect"
+
+test("a reply that is only a transport dump fails the turn", async () => {
+  stage([
+    assistant(`${CONNECT_ERROR}\n`, 1),
+    assistant("    at TLSSocket.emit (node:events:519:28)\n", 2),
+    { type: "result", session_id: "s1", duration_ms: 12, result: "" },
+  ])
+
+  const events = await runToEnd()
+  assert.deepEqual(
+    events.filter((event) => event.type === "text"),
+    [],
+    "the diagnostic is never stored as the answer"
+  )
+  assert.equal(
+    events.some((event) => event.type === "done"),
+    false,
+    "and the turn is not remembered as a success"
+  )
+  const errors = events.filter((event) => event.type === "error")
+  assert.equal(errors.length, 1)
+  assert.equal(errors[0].type === "error" && errors[0].message, CONNECT_ERROR)
+})
+
+test("an answer that merely contains the diagnostic is still delivered", async () => {
+  stage([
+    assistant(`${CONNECT_ERROR}\nThat is what the retry loop prints.\n`, 1),
+    { type: "result", session_id: "s1", duration_ms: 12, result: "" },
+  ])
+
+  const events = await runToEnd()
+  const text = events
+    .map((event) => (event.type === "text" ? event.text : ""))
+    .join("")
+  assert.ok(text.includes("That is what the retry loop prints."))
+  assert.ok(text.includes(CONNECT_ERROR), "held text is released, not dropped")
+  assert.equal(events.some((event) => event.type === "done"), true)
+  assert.equal(events.some((event) => event.type === "error"), false)
+})
+
+test("ordinary text streams through untouched", async () => {
+  stage([
+    assistant("Looked at ", 1),
+    assistant("two files.", 2),
+    { type: "result", session_id: "s1", duration_ms: 5, result: "" },
+  ])
+  const events = await runToEnd()
+  assert.deepEqual(
+    events.filter((event) => event.type === "text"),
+    [
+      { type: "text", text: "Looked at " },
+      { type: "text", text: "two files." },
+    ]
+  )
+})
+
+test("a tool the stream never closed is closed by the turn", async () => {
+  stage([assistant("Starting the dev server.", 1), startedTool])
+
+  const events = await runToEnd()
+  const rows = events.filter((event) => event.type === "tool")
+  assert.equal(rows.length, 2, "the started row, then its terminal one")
+  assert.deepEqual(rows[1], {
+    type: "tool",
+    id: "call-1",
+    name: "Shell",
+    status: "error",
+    output: "Interrupted",
+  })
+})
+
+test("a non-zero exit closes the row and still reports the failure", async () => {
+  stage([startedTool], { exit: 3 })
+
+  const events = await runToEnd()
+  assert.equal(
+    events.some(
+      (event) =>
+        event.type === "tool" && event.status === "error" && event.id === "call-1"
+    ),
+    true
+  )
+  const error = events.find((event) => event.type === "error")
+  assert.ok(error && error.type === "error" && /code 3/.test(error.message))
+})
+
+test("stopping the turn closes the rows it left open", async () => {
+  stage([startedTool], { holdMs: 30_000 })
+
+  const controller = new AbortController()
+  const { runCursorAgent } = await import("@/lib/cursor-agent")
+  const events: AgentStreamEvent[] = []
+  for await (const event of runCursorAgent({
+    prompt: "hi",
+    model: "auto",
+    workspace: scratch,
+    signal: controller.signal,
+  })) {
+    events.push(event)
+    if (event.type === "tool" && event.status === "running") controller.abort()
+  }
+
+  assert.deepEqual(events.at(-1), {
+    type: "tool",
+    id: "call-1",
+    name: "Shell",
+    status: "error",
+    output: "Interrupted",
+  })
 })

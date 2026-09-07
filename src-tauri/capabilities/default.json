@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Everything lib/desktop.ts needs: window controls for the custom header, drag regions, resize events, platform detection, the native folder chooser behind the working-folder picker, the update check / install / relaunch flow, OS notifications, and the dock badge / attention request for turns that finish while the window is in the background. `remote.urls` names the dev server alone: the production port is only known at launch, and a loopback wildcard would offer all of this to whatever else is listening, so `grant_remote_origin` (src/lib.rs) re-reads this file and grants it to the one resolved origin instead.",
+  "description": "Everything lib/desktop.ts needs: window controls for the custom header, drag regions, resize events, platform detection, the native folder chooser behind the working-folder picker, the update check / install / relaunch flow, OS notifications, and the dock badge / attention request for turns that finish while the window is in the background, and the hold-to-quit handshake (the page emits its armed state, the shell emits the intercepted quit back, and `process:allow-exit` is how the page finally quits). `remote.urls` names the dev server alone: the production port is only known at launch, and a loopback wildcard would offer all of this to whatever else is listening, so `grant_remote_origin` (src/lib.rs) re-reads this file and grants it to the one resolved origin instead.",
   "windows": ["main"],
   "remote": {
     "urls": ["http://localhost:3000"]
@@ -21,11 +21,13 @@
     "core:window:allow-request-user-attention",
     "core:event:allow-listen",
     "core:event:allow-unlisten",
+    "core:event:allow-emit",
     "dialog:allow-open",
     "notification:default",
     "shell:allow-open",
     "os:default",
     "updater:default",
-    "process:allow-restart"
+    "process:allow-restart",
+    "process:allow-exit"
   ]
 }

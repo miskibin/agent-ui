@@ -4,14 +4,38 @@ import * as React from "react"
 
 import { groupIdForSession } from "@/lib/session-groups"
 import type { SessionMeta } from "@/lib/store/types"
-import { CACHE_SECTIONS_KEY, readCache, writeCache } from "@/lib/ui-cache"
+import {
+  CACHE_SECTIONS_KEY,
+  CACHE_SIDEBAR_WIDTH_KEY,
+  readCache,
+  writeCache,
+} from "@/lib/ui-cache"
 
 /**
- * The shell's own state: the collapsible sidebar on desktop, the drawer that
- * slides over the conversation below `md`, which folder sections are folded
- * away, the command palette, and the token that opens one chat's inline
- * rename. None of it touches chat data.
+ * The shell's own state: the collapsible sidebar on desktop, how wide it is,
+ * the drawer that slides over the conversation below `md`, which folder
+ * sections are folded away, the command palette, and the token that opens one
+ * chat's inline rename. None of it touches chat data.
  */
+
+/**
+ * The width the rail was left at, read during the first render rather than
+ * after it.
+ *
+ * Every other snapshot here is picked up in a microtask after mount, which is
+ * fine for something that only changes what is *inside* the panel. This one
+ * changes the panel's own width, and a frame at 290px before it jumps is the
+ * flash the seeding exists to avoid — the rail writes the value in a layout
+ * effect, so nothing is painted at the default first. A prerender has no
+ * storage to read and simply gets 0.
+ */
+function readSidebarWidth() {
+  const stored = readCache<number>(CACHE_SIDEBAR_WIDTH_KEY)
+  return typeof stored === "number" && Number.isFinite(stored) && stored > 0
+    ? stored
+    : 0
+}
+
 export function useChatNav({
   isDesktop,
   sessionsRef,
@@ -20,6 +44,8 @@ export function useChatNav({
   sessionsRef: React.RefObject<SessionMeta[]>
 }) {
   const [collapsed, setCollapsed] = React.useState(false)
+  /** Pixels; 0 = never resized, and the panel keeps its default width. */
+  const [sidebarWidth, setSidebarWidth] = React.useState(readSidebarWidth)
   const [mobileNavOpen, setMobileNavOpen] = React.useState(false)
   /** Sections the user closed. Absent id = open, so a new folder shows up. */
   const [closedSections, setClosedSections] = React.useState<
@@ -76,6 +102,17 @@ export function useChatNav({
     })
   }, [])
 
+  /**
+   * The rail reports a settled width — on release, on the double-click reset
+   * and on every keyboard step, never per frame — and this is where it is
+   * kept. The panel is already at that width by the time this runs, so the
+   * state is for the *next* mount, not for this one.
+   */
+  const saveSidebarWidth = React.useCallback((width: number) => {
+    setSidebarWidth(width)
+    writeCache(CACHE_SIDEBAR_WIDTH_KEY, width)
+  }, [])
+
   /** Closing the drawer hands focus back to the button that opened it. */
   const closeDrawer = React.useCallback(() => {
     setMobileNavOpen(false)
@@ -119,6 +156,8 @@ export function useChatNav({
   return {
     collapsed,
     setCollapsed,
+    sidebarWidth,
+    saveSidebarWidth,
     closedSections,
     toggleSection,
     openSection,

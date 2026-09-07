@@ -1,6 +1,7 @@
 import type { Metadata } from "next"
 import "./globals.css"
 import { DesktopUpdater } from "@/components/desktop-updater"
+import { QuitHold } from "@/components/quit-hold"
 import { ThemeProvider } from "@/components/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import {
@@ -105,6 +106,9 @@ export default function RootLayout({
         {/* Renders nothing: schedules the desktop shell's update check for an
             idle moment after startup. A no-op in a browser tab. */}
         <DesktopUpdater />
+        {/* Also nothing, until ⌘Q is pressed while a turn is running: then the
+            shell's close is held open and this asks for the gesture again. */}
+        <QuitHold />
       </body>
     </html>
   )

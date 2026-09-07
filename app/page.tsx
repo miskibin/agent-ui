@@ -5,13 +5,20 @@ import dynamic from "next/dynamic"
 import * as React from "react"
 
 import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
+import { BinaryFilePanel } from "@/components/binary-file"
+import { PendingLineComments } from "@/components/line-comments"
 import { ChatChanges } from "@/components/chat-changes"
 import { ChatUsageSummary } from "@/components/chat-usage"
 import { ThreadLoading } from "@/components/chat-skeletons"
 import { ChatSidebarPanel } from "@/components/chat-sidebar-panel"
 import { CHAT_SUGGESTIONS } from "@/components/chat-suggestions"
 import { CommandPalette } from "@/components/command-palette"
-import { ContextUsage, useDraftStore } from "@/components/context-usage"
+import {
+  ContextUsage,
+  canCompactContext,
+  useDraftStore,
+} from "@/components/context-usage"
+import { DiffWorkers } from "@/components/diff-workers"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
@@ -32,7 +39,6 @@ import {
 } from "@/components/ui/resizable"
 import { TodoPanel } from "@/components/ui/todo-list"
 import { providerSessionHints } from "@/lib/handoff/types"
-import { APP_SLASH_COMMANDS } from "@/lib/slash-commands"
 import type { StoredMessage } from "@/lib/store/types"
 import { CACHE_ACTIVE_KEY, CACHE_INDEX_KEY, writeCache } from "@/lib/ui-cache"
 import { cn } from "@/lib/utils"
@@ -46,7 +52,7 @@ import { useChatNav } from "./hooks/use-chat-nav"
 import { useChatRefs, useMirrorRefs } from "./hooks/use-chat-refs"
 import { useChatShortcuts } from "./hooks/use-chat-shortcuts"
 import { useChatTurns } from "./hooks/use-chat-turns"
-import { useCommandPalette } from "./hooks/use-command-palette"
+import { useCommandPalette, useMessageJump } from "./hooks/use-command-palette"
 import { useComposerDrafts } from "./hooks/use-composer-drafts"
 import { useComposerHeight } from "./hooks/use-composer-height"
 import {
@@ -63,6 +69,7 @@ import { useMessageQueue } from "./hooks/use-message-queue"
 import { usePromptStash } from "./hooks/use-prompt-stash"
 import { useSessionIndex } from "./hooks/use-session-index"
 import { useSidebarItems } from "./hooks/use-sidebar-items"
+import { useSkills } from "./hooks/use-skills"
 import { useThreadView } from "./hooks/use-thread-view"
 import { useThreads } from "./hooks/use-threads"
 import { useTurnRunner } from "./hooks/use-turn-runner"
@@ -76,6 +83,16 @@ import * as api from "@/lib/api-client"
  */
 const SettingsView = dynamic(
   () => import("@/app/settings/settings-view").then((m) => m.SettingsView),
+  { ssr: false }
+)
+
+/**
+ * The same treatment for the import picker: it scans two CLIs' history
+ * directories and is opened once in a while, so nothing about it belongs on
+ * the path of the first paint.
+ */
+const ImportDialog = dynamic(
+  () => import("@/components/import-dialog").then((m) => m.ImportDialog),
   { ssr: false }
 )
 
@@ -101,6 +118,8 @@ export default function ChatPage() {
   const [settingsSection, setSettingsSection] =
     React.useState<SettingsSectionId | null>(null)
   const [dataDir, setDataDir] = React.useState("")
+  /** The import picker, opened from ⌘K. */
+  const [importOpen, setImportOpen] = React.useState(false)
   const refs = useChatRefs()
   const { composerRef, sessionsRef } = refs
 
@@ -148,6 +167,8 @@ export default function ChatPage() {
   const {
     collapsed,
     setCollapsed,
+    sidebarWidth,
+    saveSidebarWidth,
     closedSections,
     toggleSection,
     paletteOpen,
@@ -193,6 +214,12 @@ export default function ChatPage() {
     activeSession?.cwd
   )
 
+  /**
+   * What this chat can run: the `$` menu's skills and the harness commands its
+   * `/` menu adds, scanned from the chat's own folder.
+   */
+  const skillCatalog = useSkills({ activeId, cwd: activeCwd, isGenerating })
+
   const panel = useFilePanel({
     refs,
     activeId,
@@ -202,6 +229,7 @@ export default function ChatPage() {
   })
   const {
     preview,
+    previewBinary,
     previewSize,
     previewPrefs,
     closePreview,
@@ -209,6 +237,7 @@ export default function ChatPage() {
     setDiffLayout,
     setWrap,
     handleCopyPath,
+    confirmRestoreTurn,
     fileActions,
     resolveFileUrl,
     handleOpenFile,
@@ -263,6 +292,10 @@ export default function ChatPage() {
     removeSession,
     removeSessions,
     handleNewChat,
+    settleChat,
+    snoozeChat,
+    wakeChat,
+    markVisited,
   } = useChatActions({
     refs,
     sessions,
@@ -345,6 +378,21 @@ export default function ChatPage() {
     writeCache(CACHE_INDEX_KEY, [])
     writeCache(CACHE_ACTIVE_KEY, "")
   }, [setActiveId, setQueues, setSessions, setThreads])
+  /**
+   * The import dialog has just written chats into the store. Only the index
+   * has to be re-read: the transcripts it wrote are loaded the moment one of
+   * them is opened, like any other chat's.
+   */
+  const reloadSessions = React.useCallback(() => {
+    void api
+      .fetchSessions()
+      .then(setSessions)
+      .catch(() => {
+        /* the dialog already said what failed */
+      })
+  }, [setSessions])
+  const openImport = React.useCallback(() => setImportOpen(true), [])
+
   /** The sidebar, ⌘K and `/settings`, none of which name a section. */
   const pushSettings = React.useCallback(() => openSettings(), [openSettings])
   /** The void wrapper the sidebar, the palette and ⌘N all share. */
@@ -360,6 +408,7 @@ export default function ChatPage() {
     handleAskAnswer,
     handleRequestAnswer,
     handlePlanBuild,
+    handleCompact,
     handleEditMessage,
     handleRegenerate,
     handleDeleteMessage,
@@ -393,6 +442,7 @@ export default function ChatPage() {
     startRename,
     openFolder,
     pushSettings,
+    knownSkillNamesRef: skillCatalog.knownSkillNamesRef,
   })
 
   const {
@@ -401,10 +451,12 @@ export default function ChatPage() {
     contextTurn,
     contextTotal,
     activeCost,
+    lastTurnFinishedAt,
     usage,
     pendingRequest,
     waitingCount,
     chatChanges,
+    history,
   } = useThreadView({
     messages,
     threads,
@@ -420,18 +472,34 @@ export default function ChatPage() {
      takes the boolean and stays off the per-token render path. */
   const hasPendingAsk = pendingRequest?.kind === "ask"
 
-  const { sessionItems, pinnedItems, folderGroups, sessionMenuActions } =
-    useSidebarItems({
-      refs,
-      sessions,
-      runs,
-      failures,
-      activeId,
-      providerId,
-      models,
-      providerName,
-      regenerateTitle,
-    })
+  const {
+    sessionItems,
+    pinnedItems,
+    folderGroups,
+    sessionMenuActions,
+    sessionRowActions,
+    snoozedShelf,
+    settledShelf,
+    showMoreOnShelf,
+  } = useSidebarItems({
+    refs,
+    sessions,
+    runs,
+    failures,
+    threads,
+    closedSections,
+    activeId,
+    providerId,
+    models,
+    providerName,
+    regenerateTitle,
+    onTogglePin: togglePin,
+    onDelete: removeSession,
+    onSettle: settleChat,
+    onSnooze: snoozeChat,
+    onWake: wakeChat,
+    onMarkVisited: markVisited,
+  })
 
   const { paletteActions, paletteSessions } = useCommandPalette({
     sessions,
@@ -440,6 +508,7 @@ export default function ChatPage() {
     providerName,
     regenerateTitle,
     openFolder,
+    openImport,
   })
 
   useChatBootstrap({
@@ -453,10 +522,15 @@ export default function ChatPage() {
 
   useAttention({
     waitingCount,
+    /* Turns in flight, for the hold-to-quit overlay in the root layout. */
+    runningCount: Object.keys(runs).length,
     activeTitle: activeSession?.title?.trim() ?? "",
   })
 
   useChatShortcuts({ refs, handleNewChat, toggleSidebar, openFolder })
+
+  /** Opening a chat *at* the message a palette search matched. */
+  const openMessage = useMessageJump({ refs, selectSession, loadThread })
 
   const { chatPaneRef, composerBoxRef } = useComposerHeight()
 
@@ -464,6 +538,10 @@ export default function ChatPage() {
   // Derived, so exactly one FilePreview is ever mounted.
   const dockedPreview = isDesktop ? preview : null
   const overlayPreview = isDesktop ? null : preview
+
+  /* Whether this chat's harness can shorten its own conversation — the meter's
+     "Compact context" and the offer to do it before resuming. */
+  const canCompact = canCompactContext(providerId, skillCatalog.commands)
 
   /**
    * The composer holds the draft the user is typing and has nothing to do with
@@ -481,8 +559,17 @@ export default function ChatPage() {
         onQueueRemove={handleQueueRemove}
         onQueueEdit={handleQueueEdit}
         onStash={handleStash}
+        /* ArrowUp in an untouched composer walks back through what was already
+           sent in this chat. Identity-stable (`use-thread-view`), so the
+           memoized composer is not rebuilt for it on every token. */
+        history={history}
         mentions={handleMentions}
-        slashCommands={APP_SLASH_COMMANDS}
+        /* `$name` offers what this machine has, and the `/` menu carries the
+           harness's own commands under the app's. Both only run at the head of
+           a message — a `/compact` mid-sentence is prose to every CLI. */
+        skills={skillCatalog.skills}
+        slashCommands={skillCatalog.slashCommands}
+        commandsMustStartMessage
         isGenerating={isGenerating}
         placeholder={
           isGenerating
@@ -533,6 +620,11 @@ export default function ChatPage() {
               output={contextTurn.output}
               total={contextTotal}
               cost={activeCost}
+              sessionId={activeId}
+              providerId={providerId}
+              lastTurnAt={lastTurnFinishedAt}
+              canCompact={canCompact}
+              onCompact={handleCompact}
             />
             <StashMenu
               entries={stash}
@@ -545,7 +637,9 @@ export default function ChatPage() {
     ),
     [
       activeCost,
+      activeId,
       activeProviderName,
+      canCompact,
       chooseModel,
       choosePermission,
       chooseProvider,
@@ -558,6 +652,7 @@ export default function ChatPage() {
       draftStore,
       effectivePermission,
       effort,
+      handleCompact,
       handleMentions,
       handleQueue,
       handleQueueEdit,
@@ -567,8 +662,10 @@ export default function ChatPage() {
       handleStop,
       handleTextChange,
       hasPendingAsk,
+      history,
       isEmptyChat,
       isGenerating,
+      lastTurnFinishedAt,
       model,
       models,
       permissionModes,
@@ -580,6 +677,8 @@ export default function ChatPage() {
       sessionHints,
       setEffort,
       showEfforts,
+      skillCatalog.skills,
+      skillCatalog.slashCommands,
       stash,
     ]
   )
@@ -607,6 +706,11 @@ export default function ChatPage() {
           sessionItems={sessionItems}
           pinnedItems={pinnedItems}
           folderGroups={folderGroups}
+          snoozedShelf={snoozedShelf}
+          settledShelf={settledShelf}
+          onShelfShowMore={showMoreOnShelf}
+          onSettle={settleChat}
+          onWake={wakeChat}
           activeId={activeId}
           sessionsLoaded={sessionsLoaded}
           sessionsRef={sessionsRef}
@@ -627,6 +731,9 @@ export default function ChatPage() {
           onDeleteMany={removeSessions}
           onReorder={setSessions}
           getMenuActions={sessionMenuActions}
+          renderActions={sessionRowActions}
+          sidebarWidth={sidebarWidth}
+          onSidebarWidthChange={saveSidebarWidth}
         />
       </div>
 
@@ -648,6 +755,9 @@ export default function ChatPage() {
               files={chatChanges}
               fileActions={fileActions}
               onFileClick={handleChatChangeClick}
+              sessionId={activeId}
+              cwd={activeCwd}
+              selectedPath={preview?.path ?? null}
             />
             <ChatUsageSummary usage={usage} />
             <AppHeaderButton
@@ -668,231 +778,276 @@ export default function ChatPage() {
         */}
         <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
           {/*
-            Desktop: the conversation and the file panel are two panes of one
-            draggable split. A pane's content wrapper carries an inline
-            `overflow: auto`, so the children that own their own scrolling turn
-            it off through `style` — a class would lose to the inline rule.
+            One worker pool for the whole workspace, mounted here rather than
+            per panel: every `DiffView` under it — the file panel, the diffs
+            inside tool rows — highlights off the main thread, and the pool is
+            reference counted and kept warm, so opening files in a row spawns
+            workers only the first time. The wrapper is what keeps it off the
+            prerender; see `components/diff-workers`.
           */}
-          <ResizablePanelGroup
-            id={WORKSPACE_GROUP_ID}
-            orientation="horizontal"
-            onLayoutChanged={saveSplit}
-            className="min-w-0 flex-1"
-          >
-            <ResizablePanel
-              id={CHAT_PANEL_ID}
-              defaultSize={`${100 - previewSize}%`}
-              minSize="40%"
-              className="flex min-w-0 flex-col"
-              style={{ overflow: "hidden" }}
+          <DiffWorkers>
+            {/*
+              Desktop: the conversation and the file panel are two panes of one
+              draggable split. A pane's content wrapper carries an inline
+              `overflow: auto`, so the children that own their own scrolling turn
+              it off through `style` — a class would lose to the inline rule.
+            */}
+            <ResizablePanelGroup
+              id={WORKSPACE_GROUP_ID}
+              orientation="horizontal"
+              onLayoutChanged={saveSplit}
+              className="min-w-0 flex-1"
             >
-              <div
-                ref={chatPaneRef}
-                className={cn(
-                  "relative flex min-h-0 flex-1 flex-col overflow-x-hidden",
-                  isEmptyChat && "justify-center"
-                )}
+              <ResizablePanel
+                id={CHAT_PANEL_ID}
+                defaultSize={`${100 - previewSize}%`}
+                minSize="40%"
+                className="flex min-w-0 flex-col"
+                style={{ overflow: "hidden" }}
               >
-                {threadLoading ? (
-                  <ThreadLoading />
-                ) : isEmptyChat ? (
-                  <div
-                    data-slot="chat-opening"
-                    className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
-                  >
-                    <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
-                      How can I help?
-                    </h2>
-                  </div>
-                ) : (
-                  <MessageList
-                    /* Room for the island above, inside the scroller — so the
-                       last turn settles just clear of it and everything above
-                       still scrolls the whole height of the pane. */
-                    className="pb-[calc(var(--composer-height,7rem)+0.5rem)]"
-                    messages={listMessages}
-                    /* One mounted list shows every chat in turn: the key is
-                       what resets the scroller's follow state on a switch. */
-                    conversationKey={activeId}
-                    isGenerating={isGenerating}
-                    generationStage={activeRun?.stage ?? "idle"}
-                    generationLabel={activeRun?.status}
-                    onEditMessage={handleEditMessage}
-                    onAskAnswer={handleAskAnswer}
-                    onPlanBuild={handlePlanBuild}
-                    onOpenFile={handleOpenFile}
-                    onChangeFileClick={handleChangeFileClick}
-                    onFileReferenceClick={handleFileReferenceClick}
-                    onReviewChanges={handleReviewChanges}
-                    resolveFileUrl={resolveFileUrl}
-                    fileActions={fileActions}
-                    onQuote={handleQuote}
-                    renderActions={(message) =>
-                      message.sender === "assistant" ? (
-                        <>
-                          {/* Attached to the turn it explains, through the
-                              list's own render slot — the vendored component
-                              knows nothing about handoffs. */}
-                          {(message as StoredMessage).metadata?.handoff ? (
-                            <HandoffNotice
-                              handoff={
-                                (message as StoredMessage).metadata!.handoff!
-                              }
-                            />
-                          ) : null}
-                          <MessageActions
-                            message={message as StoredMessage}
-                            providerName={providerName(
-                              (message as StoredMessage).metadata?.providerId ??
-                                ""
-                            )}
-                            onRegenerate={handleRegenerate}
-                            onDelete={handleDeleteMessage}
-                          />
-                        </>
-                      ) : null
-                    }
-                  >
-                    {/* Composed in through the list's own `children` slot: the
-                        marker belongs after the last turn, inside the
-                        conversation column, and `MessageList` stays
-                        untouched. */}
-                    {memoryNotices[activeId] && !isGenerating ? (
-                      <MemoryNotice
-                        changes={memoryNotices[activeId].changes}
-                        compacted={memoryNotices[activeId].compacted}
-                        onDismiss={() => dismissMemoryNotice(activeId)}
-                        onOpenMemorySettings={openMemorySettings}
-                      />
-                    ) : null}
-                  </MessageList>
-                )}
-
                 <div
-                  ref={composerBoxRef}
-                  data-slot="chat-composer"
+                  ref={chatPaneRef}
                   className={cn(
-                    "w-full shrink-0",
-                    // An island over the conversation, not a band beside it:
-                    // the wrapper spans the pane so the composer stays centred,
-                    // but only its children take the pointer, which leaves the
-                    // transcript scrollable right up to the window's edge.
-                    !isEmptyChat &&
-                      "pointer-events-none absolute inset-x-0 bottom-0 z-20 [&>*]:pointer-events-auto"
+                    "relative flex min-h-0 flex-1 flex-col overflow-x-hidden",
+                    isEmptyChat && "justify-center"
                   )}
                 >
-                  {isEmptyChat ? (
-                    /* Aligned with the composer card's own measure, so the two
-                       read as one control rather than two stacked ones. */
-                    <div className="mx-auto flex w-full max-w-3xl px-3 pb-2 sm:px-4">
-                      <FolderPicker
-                        variant="inline"
-                        cwd={activeSession?.cwd}
-                        gitBranch={activeSession?.gitBranch}
-                        onChange={setFolder}
-                      />
+                  {threadLoading ? (
+                    <ThreadLoading />
+                  ) : isEmptyChat ? (
+                    <div
+                      data-slot="chat-opening"
+                      className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+                    >
+                      <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
+                        How can I help?
+                      </h2>
                     </div>
-                  ) : null}
-                  {/* The plan the turn is working through, collapsed to one
-                      line. Keyed by chat so switching threads never carries a
-                      disclosure — or a plan — across. */}
-                  <TodoPanel
-                    key={activeId}
-                    items={todos}
-                    running={isGenerating}
-                  />
-                  {pendingRequest?.kind === "ask" ? (
-                    <PendingQuestion
-                      key={`${activeId}:${pendingRequest.messageId}:${pendingRequest.toolId}`}
-                      messageId={pendingRequest.messageId}
-                      toolId={pendingRequest.toolId}
-                      input={pendingRequest.input}
-                      disabled={isGenerating}
-                      onAnswer={handleAskAnswer}
-                    />
-                  ) : pendingRequest ? (
-                    /* Deliberately *not* disabled while generating: a running
-                       turn blocked on this answer is the only time it exists. */
-                    <PendingUserRequest
-                      key={`${activeId}:${pendingRequest.request.id}`}
-                      request={pendingRequest.request}
-                      onAnswer={handleRequestAnswer}
-                    />
-                  ) : null}
-                  {composer}
-                  {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
-                    <PromptSuggestions
-                      items={CHAT_SUGGESTIONS}
-                      onSelect={(item) => void send(item.label, [], [])}
-                    />
-                  ) : null}
-                </div>
-              </div>
-            </ResizablePanel>
+                  ) : (
+                    <MessageList
+                      /* Room for the island above, inside the scroller — so the
+                         last turn settles just clear of it and everything above
+                         still scrolls the whole height of the pane. */
+                      className="pb-[calc(var(--composer-height,7rem)+0.5rem)]"
+                      messages={listMessages}
+                      /* One mounted list shows every chat in turn: the key is
+                         what resets the scroller's follow state on a switch. */
+                      conversationKey={activeId}
+                      isGenerating={isGenerating}
+                      generationStage={activeRun?.stage ?? "idle"}
+                      generationLabel={activeRun?.status}
+                      onEditMessage={handleEditMessage}
+                      onAskAnswer={handleAskAnswer}
+                      onPlanBuild={handlePlanBuild}
+                      onOpenFile={handleOpenFile}
+                      onChangeFileClick={handleChangeFileClick}
+                      onFileReferenceClick={handleFileReferenceClick}
+                      onReviewChanges={handleReviewChanges}
+                      resolveFileUrl={resolveFileUrl}
+                      fileActions={fileActions}
+                      onQuote={handleQuote}
+                      renderActions={(message) =>
+                        message.sender === "assistant" ? (
+                          <>
+                            {/* Attached to the turn it explains, through the
+                                list's own render slot — the vendored component
+                                knows nothing about handoffs. */}
+                            {(message as StoredMessage).metadata?.handoff ? (
+                              <HandoffNotice
+                                handoff={
+                                  (message as StoredMessage).metadata!.handoff!
+                                }
+                              />
+                            ) : null}
+                            <MessageActions
+                              message={message as StoredMessage}
+                              providerName={providerName(
+                                (message as StoredMessage).metadata?.providerId ??
+                                  ""
+                              )}
+                              onRegenerate={handleRegenerate}
+                              onDelete={handleDeleteMessage}
+                              /* Only a chat with a folder has a worktree to put
+                                 back; the row itself appears only for a turn
+                                 that actually captured a checkpoint. */
+                              onRestoreCheckpoint={
+                                activeFolder ? confirmRestoreTurn : undefined
+                              }
+                            />
+                          </>
+                        ) : null
+                      }
+                    >
+                      {/* Composed in through the list's own `children` slot: the
+                          marker belongs after the last turn, inside the
+                          conversation column, and `MessageList` stays
+                          untouched. */}
+                      {memoryNotices[activeId] && !isGenerating ? (
+                        <MemoryNotice
+                          changes={memoryNotices[activeId].changes}
+                          compacted={memoryNotices[activeId].compacted}
+                          onDismiss={() => dismissMemoryNotice(activeId)}
+                          onOpenMemorySettings={openMemorySettings}
+                        />
+                      ) : null}
+                    </MessageList>
+                  )}
 
-            {dockedPreview ? (
-              <>
-                <ResizableHandle withHandle />
-                <ResizablePanel
-                  id={PREVIEW_PANEL_ID}
-                  defaultSize={`${previewSize}%`}
-                  minSize={`${MIN_PREVIEW_SIZE}%`}
-                  maxSize={`${MAX_PREVIEW_SIZE}%`}
-                  className="flex min-w-0 flex-col"
-                  style={{ overflow: "hidden" }}
-                >
+                  <div
+                    ref={composerBoxRef}
+                    data-slot="chat-composer"
+                    className={cn(
+                      "w-full shrink-0",
+                      // An island over the conversation, not a band beside it:
+                      // the wrapper spans the pane so the composer stays centred,
+                      // but only its children take the pointer, which leaves the
+                      // transcript scrollable right up to the window's edge.
+                      !isEmptyChat &&
+                        "pointer-events-none absolute inset-x-0 bottom-0 z-20 [&>*]:pointer-events-auto"
+                    )}
+                  >
+                    {isEmptyChat ? (
+                      /* Aligned with the composer card's own measure, so the two
+                         read as one control rather than two stacked ones. */
+                      <div className="mx-auto flex w-full max-w-3xl px-3 pb-2 sm:px-4">
+                        <FolderPicker
+                          variant="inline"
+                          /* Names the branch when the chat starts in a
+                             worktree of its own. */
+                          title={activeSession?.title}
+                          cwd={activeSession?.cwd}
+                          gitBranch={activeSession?.gitBranch}
+                          onChange={setFolder}
+                        />
+                      </div>
+                    ) : null}
+                    {/* The plan the turn is working through, collapsed to one
+                        line. Keyed by chat so switching threads never carries a
+                        disclosure — or a plan — across. */}
+                    <TodoPanel
+                      key={activeId}
+                      items={todos}
+                      running={isGenerating}
+                    />
+                    {pendingRequest?.kind === "ask" ? (
+                      <PendingQuestion
+                        key={`${activeId}:${pendingRequest.messageId}:${pendingRequest.toolId}`}
+                        messageId={pendingRequest.messageId}
+                        toolId={pendingRequest.toolId}
+                        input={pendingRequest.input}
+                        disabled={isGenerating}
+                        onAnswer={handleAskAnswer}
+                      />
+                    ) : pendingRequest ? (
+                      /* Deliberately *not* disabled while generating: a running
+                         turn blocked on this answer is the only time it exists. */
+                      <PendingUserRequest
+                        key={`${activeId}:${pendingRequest.request.id}`}
+                        request={pendingRequest.request}
+                        onAnswer={handleRequestAnswer}
+                      />
+                    ) : null}
+                    <PendingLineComments />
+                    {composer}
+                    {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
+                      <PromptSuggestions
+                        items={CHAT_SUGGESTIONS}
+                        onSelect={(item) => void send(item.label, [], [])}
+                      />
+                    ) : null}
+                  </div>
+                </div>
+              </ResizablePanel>
+
+              {dockedPreview ? (
+                <>
+                  <ResizableHandle withHandle />
+                  <ResizablePanel
+                    id={PREVIEW_PANEL_ID}
+                    defaultSize={`${previewSize}%`}
+                    minSize={`${MIN_PREVIEW_SIZE}%`}
+                    maxSize={`${MAX_PREVIEW_SIZE}%`}
+                    className="flex min-w-0 flex-col"
+                    style={{ overflow: "hidden" }}
+                  >
+                    {/* Not text, and the route said so: the panel shows the
+                        name and the same actions menu rather than a diff
+                        about bytes nobody can read. */}
+                    {previewBinary ? (
+                      <BinaryFilePanel
+                        path={dockedPreview.path}
+                        actions={fileActions}
+                        onCopyPath={handleCopyPath}
+                        onClose={closePreview}
+                        className="border-l"
+                      />
+                    ) : (
+                      <FilePreview
+                        file={dockedPreview}
+                        onClose={closePreview}
+                        actions={fileActions}
+                        onCopyPath={handleCopyPath}
+                        onLineComment={panel.handleLineComment}
+                        diffLayout={previewPrefs.layout}
+                        onDiffLayoutChange={setDiffLayout}
+                        wrap={previewPrefs.wrap}
+                        onWrapChange={setWrap}
+                        className="border-l"
+                      />
+                    )}
+                  </ResizablePanel>
+                </>
+              ) : null}
+            </ResizablePanelGroup>
+
+            {/*
+              Below md the file panel slides over the conversation, like the
+              sidebar — but inside this wrapper, so it stops at the header.
+            */}
+            <div
+              aria-hidden={!preview}
+              onClick={closePreview}
+              className={cn(
+                "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
+                preview ? "opacity-100" : "pointer-events-none opacity-0"
+              )}
+            />
+            <div
+              data-slot="chat-file-panel"
+              // Off-canvas when closed: keep it out of the tab order either way.
+              inert={!preview}
+              className={cn(
+                "absolute inset-y-0 right-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
+                "transition-transform duration-300 ease-in-out motion-reduce:transition-none md:hidden",
+                !preview && "translate-x-full"
+              )}
+            >
+              {overlayPreview ? (
+                previewBinary ? (
+                  <BinaryFilePanel
+                    path={overlayPreview.path}
+                    actions={fileActions}
+                    onCopyPath={handleCopyPath}
+                    onClose={closePreview}
+                    className="border-l"
+                  />
+                ) : (
                   <FilePreview
-                    file={dockedPreview}
+                    file={overlayPreview}
                     onClose={closePreview}
                     actions={fileActions}
                     onCopyPath={handleCopyPath}
+                    onLineComment={panel.handleLineComment}
                     diffLayout={previewPrefs.layout}
                     onDiffLayoutChange={setDiffLayout}
                     wrap={previewPrefs.wrap}
                     onWrapChange={setWrap}
                     className="border-l"
                   />
-                </ResizablePanel>
-              </>
-            ) : null}
-          </ResizablePanelGroup>
-
-          {/*
-            Below md the file panel slides over the conversation, like the
-            sidebar — but inside this wrapper, so it stops at the header.
-          */}
-          <div
-            aria-hidden={!preview}
-            onClick={closePreview}
-            className={cn(
-              "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
-              preview ? "opacity-100" : "pointer-events-none opacity-0"
-            )}
-          />
-          <div
-            data-slot="chat-file-panel"
-            // Off-canvas when closed: keep it out of the tab order either way.
-            inert={!preview}
-            className={cn(
-              "absolute inset-y-0 right-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
-              "transition-transform duration-300 ease-in-out motion-reduce:transition-none md:hidden",
-              !preview && "translate-x-full"
-            )}
-          >
-            {overlayPreview ? (
-              <FilePreview
-                file={overlayPreview}
-                onClose={closePreview}
-                actions={fileActions}
-                onCopyPath={handleCopyPath}
-                diffLayout={previewPrefs.layout}
-                onDiffLayoutChange={setDiffLayout}
-                wrap={previewPrefs.wrap}
-                onWrapChange={setWrap}
-                className="border-l"
-              />
-            ) : null}
-          </div>
+                )
+              ) : null}
+            </div>
+          </DiffWorkers>
         </div>
       </div>
 
@@ -924,9 +1079,20 @@ export default function ChatPage() {
         onSelectSession={selectSession}
         onNewChat={startNewChat}
         onRenameSession={startRename}
+        onOpenMessage={openMessage}
         actions={paletteActions}
         onOpenSettings={openSettings}
       />
+
+      {/* Mounted only while open, so the scan behind it starts with the
+          dialog and nothing about it is on the first paint. */}
+      {importOpen ? (
+        <ImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onImported={reloadSessions}
+        />
+      ) : null}
     </div>
   )
 }

@@ -5,8 +5,12 @@ import type { ChatSidebarItemData } from "@/components/ui/chat-sidebar"
 import {
   NO_FOLDER_GROUP_ID,
   PINNED_GROUP_ID,
+  SETTLED_SHELF_ID,
+  SNOOZED_SHELF_ID,
   groupIdForSession,
   groupSessions,
+  shelfOpenKey,
+  sidebarListId,
 } from "@/lib/session-groups"
 import type { SessionMeta } from "@/lib/store/types"
 
@@ -41,8 +45,15 @@ function view(sessions: SessionMeta[]) {
   )
 }
 
+const HOUR = 60 * 60 * 1000
+const NOW = 1_700_000_000_000
+
 test("no sessions is no groups", () => {
-  assert.deepEqual(groupSessions([], []), { pinned: [], folders: [] })
+  const groups = groupSessions([], [])
+  assert.deepEqual(groups.pinned, [])
+  assert.deepEqual(groups.folders, [])
+  assert.equal(groups.snoozed.total, 0)
+  assert.equal(groups.settled.total, 0)
 })
 
 test("pinned chats are their own flat group, whatever folder they name", () => {
@@ -150,4 +161,212 @@ test("a header carries the newest chat's branch and any live run", () => {
 test("a session with no rendered row is skipped rather than guessed at", () => {
   const groups = groupSessions([meta("a", { cwd: "/home/me/api" })], [])
   assert.deepEqual(groups.folders, [])
+})
+
+/* -------------------------------------------------------------------------- */
+/* The shelves                                                                 */
+/* -------------------------------------------------------------------------- */
+
+function shelved(sessions: SessionMeta[], options = {}) {
+  return groupSessions(
+    sessions,
+    sessions.map((session) => item(session.id)),
+    { now: NOW, ...options }
+  )
+}
+
+test("a snoozed chat leaves its folder for the Snoozed shelf", () => {
+  const groups = shelved([
+    meta("awake", { cwd: "/home/me/api" }),
+    meta("down", { cwd: "/home/me/api", snoozedUntil: NOW + HOUR }),
+  ])
+  assert.deepEqual(
+    groups.folders.flatMap((group) => group.items.map((entry) => entry.id)),
+    ["awake"]
+  )
+  assert.equal(groups.snoozed.total, 1)
+  assert.equal(
+    sidebarListId(meta("down", { snoozedUntil: NOW + HOUR }), NOW),
+    SNOOZED_SHELF_ID
+  )
+})
+
+test("a snooze that has run out is back in its folder, not on the shelf", () => {
+  const groups = shelved([
+    meta("woke", { cwd: "/home/me/api", snoozedUntil: NOW - HOUR }),
+  ])
+  assert.equal(groups.snoozed.total, 0)
+  assert.equal(groups.folders[0].items.length, 1)
+})
+
+test("a settled chat goes to the Settled shelf, newest settle first", () => {
+  const groups = shelved([
+    meta("older", { cwd: "/home/me/api", settledAt: NOW - 5 * HOUR }),
+    meta("newer", { cwd: "/home/me/api", settledAt: NOW - HOUR }),
+  ])
+  assert.deepEqual(groups.folders, [])
+  assert.deepEqual(
+    // Closed by default, so nothing renders — the count is still the truth.
+    [groups.settled.total, groups.settled.items.length],
+    [2, 0]
+  )
+  const open = shelved(
+    [
+      meta("older", { cwd: "/home/me/api", settledAt: NOW - 5 * HOUR }),
+      meta("newer", { cwd: "/home/me/api", settledAt: NOW - HOUR }),
+    ],
+    { settledOpen: true }
+  )
+  assert.deepEqual(
+    open.settled.items.map((entry) => entry.id),
+    ["newer", "older"]
+  )
+})
+
+test("the Snoozed shelf is ordered by what comes back next", () => {
+  const groups = shelved(
+    [
+      meta("late", { snoozedUntil: NOW + 5 * HOUR }),
+      meta("soon", { snoozedUntil: NOW + HOUR }),
+    ],
+    { snoozedOpen: true }
+  )
+  assert.deepEqual(
+    groups.snoozed.items.map((entry) => entry.id),
+    ["soon", "late"]
+  )
+})
+
+test("an override outranks the timestamp in both directions", () => {
+  const groups = shelved(
+    [
+      meta("kept", { settledAt: NOW - HOUR, settledOverride: "active" }),
+      meta("filed", { settledOverride: "settled" }),
+    ],
+    { settledOpen: true }
+  )
+  assert.deepEqual(
+    groups.settled.items.map((entry) => entry.id),
+    ["filed"]
+  )
+  assert.deepEqual(
+    groups.folders.flatMap((group) => group.items.map((entry) => entry.id)),
+    ["kept"]
+  )
+})
+
+test("a snooze outranks settled, and a pin outranks neither", () => {
+  const groups = shelved(
+    [
+      meta("both", {
+        pinned: true,
+        settledOverride: "settled",
+        snoozedUntil: NOW + HOUR,
+      }),
+      meta("pinned-settled", { pinned: true, settledOverride: "settled" }),
+    ],
+    { snoozedOpen: true, settledOpen: true }
+  )
+  assert.deepEqual(
+    groups.snoozed.items.map((entry) => entry.id),
+    ["both"]
+  )
+  assert.deepEqual(
+    groups.settled.items.map((entry) => entry.id),
+    ["pinned-settled"]
+  )
+  assert.deepEqual(groups.pinned, [])
+})
+
+test("an open shelf shows ten rows and counts the rest", () => {
+  const sessions = Array.from({ length: 14 }, (_, index) =>
+    meta(`s${index}`, { settledAt: NOW - index * HOUR })
+  )
+  const first = shelved(sessions, { settledOpen: true })
+  assert.equal(first.settled.items.length, 10)
+  assert.equal(first.settled.hidden, 4)
+  const paged = shelved(sessions, { settledOpen: true, settledVisible: 35 })
+  assert.equal(paged.settled.items.length, 14)
+  assert.equal(paged.settled.hidden, 0)
+})
+
+test("the open chat is pulled in past the page and out of a closed shelf", () => {
+  const sessions = Array.from({ length: 14 }, (_, index) =>
+    meta(`s${index}`, { settledAt: NOW - index * HOUR })
+  )
+  const deep = shelved(sessions, {
+    settledOpen: true,
+    keepVisible: ["s13"],
+  })
+  assert.equal(deep.settled.items.length, 11)
+  assert.equal(deep.settled.items.at(-1)?.id, "s13")
+  assert.equal(deep.settled.hidden, 3)
+
+  const closed = shelved(sessions, { keepVisible: ["s13"] })
+  assert.deepEqual(
+    closed.settled.items.map((entry) => entry.id),
+    ["s13"]
+  )
+})
+
+test("a shelf remembers its fold under a key of its own", () => {
+  assert.equal(shelfOpenKey(SNOOZED_SHELF_ID), "shelf:snoozed:open")
+  assert.equal(shelfOpenKey(SETTLED_SHELF_ID), "shelf:settled:open")
+})
+
+/* -------------------------------------------------------------------------- */
+/* Worktree headers                                                            */
+/* -------------------------------------------------------------------------- */
+
+test("a worktree group is headed by its repository and its own branch", () => {
+  const groups = view([
+    meta("wt", {
+      cwd: "/data/worktrees/agent-ui/feature-x",
+      gitBranch: "ignored",
+      worktree: {
+        root: "/data/worktrees/agent-ui/feature-x",
+        branch: "feature-x",
+        repoRoot: "/home/me/code/agent-ui",
+      },
+    }),
+  ])
+  assert.equal(groups.folders[0].label, "agent-ui")
+  assert.equal(groups.folders[0].branch, "feature-x")
+  assert.equal(groups.folders[0].worktree, true)
+  // The section is still keyed by the folder the chat actually runs in.
+  assert.equal(groups.folders[0].cwd, "/data/worktrees/agent-ui/feature-x")
+})
+
+test("two worktrees of same-named repositories widen along the repository", () => {
+  const groups = view([
+    meta("a", {
+      cwd: "/data/worktrees/api-1",
+      updatedAt: 2,
+      worktree: {
+        root: "/data/worktrees/api-1",
+        branch: "one",
+        repoRoot: "/home/me/work/api",
+      },
+    }),
+    meta("b", {
+      cwd: "/data/worktrees/api-2",
+      updatedAt: 1,
+      worktree: {
+        root: "/data/worktrees/api-2",
+        branch: "two",
+        repoRoot: "/home/me/oss/api",
+      },
+    }),
+  ])
+  assert.deepEqual(
+    groups.folders.map((group) => group.label),
+    ["work/api", "oss/api"]
+  )
+})
+
+test("a folder falls back to today's behaviour without a worktree", () => {
+  const groups = view([meta("a", { cwd: "/home/me/api", gitBranch: "main" })])
+  assert.equal(groups.folders[0].label, "api")
+  assert.equal(groups.folders[0].branch, "main")
+  assert.equal(groups.folders[0].worktree, false)
 })

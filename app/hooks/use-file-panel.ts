@@ -4,9 +4,16 @@ import * as React from "react"
 import { type Layout } from "react-resizable-panels"
 import { toast } from "sonner"
 
+import { refreshFolderStatus } from "@/components/folder-status"
+import {
+  addLineComment,
+  clearLineComments,
+  setLineCommentComposer,
+} from "@/components/line-comments"
 import type { FileActionItem } from "@/components/ui/change-summary"
 import {
   filePreviewFromTool,
+  type DiffLineCommentRange,
   type FilePreviewDiffLayout,
   type FilePreviewFile,
 } from "@/components/ui/file-preview"
@@ -76,10 +83,23 @@ export function useFilePanel({
   revertProvider: string
   defaultEditor: string
 }) {
-  const { activeIdRef, providerIdRef, sessionsRef, threadsRef } = refs
+  const { activeIdRef, composerRef, providerIdRef, sessionsRef, threadsRef } =
+    refs
 
   /** The file open in the right-hand panel; null = the panel is closed. */
   const [preview, setPreview] = React.useState<FilePreviewFile | null>(null)
+  /**
+   * The open file turned out not to be text. Kept beside `preview` rather than
+   * on it: `FilePreviewFile` is the vendored shape, and this is the app saying
+   * what to render instead of the panel, not a field the component reads.
+   */
+  const [previewBinary, setPreviewBinary] = React.useState(false)
+  /**
+   * Which open the panel is on. A read that lands after the reader has moved
+   * on belongs to the file they left, so it is dropped rather than applied to
+   * the one they are looking at.
+   */
+  const openNonceRef = React.useRef(0)
   // Where the divider was last dragged to. Read after mount, not during
   // render: the pane it sizes is not on screen yet, and localStorage does not
   // exist while the page prerenders.
@@ -127,7 +147,10 @@ export function useFilePanel({
     }
   }, [])
 
-  const closePreview = React.useCallback(() => setPreview(null), [])
+  const closePreview = React.useCallback(() => {
+    setPreview(null)
+    setPreviewBinary(false)
+  }, [])
 
   /**
    * The saved split rides in on the panes' own `defaultSize` rather than the
@@ -200,12 +223,26 @@ export function useFilePanel({
           }
         : file
       setPreview(opened)
+      setPreviewBinary(false)
+      const nonce = ++openNonceRef.current
       if (opened.imageSrc || opened.content !== undefined) return
       const provider = session?.providerId || providerIdRef.current
       if (!provider) return
       void api
         .fetchFile(file.path, provider, session?.id ?? "")
         .then((data) => {
+          // Not text: the panel says so, with the same actions menu, instead
+          // of falling back to a diff that describes bytes nobody can read.
+          if (data.binary) {
+            if (openNonceRef.current !== nonce) return
+            setPreview((current) =>
+              current && current.path === file.path
+                ? { ...current, path: data.path || current.path }
+                : current
+            )
+            setPreviewBinary(true)
+            return
+          }
           setPreview((current) =>
             current &&
             current.path === file.path &&
@@ -239,6 +276,9 @@ export function useFilePanel({
       void api
         .fetchFile(path, revertProvider, activeId)
         .then((data) => {
+          // A binary file has no text to put back; the panel is already
+          // showing the "not text" state and should keep it.
+          if (data.binary) return
           setPreview((latest) =>
             latest && latest.path === path
               ? { ...latest, content: data.content }
@@ -250,6 +290,85 @@ export function useFilePanel({
         })
     },
     [activeId, revertProvider]
+  )
+
+  /**
+   * What the panel is showing, readable without closing over it. Written in an
+   * effect rather than during render, the way the rest of the chat's mirrors
+   * are: `restoreTurn` below has to know which file to re-read, and it must
+   * not be rebuilt every time the panel opens a different one.
+   */
+  const previewRef = React.useRef<FilePreviewFile | null>(null)
+  React.useEffect(() => {
+    previewRef.current = preview
+  }, [preview])
+
+  /**
+   * Undo an entire turn on disk: the chat's folder goes back to the worktree
+   * checkpoint taken before that turn ran (`lib/checkpoints`), and the open
+   * file is re-read afterwards so the panel stops showing a version that no
+   * longer exists.
+   *
+   * This deletes work — files the agent created since are removed — so it is
+   * deliberately *not* confirmed here. The caller asks first, through the same
+   * toast action "Revert changes" uses, and calls this from it.
+   */
+  const restoreTurn = React.useCallback(
+    async (turn: number) => {
+      if (!activeId) return false
+      try {
+        const response = await fetch("/api/checkpoints/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: activeId, turn }),
+        })
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            error?: string
+          } | null
+          toast.error(body?.error ?? "Could not restore that checkpoint")
+          return false
+        }
+      } catch {
+        toast.error("Could not restore that checkpoint")
+        return false
+      }
+      toast.success("Restored the folder to before that turn")
+      const open = previewRef.current
+      if (open) handleReverted(open.path)
+      // The worktree just moved under everything that describes it: the
+      // sidebar's folder badge and the changed-files tree both read
+      // `/api/git/status`, whose server-side cache the route already dropped.
+      const cwd = sessionsRef.current
+        .find((item) => item.id === activeId)
+        ?.cwd?.trim()
+      if (cwd) refreshFolderStatus(cwd)
+      return true
+    },
+    [activeId, handleReverted, sessionsRef]
+  )
+
+  /**
+   * "Restore files to before this turn", as the message action offers it.
+   *
+   * Restoring deletes work — a file the agent created since is removed — so it
+   * gets the same second click every other destructive action in this app
+   * gets: a toast with the verb on it, in the corner where the outcome will
+   * land, rather than a modal in the middle of the conversation.
+   */
+  const confirmRestoreTurn = React.useCallback(
+    (turn: number) => {
+      toast.warning("Restore the folder to before this turn?", {
+        description:
+          "Files the agent changed or created after that point go back to how they were. This cannot be undone.",
+        duration: 8_000,
+        action: {
+          label: "Restore",
+          onClick: () => void restoreTurn(turn),
+        },
+      })
+    },
+    [restoreTurn]
   )
 
   /**
@@ -391,6 +510,36 @@ export function useFilePanel({
     [activeIdRef, openPreview, threadsRef]
   )
 
+  /**
+   * Lines picked in the panel, on their way to the composer.
+   *
+   * The pending list is not state of this hook — it has to be readable from
+   * the chips bar above the prompt, which is not in this hook's tree — so it
+   * lives in the small store `components/line-comments.tsx` owns, and this is
+   * where its lifetime is decided: the composer it writes into is registered
+   * here, because this is the layer that already holds the chat's refs, and a
+   * chat switch drops whatever was never sent.
+   */
+  React.useEffect(() => {
+    setLineCommentComposer(composerRef)
+    return () => setLineCommentComposer(null)
+  }, [composerRef])
+
+  React.useEffect(() => {
+    // A comment is about a file in *this* chat, and it names lines by number:
+    // carrying it into the next chat would point at whatever happened to be on
+    // those lines there.
+    clearLineComments()
+  }, [activeId])
+
+  /** Handed to `FilePreview`; the panel calls it when a range is commented on. */
+  const handleLineComment = React.useCallback(
+    (range: DiffLineCommentRange) => {
+      addLineComment(range)
+    },
+    []
+  )
+
   const handleReviewChanges = React.useCallback(
     (messageId: string) => {
       const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
@@ -415,6 +564,9 @@ export function useFilePanel({
     setWrap,
     handleCopyPath,
     openPreview,
+    previewBinary,
+    restoreTurn,
+    confirmRestoreTurn,
     fileActions,
     resolveFileUrl,
     handleOpenFile,
@@ -422,5 +574,6 @@ export function useFilePanel({
     handleFileReferenceClick,
     handleChatChangeClick,
     handleReviewChanges,
+    handleLineComment,
   }
 }

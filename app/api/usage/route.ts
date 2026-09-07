@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { readSettings } from "@/lib/settings/server"
 import { listSessions, readMessages } from "@/lib/store/sessions"
 import {
   aggregateUsage,
@@ -19,6 +20,10 @@ export const dynamic = "force-dynamic"
  * fetching every transcript to add up numbers, which would ship megabytes of
  * message bodies to the browser to render two small tables. The response
  * carries rows only — no message ever leaves the store through this route.
+ *
+ * Prices come from `settings.usage.priceOverrides` over the built-in tables,
+ * and are applied on read rather than stored with the turn — which is what
+ * makes correcting a price re-count everything that model ever ran.
  */
 
 /** Windows the UI offers. Anything else is clamped into this range. */
@@ -28,8 +33,12 @@ const MAX_DAYS = 3650
  * Per-session turns, keyed by the `updatedAt` they were read at. A chat's
  * transcript only changes when its index entry does, so reopening the page —
  * or switching between 7d and 30d — re-reads nothing.
+ *
+ * The cost on a cached turn was computed under one price table, so the whole
+ * cache is dropped when that table changes; `pricedUnder` is what notices.
  */
 const cache = new Map<string, { updatedAt: number; turns: UsageTurn[] }>()
+let pricedUnder = ""
 
 function parseDays(raw: string | null): number | null {
   const value = raw?.trim().toLowerCase() ?? ""
@@ -42,8 +51,15 @@ function parseDays(raw: string | null): number | null {
 
 export async function GET(req: Request) {
   const days = parseDays(new URL(req.url).searchParams.get("days"))
-  const sessions = await listSessions()
+  const [sessions, settings] = await Promise.all([listSessions(), readSettings()])
   const since = days == null ? null : Date.now() - days * 24 * 60 * 60 * 1000
+
+  const overrides = settings.usage.priceOverrides
+  const signature = JSON.stringify(overrides)
+  if (signature !== pricedUnder) {
+    cache.clear()
+    pricedUnder = signature
+  }
 
   const live = new Set(sessions.map((session) => session.id))
   for (const id of cache.keys()) {
@@ -58,7 +74,7 @@ export async function GET(req: Request) {
       const turns =
         session.messageCount === 0
           ? []
-          : usageTurns(session, await readMessages(session.id))
+          : usageTurns(session, await readMessages(session.id), overrides)
       cache.set(session.id, { updatedAt: session.updatedAt, turns })
       return turns
     })

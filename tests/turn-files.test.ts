@@ -131,3 +131,75 @@ test("the tools are read off the parts when the message has no tool list", () =>
   )
   assert.deepEqual(rows?.map((file) => file.path), ["/out/plot.png", "data.csv"])
 })
+
+/* -------------------------------------------------------------------------- */
+/* The turn's own worktree checkpoint outranks what its tools claimed          */
+/* -------------------------------------------------------------------------- */
+
+test("a checkpoint's numstat replaces the tool-derived list", () => {
+  const rows = turnFiles(
+    assistant({
+      tools: [tool("Edit", { path: "app/page.tsx", diff: "+a" }, { output: "+1" })],
+      metadata: {
+        checkpoint: {
+          ref: "refs/agent-ui/checkpoints/x/turn/2",
+          turn: 2,
+          baseRef: "refs/agent-ui/checkpoints/x/turn/1",
+          // The script the turn ran wrote this; no tool call names it.
+          files: [{ path: "dist/report.csv", insertions: 40, deletions: 0 }],
+        },
+      },
+    })
+  )
+  assert.deepEqual(rows, [
+    { path: "dist/report.csv", additions: 40, deletions: 0 },
+  ])
+})
+
+test("a checkpoint that measured nothing overrides a tool that claimed something", () => {
+  // The agent edited a file and then put it back. The tool call is still in
+  // the transcript; git is the one that knows the turn changed nothing.
+  const rows = turnFiles(
+    assistant({
+      tools: [tool("Edit", { path: "app/page.tsx", diff: "+a" }, { output: "+1" })],
+      metadata: {
+        checkpoint: { ref: "r", turn: 1, baseRef: "b", files: [] },
+      },
+    })
+  )
+  assert.deepEqual(rows, [])
+})
+
+test("a checkpoint whose diff could not be taken leaves the tool list standing", () => {
+  // `files` absent, not empty: the capture happened but the diff failed, and
+  // undefined is what keeps the card the component's own derivation.
+  assert.equal(
+    turnFiles(
+      assistant({
+        tools: [tool("Edit", { path: "app/page.tsx", diff: "+a" }, { output: "+1" })],
+        metadata: { checkpoint: { ref: "r", turn: 1 } },
+      })
+    ),
+    undefined
+  )
+})
+
+test("the answer's own artifacts are still folded in on top of the checkpoint", () => {
+  const rows = turnFiles(
+    assistant({
+      content: "Wrote the chart to `wykres.png`.",
+      metadata: {
+        checkpoint: {
+          ref: "r",
+          turn: 1,
+          baseRef: "b",
+          files: [{ path: "script.py", insertions: 12, deletions: 0 }],
+        },
+      },
+    })
+  )
+  assert.deepEqual(rows, [
+    { path: "script.py", additions: 12, deletions: 0 },
+    { path: "wykres.png" },
+  ])
+})

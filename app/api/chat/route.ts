@@ -483,12 +483,31 @@ function replayHistory(messages: StoredMessage[], vision: boolean): ChatTurn[] {
 }
 
 /** Only the counters the backend actually reported make it into the record. */
+type CacheAwareUsage = AgentTokenUsage & {
+  cachedInputTokens?: number
+  cacheCreationTokens?: number
+  reasoningTokens?: number
+  contextWindow?: number
+}
+
 function tokenMetadata(usage: AgentTokenUsage | undefined) {
   if (!usage) return null
-  const { input, output, tokensPerSecond } = usage
+  const {
+    input,
+    output,
+    tokensPerSecond,
+    cachedInputTokens,
+    cacheCreationTokens,
+    reasoningTokens,
+    contextWindow,
+  } = usage as CacheAwareUsage
   return {
     ...(input == null ? null : { inputTokens: input }),
     ...(output == null ? null : { outputTokens: output }),
+    ...(cachedInputTokens == null ? null : { cachedInputTokens }),
+    ...(cacheCreationTokens == null ? null : { cacheCreationTokens }),
+    ...(reasoningTokens == null ? null : { reasoningTokens }),
+    ...(contextWindow == null ? null : { contextWindow }),
     ...(tokensPerSecond == null ? null : { tokensPerSecond }),
     ...(input == null && output == null
       ? null

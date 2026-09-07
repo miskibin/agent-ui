@@ -4,6 +4,8 @@ import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import path from "node:path"
 
+import { isLocalLoopbackHost } from "@/lib/host-classification"
+
 const READY_TIMEOUT_MS = 5_000
 const PROBE_TIMEOUT_MS = 750
 const RETRY_MS = 250
@@ -30,6 +32,14 @@ export type OllamaAutostartDependencies = {
 const starts = new Map<string, Promise<boolean>>()
 const failures = new Map<string, number>()
 
+/**
+ * Only an http URL that names this machine is ever spawned for. Fail-closed:
+ * a URL that will not parse, an https one (a service behind TLS is not one we
+ * started) and every remote host answer false, so a remote Ollama is probed
+ * and never started. Which hostnames count as this machine is
+ * `lib/host-classification` — the whole 127/8, `::1` and the IPv6 spellings of
+ * both, not the four strings that used to be spelled out here.
+ */
 export function isLoopbackOllamaUrl(raw: string) {
   let url: URL
   try {
@@ -38,12 +48,7 @@ export function isLoopbackOllamaUrl(raw: string) {
     return false
   }
   if (url.protocol !== "http:") return false
-  return (
-    url.hostname === "localhost" ||
-    url.hostname === "127.0.0.1" ||
-    url.hostname === "::1" ||
-    url.hostname === "[::1]"
-  )
+  return isLocalLoopbackHost(url.hostname)
 }
 
 /**
