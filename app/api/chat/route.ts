@@ -26,6 +26,7 @@ import {
   seedAssistantMessage,
 } from "@/lib/message-stream"
 import { crossOriginRefusal } from "@/lib/request-origin"
+import { createAskUser } from "@/lib/turn-requests"
 import { readSettings } from "@/lib/settings/server"
 import { getSession, readMessages, upsertMessages } from "@/lib/store/sessions"
 import type { SessionPatch, StoredMessage } from "@/lib/store/types"
@@ -265,6 +266,10 @@ export async function POST(req: Request) {
           images: info.capabilities.vision
             ? attachments.map((a) => base64FromDataUrl(a.url))
             : undefined,
+          // The channel a blocked backend answers through. It is keyed by this
+          // chat and dies with the turn's abort, so a stopped run can never
+          // leave a form waiting on a promise nobody will resolve.
+          askUser: createAskUser({ sessionId, signal: abort.signal }),
           signal: abort.signal,
         })) {
           if (event.type === "session") providerSessionId = event.sessionId

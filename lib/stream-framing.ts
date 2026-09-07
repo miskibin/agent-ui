@@ -6,8 +6,17 @@
 export class LineBuffer {
   private fragments: string[] = []
   private pendingLength = 0
+  private readonly maxRecordLength: number
 
-  constructor(private readonly maxRecordLength = 64 * 1024 * 1024) {}
+  /**
+   * Written out rather than declared as a constructor parameter property:
+   * that syntax is the one thing `node --test`'s strip-only TypeScript cannot
+   * erase, and every module that frames a stream — `lib/acp-agent.ts` included
+   * — would be unimportable by the suite because of it.
+   */
+  constructor(maxRecordLength = 64 * 1024 * 1024) {
+    this.maxRecordLength = maxRecordLength
+  }
 
   private assertWithinLimit(length: number) {
     if (length > this.maxRecordLength) {

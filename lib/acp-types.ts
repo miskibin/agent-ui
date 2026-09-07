@@ -41,13 +41,20 @@ export const ACP_ERROR = {
  * can throw one without pulling `node:child_process` into its import graph.
  */
 export class AcpRpcError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-    readonly data?: unknown
-  ) {
+  readonly code: number
+  readonly data?: unknown
+
+  /**
+   * The fields are assigned rather than declared as constructor parameter
+   * properties: that is the one TypeScript form `node --test`'s strip-only
+   * loader refuses, and it would put this whole module — and everything that
+   * imports it, `lib/acp-agent.ts` included — out of the suite's reach.
+   */
+  constructor(code: number, message: string, data?: unknown) {
     super(message)
     this.name = "AcpRpcError"
+    this.code = code
+    this.data = data
   }
 }
 
