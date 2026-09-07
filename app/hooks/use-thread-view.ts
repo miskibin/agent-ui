@@ -4,9 +4,8 @@ import * as React from "react"
 
 import { collectChatChanges } from "@/components/chat-changes"
 import { contextTurnUsage } from "@/components/context-usage"
-import { parseAskQuestionInput } from "@/components/ui/ask-question"
 import type { ModelOption } from "@/components/ui/model-picker"
-import { findPendingAsk, isInternalMessage } from "@/lib/ask-tools"
+import { findPendingRequest, isInternalMessage } from "@/lib/ask-tools"
 import type { StoredMessage } from "@/lib/store/types"
 import { latestTodos } from "@/lib/todo-plan"
 import { chatUsage } from "@/lib/usage"
@@ -29,6 +28,18 @@ export function withTurnFiles(message: StoredMessage): StoredMessage {
   const next = changes === message.changes ? message : { ...message, changes }
   turnFilesCache.set(message, next)
   return next
+}
+
+/** Nothing left to draw: no text, no parts, no tools, no card, no reasoning. */
+function isEmptyTurn(message: StoredMessage) {
+  return (
+    message.sender === "assistant" &&
+    !message.content.trim() &&
+    !(message.parts?.length ?? 0) &&
+    !(message.tools?.length ?? 0) &&
+    !(message.changes?.length ?? 0) &&
+    !message.reasoning
+  )
 }
 
 /**
@@ -109,35 +120,56 @@ export function useThreadView({
    * live turn is left alone — its card is only rendered once it settles, so
    * rebuilding it per token would be pure waste.
    */
-  const pendingAsk = React.useMemo(
-    () => {
-      const ask = findPendingAsk(messages)
-      return ask && parseAskQuestionInput(ask.input) ? ask : null
-    },
-    [messages]
-  )
+  const pending = React.useMemo(() => findPendingRequest(messages), [messages])
+  /**
+   * A live request only exists while the turn that raised it is running: the
+   * promise it is parked on lives in the server's memory and dies with the
+   * run. A `running` row left in a stored transcript by a killed server is
+   * history, and offering a form for it would only earn a 404.
+   */
+  const pendingRequest =
+    pending?.kind === "request" && !isGenerating ? null : pending
 
   const listMessages = React.useMemo(() => {
     const live = isGenerating ? visibleMessages.length - 1 : -1
     let patched = false
-    const next = visibleMessages.map((message, index) => {
+    const next: StoredMessage[] = []
+    visibleMessages.forEach((message, index) => {
       let withFiles = index === live ? message : withTurnFiles(message)
-      // The active form lives above the composer. Keep its stored tool intact
-      // so answering it restores the summary in the original turn.
-      if (pendingAsk && message.id === pendingAsk.messageId) {
+      /*
+       * The active form lives above the composer. Keep its stored tool intact
+       * so answering it restores the summary in the original turn.
+       *
+       * Only the *ask* is lifted. A running request row is what tells the
+       * transcript why the turn has gone quiet — it says "Waiting for your
+       * answer" and never grows a second form.
+       */
+      if (pendingRequest?.kind === "ask" && message.id === pendingRequest.messageId) {
         withFiles = {
           ...withFiles,
-          tools: withFiles.tools?.filter((tool) => tool.id !== pendingAsk.toolId),
+          tools: withFiles.tools?.filter((tool) => tool.id !== pendingRequest.toolId),
           parts: withFiles.parts?.filter(
-            (part) => part.type !== "tool" || part.tool.id !== pendingAsk.toolId
+            (part) => part.type !== "tool" || part.tool.id !== pendingRequest.toolId
           ),
+        }
+        /*
+         * Lifting the only thing the turn held leaves an empty bubble — a
+         * `mb-7` gap with an action bar under nothing. Drop the row instead;
+         * the form above the composer *is* that turn as far as the reader is
+         * concerned, and it comes back with the answer's summary. The live
+         * row is exempt: an empty last turn is where `MessageList` draws the
+         * generation indicator.
+         */
+        if (index !== live && isEmptyTurn(withFiles)) {
+          patched = true
+          return
         }
       }
       if (withFiles !== message) patched = true
-      return withFiles
+      next.push(withFiles)
     })
     return patched ? next : visibleMessages
-  }, [isGenerating, pendingAsk, visibleMessages])
+  }, [isGenerating, pendingRequest, visibleMessages])
 
   /**
    * Chats waiting on an answer, across every loaded thread — what the dock
@@ -146,10 +178,15 @@ export function useThreadView({
    */
   const waitingCount = React.useMemo(
     () =>
-      Object.entries(threads).filter(
-        ([id, thread]) =>
-          id !== activeId && !runs[id] && findPendingAsk(thread) !== null
-      ).length,
+      Object.entries(threads).filter(([id, thread]) => {
+        if (id === activeId) return false
+        const waiting = findPendingRequest(thread)
+        if (!waiting) return false
+        // The two are waiting in opposite states: an ask sits on a *finished*
+        // turn, a request holds a running one open. Counting either in the
+        // wrong state would badge a chat that has nothing to answer.
+        return waiting.kind === "request" ? !!runs[id] : !runs[id]
+      }).length,
     [activeId, runs, threads]
   )
 
@@ -170,7 +207,7 @@ export function useThreadView({
     contextTotal,
     activeCost,
     usage,
-    pendingAsk,
+    pendingRequest,
     waitingCount,
     chatChanges,
   }

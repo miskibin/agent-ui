@@ -32,6 +32,7 @@ import type {
 } from "@/lib/providers/types"
 import { parseSlashCommand } from "@/lib/slash-commands"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
+import type { UserRequestAnswer } from "@/lib/turn-requests"
 
 import { EMPTY_MESSAGES, type QueuedMessage, type SessionRun } from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
@@ -461,6 +462,25 @@ export function useChatTurns({
     ]
   )
 
+  /**
+   * The other half of `PendingUserRequest`: a turn that is *still running* and
+   * blocked on the user. Nothing is rewritten here — the answer goes to the
+   * server, the provider unblocks, and the outcome arrives on the SSE stream
+   * this chat is already reading, which is what closes the form.
+   */
+  const handleRequestAnswer = React.useCallback(
+    async (requestId: string, answer: UserRequestAnswer) => {
+      const sessionId = activeId
+      try {
+        await api.respondToRequest(sessionId, requestId, answer)
+      } catch (err) {
+        toast.error(errorMessage(err, "Could not send your answer"))
+        throw err
+      }
+    },
+    [activeId]
+  )
+
   const handleEditMessage = React.useCallback(
     (id: string, content: string) => {
       const sessionId = activeId
@@ -555,6 +575,7 @@ export function useChatTurns({
     handleSend,
     handleStop,
     handleAskAnswer,
+    handleRequestAnswer,
     handlePlanBuild,
     handleEditMessage,
     handleRegenerate,

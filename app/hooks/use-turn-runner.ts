@@ -25,6 +25,10 @@ import {
 } from "@/lib/message-stream"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import { notifyAttention } from "@/lib/notifications"
+import {
+  isOpenUserRequestTool,
+  parseUserRequestInput,
+} from "@/lib/turn-requests"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { PermissionMode } from "@/lib/providers/types"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
@@ -397,11 +401,22 @@ export function useTurnRunner({
         else if (event.type === "text") setStage("responding")
         else if (event.type === "tool") {
           setStage("searching")
-          if (isOpenAskTool(event)) {
+          /*
+           * A request is the one question that arrives *mid-turn*: the harness
+           * is blocked on it and `done` will not come until it is answered, so
+           * the notification cannot wait for the end of the run the way an ask
+           * does. `notifyAttention` is still silent while the window is in
+           * front, so this only ever reaches someone who has looked away.
+           */
+          const request = isOpenUserRequestTool(event)
+            ? parseUserRequestInput(event.input)
+            : null
+          if (request || isOpenAskTool(event)) {
             needsAttention = true
             if ((notificationSounds ?? true) && !notifiedAskTools.has(event.id)) {
               notifiedAskTools.add(event.id)
               playAgentNotificationSound("question")
+              if (request) notify("question", request.title)
             }
           }
         }
