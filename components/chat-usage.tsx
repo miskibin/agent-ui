@@ -65,6 +65,15 @@ export function ChatUsageSummary({ usage }: { usage: ChatUsage | null }) {
             label="Estimated"
             value={priced ? `≈ ${formatCost(usage.cost ?? 0)}` : "unknown"}
           />
+          {usage.cacheTokens > 0 ? (
+            // Deliberately its own row rather than folded into "Tokens": these
+            // are billed, at a tenth for a read and a quarter more for a
+            // write, but they are not what the conversation weighs.
+            <TotalRow
+              label="Cached"
+              value={`${formatTokens(usage.cacheTokens)} at cache rates`}
+            />
+          ) : null}
           {usage.unpricedTurns > 0 ? (
             <TotalRow
               label="Unpriced"
@@ -98,8 +107,9 @@ export function ChatUsageSummary({ usage }: { usage: ChatUsage | null }) {
         </ul>
 
         <p className="border-t px-3 py-2 text-[11px] leading-relaxed text-muted-foreground">
-          An estimate from list prices — caching and batch rates are not
-          tracked, and a local model is free.
+          An estimate from list prices — a cache read counts at a tenth and a
+          cache write at a quarter more; batch rates are not tracked, and a
+          local model is free.
         </p>
       </PopoverContent>
     </Popover>

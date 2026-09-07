@@ -136,7 +136,13 @@ export function UsageSection() {
                 label="Input"
                 value={formatTokens(totals?.inputTokens ?? 0)}
                 exact={totals?.inputTokens ?? 0}
-                hint="tokens"
+                // Cache reads and writes are billed but are not context, so
+                // they are named beside the number rather than inside it.
+                hint={
+                  (totals?.cacheTokens ?? 0) > 0
+                    ? `tokens · ${formatTokens(totals?.cacheTokens ?? 0)} cached`
+                    : "tokens"
+                }
               />
               <Stat
                 label="Output"

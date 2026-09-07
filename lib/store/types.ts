@@ -24,6 +24,17 @@ export type MessageMetadata = {
   tokens?: number
   inputTokens?: number
   outputTokens?: number
+  /**
+   * Cache reads and writes, when the backend reports them. They count toward
+   * what the next turn's context has to fit but are billed at their own rates,
+   * so they stay beside `inputTokens` rather than folded into it.
+   */
+  cachedInputTokens?: number
+  cacheCreationTokens?: number
+  /** Thinking tokens: a subset of `outputTokens`, never added on top. */
+  reasoningTokens?: number
+  /** The model's context window as the backend reported it for this turn. */
+  contextWindow?: number
   tokensPerSecond?: number
   /** Wall clock when the turn settled. */
   finishedAt?: number
@@ -48,6 +59,39 @@ export type MessageMetadata = {
    * turns stored before the field existed.
    */
   typedText?: string
+  /**
+   * The worktree checkpoint this turn produced — see `lib/checkpoints`.
+   *
+   * `ref` is the hidden git ref holding the tree as it stood when the turn
+   * ended, `baseRef` the one from just before it started, and `files` the
+   * numstat between them. That last one is the reason this is stored rather
+   * than recomputed: it is what the turn *actually* changed on disk, which is
+   * a different thing from what its tool calls claimed — a script that wrote a
+   * file, a formatter that ran on save and an edit the agent reverted are all
+   * only visible here. `lib/turn-files` prefers it over the tool-derived list.
+   *
+   * Absent whenever the chat has no folder, the folder is not a checkout, or
+   * git could not answer — the feature degrades to what it was before it.
+   */
+  checkpoint?: TurnCheckpoint
+}
+
+/** One row of the checkpoint diff: a file and how much of it moved. */
+export type TurnCheckpointFile = {
+  path: string
+  insertions: number
+  deletions: number
+}
+
+export type TurnCheckpoint = {
+  /** `refs/agent-ui/checkpoints/<base64url(sessionId)>/turn/<n>`. */
+  ref: string
+  /** Which turn of the chat this is; the baseline before turn 1 is turn 0. */
+  turn: number
+  /** The checkpoint the turn started from, when there was one. */
+  baseRef?: string
+  /** `git diff --numstat baseRef ref`, taken once when the turn settled. */
+  files?: TurnCheckpointFile[]
 }
 
 /** Exactly what the UI renders: `ChatMessageData` plus provenance. */

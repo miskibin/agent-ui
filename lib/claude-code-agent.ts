@@ -7,6 +7,7 @@ import {
   ClaudeCodeTranslator,
   parseCliLine,
 } from "@/lib/claude-code-protocol"
+import { rememberContextWindow } from "@/lib/claude-code-context"
 import {
   resolveClaudeCodeCommand,
   type ClaudeCodeCommand,
@@ -112,20 +113,53 @@ export async function* runClaudeCodeAgent(
       return event ? translator.translate(event) : []
     }
 
+    // A turn can also end without the CLI ever saying so: a rejected usage
+    // window parks it inside the subprocess with no result to come. The
+    // translator raises `stopRequested` for that, and every other way out —
+    // an abort, a failed spawn, a non-zero exit, a stream that simply stopped
+    // — goes through `finish`, so the rows a tool opened are always closed.
+    let parked = false
+
     for await (const chunk of readStdout(child.stdout)) {
       if (options.signal?.aborted) break
       for (const line of lines.push(chunk)) {
         yield* mapLine(line)
       }
+      if (translator.stopRequested) {
+        parked = true
+        break
+      }
     }
-    const tail = lines.finish()
-    if (tail !== null) yield* mapLine(tail)
+    if (!parked && !options.signal?.aborted) {
+      const tail = lines.finish()
+      if (tail !== null) yield* mapLine(tail)
+    }
+
+    // What the CLI said its own window was beats the static guess in the
+    // model list, for both the id the user picked and the one it resolved to.
+    rememberContextWindow(
+      [options.model, translator.model],
+      translator.contextWindow
+    )
+
+    if (parked) {
+      // Nothing more is coming; the `error` the translator already emitted is
+      // the turn's outcome, and the subprocess is only holding the pipe open.
+      killClaude(child)
+      yield* translator.finish(false)
+      yield { type: "done", durationMs: Date.now() - startedAt }
+      return
+    }
 
     const exitCode = await exited
 
-    if (options.signal?.aborted) return
+    if (options.signal?.aborted) {
+      yield* translator.finish(false)
+      return
+    }
 
     if (failure.error) {
+      yield* translator.finish(false)
       yield {
         type: "error",
         message: describeSpawnFailure(failure.error, command),
@@ -139,6 +173,7 @@ export async function* runClaudeCodeAgent(
     // code explained here.
     if (!translator.sawResult) {
       if (exitCode !== 0) {
+        yield* translator.finish(false)
         yield {
           type: "error",
           message: truncate(
@@ -148,8 +183,11 @@ export async function* runClaudeCodeAgent(
         return
       }
       // Exited cleanly with nothing to say — still close the turn.
+      yield* translator.finish(true)
       yield { type: "done", durationMs: Date.now() - startedAt }
+      return
     }
+    yield* translator.finish(true)
   } finally {
     options.signal?.removeEventListener("abort", onAbort)
     killClaude(child)

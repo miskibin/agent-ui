@@ -16,26 +16,53 @@ export type ModelPrice = {
   input: number
   /** $ per 1M output tokens. */
   output: number
+  /**
+   * $ per 1M input tokens served from the prompt cache. Absent where the
+   * host does not publish one, and then derived — see `CACHE_READ_RATIO`.
+   */
+  cacheRead?: number
+  /** $ per 1M input tokens written *into* the cache. */
+  cacheWrite?: number
+}
+
+/**
+ * Anthropic prices caching as a fixed multiple of a model's own input rate
+ * across the whole family — a read at a tenth, a five-minute write at a
+ * quarter more — so the per-model figures below are that rule applied to each
+ * entry's input price rather than nine hand-copied pairs that could drift
+ * apart. Every other table has no published pair at all and falls back to the
+ * same two ratios, which is the closest thing to a convention the hosts have.
+ */
+const CACHE_READ_RATIO = 0.1
+const CACHE_WRITE_RATIO = 1.25
+
+function anthropic(input: number, output: number): ModelPrice {
+  return {
+    input,
+    output,
+    cacheRead: input * CACHE_READ_RATIO,
+    cacheWrite: input * CACHE_WRITE_RATIO,
+  }
 }
 
 const ANTHROPIC: Record<string, ModelPrice> = {
-  "claude-fable-5-1": { input: 10, output: 50 },
-  "claude-fable-5": { input: 10, output: 50 },
-  "claude-mythos-5-1": { input: 10, output: 50 },
-  "claude-opus-5": { input: 5, output: 25 },
-  "claude-opus-4-8": { input: 5, output: 25 },
-  "claude-opus-4-7": { input: 5, output: 25 },
-  "claude-opus-4-6": { input: 5, output: 25 },
-  "claude-opus-4-5": { input: 5, output: 25 },
-  "claude-opus-4-1": { input: 15, output: 75 },
-  "claude-opus-4": { input: 15, output: 75 },
-  "claude-sonnet-5": { input: 2, output: 10 },
-  "claude-sonnet-4-6": { input: 3, output: 15 },
-  "claude-sonnet-4-5": { input: 3, output: 15 },
-  "claude-sonnet-4": { input: 3, output: 15 },
-  "claude-3-7-sonnet": { input: 3, output: 15 },
-  "claude-haiku-4-5": { input: 1, output: 5 },
-  "claude-3-5-haiku": { input: 0.8, output: 4 },
+  "claude-fable-5-1": anthropic(10, 50),
+  "claude-fable-5": anthropic(10, 50),
+  "claude-mythos-5-1": anthropic(10, 50),
+  "claude-opus-5": anthropic(5, 25),
+  "claude-opus-4-8": anthropic(5, 25),
+  "claude-opus-4-7": anthropic(5, 25),
+  "claude-opus-4-6": anthropic(5, 25),
+  "claude-opus-4-5": anthropic(5, 25),
+  "claude-opus-4-1": anthropic(15, 75),
+  "claude-opus-4": anthropic(15, 75),
+  "claude-sonnet-5": anthropic(2, 10),
+  "claude-sonnet-4-6": anthropic(3, 15),
+  "claude-sonnet-4-5": anthropic(3, 15),
+  "claude-sonnet-4": anthropic(3, 15),
+  "claude-3-7-sonnet": anthropic(3, 15),
+  "claude-haiku-4-5": anthropic(1, 5),
+  "claude-3-5-haiku": anthropic(0.8, 4),
 }
 
 const OPENAI: Record<string, ModelPrice> = {
@@ -172,16 +199,38 @@ export function priceForModel(modelId: string, providerId?: string): ModelPrice 
   return null
 }
 
+/**
+ * Every token a turn was billed for, split the way the backends report it.
+ * `inputTokens` is the *uncached* half: a harness that reports cache reads
+ * and writes separately (claude-code does) hands them over separately, and
+ * they are charged at their own rates rather than folded in at the full one.
+ */
+export type TurnTokens = {
+  inputTokens: number
+  outputTokens: number
+  cachedInputTokens?: number
+  cacheCreationTokens?: number
+}
+
 /** Dollars for one turn, or `null` when the model's price is unknown. */
 export function estimateCost(
   modelId: string,
   inputTokens: number,
   outputTokens: number,
-  providerId?: string
+  providerId?: string,
+  cache?: Pick<TurnTokens, "cachedInputTokens" | "cacheCreationTokens">
 ): number | null {
   const price = priceForModel(modelId, providerId)
   if (!price) return null
-  return (inputTokens * price.input + outputTokens * price.output) / 1_000_000
+  const cacheRead = price.cacheRead ?? price.input * CACHE_READ_RATIO
+  const cacheWrite = price.cacheWrite ?? price.input * CACHE_WRITE_RATIO
+  return (
+    (inputTokens * price.input +
+      outputTokens * price.output +
+      (cache?.cachedInputTokens ?? 0) * cacheRead +
+      (cache?.cacheCreationTokens ?? 0) * cacheWrite) /
+    1_000_000
+  )
 }
 
 /** `$0.0042`, `$1.30`, `free` — sized to the magnitude of the number. */
