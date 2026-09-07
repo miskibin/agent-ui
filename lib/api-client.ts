@@ -3,6 +3,7 @@ import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker
 import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { TurnStateFrame } from "@/lib/handoff/types"
 import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
+import type { MessageSearchResult } from "@/lib/message-search"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type {
   PermissionMode,
@@ -17,6 +18,7 @@ import type {
   CreateSessionInput,
   SessionMeta,
   SessionPatch,
+  SessionWorktree,
   StoredMessage,
 } from "@/lib/store/types"
 
@@ -232,6 +234,12 @@ export type FileResponse = {
   content: string
   /** The file was over the route's cap — `content` is only its head. */
   truncated?: boolean
+  /**
+   * The file is not text. `content` is empty and the panel says so instead of
+   * rendering a screenful of replacement characters — an outcome, not a
+   * failure, which is why it resolves rather than rejects.
+   */
+  binary?: boolean
 }
 
 /**
@@ -239,7 +247,7 @@ export type FileResponse = {
  * to enrich the preview panel, which already has the diff — callers are
  * expected to swallow the rejection.
  */
-export function fetchFile(
+export async function fetchFile(
   path: string,
   providerId: string,
   sessionId = ""
@@ -248,8 +256,33 @@ export function fetchFile(
   // The chat's own folder, when it has one — resolved server-side from the
   // stored session, so this is a name, not a root the client gets to pick.
   if (sessionId) query.set("session", sessionId)
-  return fetch(`/api/file?${query}`, { cache: "no-store" }).then(
-    json<FileResponse>
+  const response = await fetch(`/api/file?${query}`, { cache: "no-store" })
+  if (response.status === 415) {
+    const body = (await response.json().catch(() => null)) as {
+      path?: string
+      binary?: boolean
+    } | null
+    if (body?.binary) {
+      return { path: body.path || path, content: "", binary: true }
+    }
+  }
+  return json<FileResponse>(response)
+}
+
+/**
+ * One directory *inside* the chat's folder, for the file panel's folder
+ * browser — files included, one level at a time. Not to be confused with
+ * `fetchFolderListing`, which browses the machine for a folder to point a chat
+ * at and answers with directories alone.
+ */
+export function listFolderLevel(
+  sessionId: string,
+  dir: string,
+  signal?: AbortSignal
+): Promise<{ entries: { path: string }[]; truncated?: boolean }> {
+  const params = new URLSearchParams({ sessionId, dir })
+  return fetch(`/api/fs/tree?${params}`, { cache: "no-store", signal }).then(
+    json<{ entries: { path: string }[]; truncated?: boolean }>
   )
 }
 
@@ -472,6 +505,19 @@ export function revertFile(
   }).then(json<{ ok: true; path: string }>)
 }
 
+import type { SkillCatalog } from "@/lib/skills"
+
+/**
+ * The skills and provider commands available in a chat's folder, scanned
+ * server-side (`app/api/skills`). The chat names itself; the server decides
+ * which folder that is.
+ */
+export function fetchSkills(sessionId: string): Promise<SkillCatalog> {
+  return fetch(`/api/skills?sessionId=${encodeURIComponent(sessionId)}`, {
+    cache: "no-store",
+  }).then(json<SkillCatalog>)
+}
+
 /** Asks a model to name the chat, and stores the answer. */
 export function regenerateTitle(
   sessionId: string
@@ -489,4 +535,197 @@ export function fetchUsage(days: number | "all"): Promise<UsageReport> {
   return fetch(`/api/usage?days=${days}`, { cache: "no-store" }).then(
     json<UsageReport>
   )
+}
+
+/**
+ * Chats whose *messages* match `query`, ranked and snippeted server-side
+ * (`app/api/search`) for the command palette's Messages group. Aborted and
+ * re-issued on every keystroke, so the signal is the point.
+ */
+export function searchChatMessages(
+  query: string,
+  options: { limit?: number; signal?: AbortSignal } = {}
+): Promise<MessageSearchResult> {
+  const params = new URLSearchParams({ q: query })
+  if (options.limit) params.set("limit", String(options.limit))
+  return fetch(`/api/search?${params}`, {
+    cache: "no-store",
+    ...(options.signal ? { signal: options.signal } : null),
+  }).then(json<MessageSearchResult>)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Importing a CLI's own history                                               */
+/* -------------------------------------------------------------------------- */
+
+import type {
+  ImportProvider,
+  ImportRequest,
+  ImportResult,
+  ImportScanResult,
+} from "@/lib/import/types"
+export type { ImportProvider, ImportRequest, ImportResult, ImportScanResult }
+
+/**
+ * Every folder Claude Code or Codex has run in on this machine. The scan reads
+ * those CLIs' transcript directories, so it is slower than the app's own
+ * routes — the import dialog runs it once, when it opens.
+ */
+export function scanImports(signal?: AbortSignal): Promise<ImportScanResult> {
+  return fetch("/api/import/scan", { cache: "no-store", signal }).then(
+    json<ImportScanResult>
+  )
+}
+
+/** Imports the named folders' conversations; already-imported ones are skipped. */
+export function runImport(request: ImportRequest): Promise<ImportResult> {
+  return fetch("/api/import", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  }).then(json<ImportResult>)
+}
+
+/** Chat id → the CLI it was imported from, for the sidebar's badge. */
+export function fetchImportedSessions(): Promise<
+  Record<string, ImportProvider>
+> {
+  return fetch("/api/import/imported", { cache: "no-store" })
+    .then(json<{ sessions: Record<string, ImportProvider> }>)
+    .then((body) => body.sessions)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Worktrees                                                                   */
+/* -------------------------------------------------------------------------- */
+
+import type { WorktreeEntry, WorktreeStatus } from "@/lib/worktree"
+export type { WorktreeEntry, WorktreeStatus }
+
+/**
+ * A new worktree of `repoRoot`, on a new branch, under the app's own data
+ * directory. The folder it answers with is what the chat's `cwd` becomes.
+ *
+ * `title` only names the branch when `branch` is not given.
+ */
+export function createWorktree(input: {
+  repoRoot: string
+  title?: string
+  branch?: string
+  baseRef?: string
+}): Promise<SessionWorktree> {
+  return fetch("/api/worktrees", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).then(json<SessionWorktree>)
+}
+
+/** Every worktree a repository has registered, the stale ones already dropped. */
+export function fetchWorktrees(repoRoot: string): Promise<WorktreeEntry[]> {
+  const params = new URLSearchParams({ repoRoot })
+  return fetch(`/api/worktrees?${params}`, { cache: "no-store" })
+    .then(json<{ worktrees: WorktreeEntry[] }>)
+    .then((data) => data.worktrees)
+}
+
+/**
+ * Whether a folder is a worktree this app made, and what removing it would
+ * throw away. `managed: false` means there is nothing to offer.
+ */
+export type WorktreeCleanup =
+  | { managed: false; root: string }
+  | {
+      managed: true
+      root: string
+      repoRoot: string
+      branch?: string
+      status: WorktreeStatus
+    }
+
+export function fetchWorktreeCleanup(root: string): Promise<WorktreeCleanup> {
+  const params = new URLSearchParams({ root })
+  return fetch(`/api/worktrees/status?${params}`, { cache: "no-store" }).then(
+    json<WorktreeCleanup>
+  )
+}
+
+/** Removes a worktree and, when named, the branch it had checked out. */
+export function removeWorktree(input: {
+  repoRoot: string
+  root: string
+  branch?: string
+  force?: boolean
+}): Promise<{ ok: true; removed: boolean; branchDeleted: boolean }> {
+  return fetch("/api/worktrees", {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  }).then(json<{ ok: true; removed: boolean; branchDeleted: boolean }>)
+}
+
+/* -------------------------------------------------------------------------- */
+/* Commit, push, dev servers                                                   */
+/* -------------------------------------------------------------------------- */
+
+import type { CommitStyle } from "@/lib/git-commit"
+import type { DevServer } from "@/lib/dev-servers"
+export type { CommitStyle, DevServer }
+
+export type CommitRequest = {
+  sessionId: string
+  /** The files to commit; everything the tree has changed when omitted. */
+  paths?: string[]
+  /** The user's own message. Omitted, one is written from the staged diff. */
+  message?: string
+  style?: CommitStyle
+  /** Sent on the second call, after the default-branch question was answered. */
+  allowDefaultBranch?: boolean
+}
+
+/**
+ * Committing the chat's changes.
+ *
+ * `needsConfirmation` is not an error and does not throw: the branch is the
+ * repository's trunk, and the UI is expected to ask before calling again with
+ * `allowDefaultBranch: true` — passing back the `message` it was handed, so
+ * the commit that lands is the one the user was shown.
+ */
+export type CommitResponse =
+  | { ok: true; sha: string; message: string; subject: string }
+  | {
+      needsConfirmation: "default-branch"
+      branch?: string
+      message: string
+      subject: string
+    }
+
+export function commitChanges(request: CommitRequest): Promise<CommitResponse> {
+  return fetch("/api/git/commit", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(request),
+  }).then(json<CommitResponse>)
+}
+
+/** Pushes the chat folder's branch, setting its upstream on the first push. */
+export function pushChanges(
+  sessionId: string
+): Promise<{ ok: true; branch: string; created: boolean }> {
+  return fetch("/api/git/push", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId }),
+  }).then(json<{ ok: true; branch: string; created: boolean }>)
+}
+
+/**
+ * Local ports currently serving a page. Scoped to the chat's folder when a
+ * session is named and the platform can attribute a listener to a directory.
+ */
+export function fetchDevServers(sessionId?: string): Promise<DevServer[]> {
+  const query = sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ""
+  return fetch(`/api/dev-servers${query}`, { cache: "no-store" })
+    .then(json<{ servers: DevServer[] }>)
+    .then((data) => data.servers)
 }

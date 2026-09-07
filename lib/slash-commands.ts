@@ -1,4 +1,5 @@
 import type { ChatSlashCommand } from "@/components/ui/chat-input"
+import type { DiscoveredCommand } from "@/lib/skills"
 
 /**
  * The app's own `/` commands — things the composer can do without a model.
@@ -25,4 +26,38 @@ export function parseSlashCommand(text: string): ParsedSlashCommand | null {
   const name = match[1].toLowerCase()
   if (!APP_SLASH_COMMANDS.some((command) => command.name === name)) return null
   return { name, arg: (match[2] ?? "").trim() }
+}
+
+/**
+ * The app's commands plus the ones discovered on this machine
+ * (`GET /api/skills`), for the composer's `/` menu.
+ *
+ * A discovered command belongs to the harness, not to this app: it runs only
+ * when it opens the message, because anywhere else the CLI reads it as
+ * ordinary text and the agent answers the prose instead of running anything.
+ * `mustStartMessage` is what tells the composer to stop offering it once the
+ * `/` is no longer the first character.
+ *
+ * The app's own commands win a name collision — `/new` has to keep making a
+ * chat — and nothing here is ever sent anywhere: `parseSlashCommand` claims
+ * only the app's list, so a discovered `/compact` reaches the harness typed
+ * exactly as the user typed it.
+ */
+export function slashCommandsWith(
+  discovered: readonly DiscoveredCommand[]
+): ChatSlashCommand[] {
+  const taken = new Set(APP_SLASH_COMMANDS.map((command) => command.name))
+  return [
+    ...APP_SLASH_COMMANDS,
+    ...discovered
+      .filter((command) => !taken.has(command.name))
+      .map<ChatSlashCommand>((command) => ({
+        name: command.name,
+        description:
+          command.description ??
+          (command.scope === "project" ? "Project command" : "Personal command"),
+        ...(command.argHint ? { argHint: command.argHint } : {}),
+        mustStartMessage: true,
+      })),
+  ]
 }
