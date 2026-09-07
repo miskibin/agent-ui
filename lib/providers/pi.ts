@@ -12,12 +12,15 @@ import {
   listSourceModels,
   type ModelSource,
 } from "@/lib/model-providers/server"
+import { sniffImageMimeType } from "@/lib/attachments"
 import { writePiExtension } from "@/lib/pi-extension"
 import { hasPiBinary } from "@/lib/pi-runtime"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import {
   fetchOllamaContextLengths,
   fetchOllamaModels,
+  fetchVisionCapableModelIds,
+  looksVisionCapableId,
   normalizeBaseUrl,
   ollamaReachErrorMessage,
   probeOllama,
@@ -94,7 +97,11 @@ export function createPiProvider(
           resume: true,
           // Maps straight onto pi's `--thinking` levels.
           effort: true,
-          vision: false,
+          // Transport-level: the RPC `prompt` command carries images. Which
+          // *models* look at them is a per-model question, answered by
+          // `visionModels()` below — and by the `input` the generated
+          // models.json gives each one, without which pi drops them silently.
+          vision: true,
         },
         available: false,
       }
@@ -128,7 +135,13 @@ export function createPiProvider(
         collectLocalModels(baseUrl),
         collectSourceModels(sources),
       ])
-      await writeModelsConfig(configDir, baseUrl, models, remote)
+      await writeModelsConfig(
+        configDir,
+        baseUrl,
+        models,
+        remote,
+        await localVisionIds(baseUrl, models)
+      )
       // Only the local ones: a hosted source does not tell us its window, and
       // guessing one would put a confidently wrong number under the composer.
       const contexts = models.length
@@ -146,6 +159,31 @@ export function createPiProvider(
             name: model.name,
             group: source.slug,
           }))
+        ),
+      ]
+    },
+
+    /**
+     * Which of the picker's ids actually take an image, in the app's composite
+     * spelling. Two different qualities of evidence, deliberately kept apart:
+     * a local model is asked (`/api/show` reports `vision` outright), while a
+     * hosted one can only be read off its id, because no OpenAI-compatible
+     * `/models` says anything about modality. The same split decides the
+     * `input` written into models.json, so what the composer offers and what
+     * pi will actually forward can never drift.
+     */
+    async visionModels() {
+      const [models, remote] = await Promise.all([
+        collectLocalModels(baseUrl),
+        collectSourceModels(sources),
+      ])
+      const local = await localVisionIds(baseUrl, models)
+      return [
+        ...[...local].map((id) => joinModelId(OLLAMA_SOURCE, id)),
+        ...remote.flatMap(({ source, models: listed }) =>
+          listed
+            .filter((model) => looksVisionCapableId(model.id))
+            .map((model) => joinModelId(source.slug, model.id))
         ),
       ]
     },
@@ -196,15 +234,17 @@ export function createPiProvider(
           collectLocalModels(baseUrl),
           collectSourceModels(sources),
         ])
+        const local = withSelectedLocal(models, selected)
         await writeModelsConfig(
           configDir,
           baseUrl,
           // Same reason as the hosted sources below: a local server that did
           // not answer must not cost the picked tag its catalog entry.
-          withSelectedLocal(models, selected),
+          local,
           // A source whose catalog could not be listed would otherwise leave
           // pi unable to resolve the very model that was picked from it.
-          withSelected(remote, selected)
+          withSelected(remote, selected),
+          await localVisionIds(baseUrl, local)
         )
         extensionPath = await writePiExtension(configDir)
       } catch (err) {
@@ -229,6 +269,14 @@ export function createPiProvider(
         configDir,
         sessionDir,
         extensionPath,
+        // The media type is gone by the time a payload reaches a provider —
+        // `AgentRunOptions.images` is raw base64 — and pi's RPC `images` want
+        // one, so it is read back off the bytes.
+        images: options.images?.map((data) => ({
+          type: "image" as const,
+          data,
+          mimeType: sniffImageMimeType(data),
+        })),
         askUser: options.askUser,
         binPath,
         signal: options.signal,
@@ -245,10 +293,14 @@ type ModelsConfig = {
       api: string
       apiKey: string
       compat: Record<string, boolean>
-      models: Array<{ id: string; name: string }>
+      models: Array<{ id: string; name: string; input?: string[] }>
     }
   >
 }
+
+/** pi's own spelling of "this model takes pictures", and its default. */
+const TEXT_ONLY = ["text"]
+const TEXT_AND_IMAGE = ["text", "image"]
 
 type SourceModels = {
   source: ModelSource
@@ -274,6 +326,22 @@ function sourceSummary(baseUrl: string, sources: ModelSource[]) {
 async function collectLocalModels(baseUrl: string): Promise<OllamaModel[]> {
   if (!baseUrl) return []
   return fetchOllamaModels(baseUrl).catch(() => [])
+}
+
+/**
+ * Which local tags take an image, straight from the server. Best-effort like
+ * everything else that talks to it — a probe that fails leaves a model out,
+ * which costs it the attachment button rather than the whole turn. The
+ * `/api/show` reads behind this are memoized per model, so the picker's sweep
+ * and the one a run does moments later are a single round of requests.
+ */
+async function localVisionIds(
+  baseUrl: string,
+  models: OllamaModel[]
+): Promise<Set<string>> {
+  if (!baseUrl || models.length === 0) return new Set()
+  const ids = await fetchVisionCapableModelIds(baseUrl, models).catch(() => [])
+  return new Set(ids)
 }
 
 /**
@@ -335,12 +403,20 @@ function withSelected(
  * A hosted provider is the opposite case (DeepSeek, OpenAI and the rest read
  * `reasoning_effort`), so declaring it unsupported there would silently throw
  * away the effort the composer's picker just set.
+ *
+ * `input` is written for the same reason and matters just as much: it defaults
+ * to `["text"]`, and a model left at the default has the images dropped from
+ * the request without a word — the run reads as a model that looked and did
+ * not see. It is the same judgement `visionModels()` publishes to the
+ * composer, so a model that offers the attachment button is a model whose
+ * catalog entry will carry the picture.
  */
 async function writeModelsConfig(
   configDir: string,
   baseUrl: string,
   models: OllamaModel[],
-  sources: SourceModels[]
+  sources: SourceModels[],
+  localVision: Set<string>
 ) {
   const config: ModelsConfig = {
     providers: {
@@ -357,6 +433,7 @@ async function writeModelsConfig(
               models: models.map((model) => ({
                 id: model.id,
                 name: model.name,
+                input: localVision.has(model.id) ? TEXT_AND_IMAGE : TEXT_ONLY,
               })),
             },
           }
@@ -372,7 +449,11 @@ async function writeModelsConfig(
               supportsDeveloperRole: true,
               supportsReasoningEffort: true,
             },
-            models: listed.map((model) => ({ id: model.id, name: model.name })),
+            models: listed.map((model) => ({
+              id: model.id,
+              name: model.name,
+              input: looksVisionCapableId(model.id) ? TEXT_AND_IMAGE : TEXT_ONLY,
+            })),
           },
         ])
       ),
