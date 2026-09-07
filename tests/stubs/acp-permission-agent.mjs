@@ -104,6 +104,25 @@ async function runTurn(id, params) {
   })
 
   const chosen = outcome?.outcome?.optionId ?? outcome?.outcome?.outcome ?? "none"
+
+  // What a real agent does next: settle the tool call it just asked about, and
+  // take a beat before answering. A turn that ends in the same tick as the
+  // approval is not a shape any backend produces.
+  send({
+    jsonrpc: "2.0",
+    method: "session/update",
+    params: {
+      sessionId: "stub-session",
+      update: {
+        sessionUpdate: "tool_call_update",
+        toolCallId: "call-1",
+        status: chosen.startsWith("allow") ? "completed" : "failed",
+        content: [{ type: "content", content: { type: "text", text: `outcome: ${chosen}` } }],
+      },
+    },
+  })
+  await new Promise((resolve) => setTimeout(resolve, 250))
+
   // The prompt's own blocks are echoed so a test can assert what was sent.
   const blocks = (params?.prompt ?? [])
     .map((block) => (block.type === "image" ? `image:${block.mimeType}` : block.type))

@@ -163,7 +163,7 @@ function UserRequestChoice({
       {request.description ? (
         <p
           data-slot="pending-request-detail"
-          className="truncate border-b px-3.5 pt-2.5 pb-2 font-mono text-[11.5px] text-muted-foreground"
+          className="truncate border-b px-3.5 pt-2.5 pb-2 text-[11.5px] text-muted-foreground"
           title={request.description}
         >
           {request.description}

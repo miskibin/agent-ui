@@ -501,20 +501,17 @@ async function decide(
       }
     }
     const answer = await ask(permissionRequest(toolCall, choices, nextSeq()))
-    if (answer.cancelled || !answer.optionId) {
-      return { option: null, reason: `You did not allow ${name}.`, approved: false }
-    }
-    const picked = choices.find((choice) => choice.optionId === answer.optionId)
+    const picked = answer.cancelled
+      ? undefined
+      : choices.find((choice) => choice.optionId === answer.optionId)
     if (!picked) {
-      return { option: null, reason: `You did not allow ${name}.`, approved: false }
+      return { option: null, reason: outcomeLine("You did not allow", name), approved: false }
     }
     const approved = isAllowKind(picked.kind)
     return {
       option: picked,
       approved,
-      reason: approved
-        ? `You allowed ${name}${picked.kind === "allow_always" ? " — and every one like it" : ""}.`
-        : `You refused ${name}${picked.kind === "reject_always" ? " — and every one like it" : ""}.`,
+      reason: outcomeLine(PERMISSION_VERBS[picked.kind ?? ""] ?? "You chose", name),
     }
   }
   if (mode === "reject-all") {
@@ -535,6 +532,26 @@ async function decide(
     option: null,
     reason: `Rejected: ${name} is not read-only and this agent only auto-approves reads.`,
   }
+}
+
+/** How each ACP option kind reads back once the user has picked it. */
+const PERMISSION_VERBS: Record<string, string> = {
+  allow_once: "You allowed",
+  allow_always: "You always allow",
+  reject_once: "You refused",
+  reject_always: "You always refuse",
+}
+
+/**
+ * The outcome, sized for the row it lands in: the vendored tool card shows an
+ * output shorter than 28 characters inline in its collapsed headline and hides
+ * anything longer behind the disclosure. A decision the user just made should
+ * be readable without a click, so a name that would not fit is dropped rather
+ * than the whole line going quiet — the request itself is still in the row.
+ */
+function outcomeLine(verb: string, name: string) {
+  const named = `${verb} ${name}.`
+  return named.length < 28 ? named : `${verb} it.`
 }
 
 /** ACP's four option kinds, for an agent that named none. */
@@ -565,25 +582,57 @@ function permissionRequest(
       ...(choice.kind ? { kind: choice.kind } : null),
     })
   }
+  const description = describeToolInput(toolCall.rawInput)
   return {
     id: `acp-permission-${seq}-${toolCall.toolCallId || "call"}`,
     kind: "permission",
     title: `Allow ${name}?`,
-    ...(describeToolInput(toolCall.rawInput)
-      ? { description: describeToolInput(toolCall.rawInput) }
-      : null),
+    ...(description ? { description } : null),
     options,
     tool: { name, ...(toolCall.rawInput === undefined ? null : { input: toolCall.rawInput }) },
   }
 }
 
-/** The agent's own arguments, short enough to sit under the question. */
+/**
+ * The one line under the question: what the agent is actually about to do.
+ *
+ * The whole argument object is the wrong thing to show — a write carries the
+ * file's entire body — so the fields that answer "what is this?" are tried in
+ * order, and the raw JSON is only the last resort. Whatever is dropped here is
+ * still in the transcript row, which keeps the request verbatim.
+ */
 function describeToolInput(rawInput: unknown): string | undefined {
   if (rawInput == null) return undefined
-  const text =
-    typeof rawInput === "string" ? rawInput : safeJson(rawInput)
-  if (!text) return undefined
-  const collapsed = text.replace(/\s+/g, " ").trim()
+  if (typeof rawInput === "string") return clipLine(rawInput)
+  const record = rawInput as Record<string, unknown>
+  if (typeof record !== "object" || Array.isArray(rawInput)) {
+    return clipLine(safeJson(rawInput))
+  }
+  const first =
+    // dsh explains its own escalations, and its sentence beats every guess.
+    text(record.justification) ??
+    text(record.description) ??
+    text(record.command) ??
+    text(record.cmd) ??
+    text(record.script) ??
+    text(record.path) ??
+    text(record.file_path) ??
+    text(record.filePath) ??
+    text(record.target_file)
+  if (first) return clipLine(first)
+  const rest = { ...record }
+  for (const key of ["content", "new_string", "newText", "old_string", "oldText"]) {
+    delete rest[key]
+  }
+  return clipLine(safeJson(rest))
+}
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined
+}
+
+function clipLine(value: string | undefined): string | undefined {
+  const collapsed = value?.replace(/\s+/g, " ").trim()
   if (!collapsed) return undefined
   return collapsed.length > 300 ? `${collapsed.slice(0, 299)}…` : collapsed
 }
