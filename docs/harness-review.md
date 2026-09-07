@@ -18,6 +18,20 @@ are included in this report.
 - Dropdown available height now compensates for UI zoom. Browser checks at
   80% and 125% confirmed viewport containment. The shared change lives in
   chat-components and the dropdown copy is identical here.
+- ACP approvals are interactive. With `providers.acp.agents.dsh.permissionMode`
+  set to `ask` and the dsh sandbox at `read-only`, a live turn asked to create a
+  file was denied by the sandbox, retried with `sandbox_permissions:
+  workspace-write`, and raised `session/request_permission`. The stream carried
+  a running `permission` tool row before blocking; `POST /api/chat/respond`
+  answered it (200, and 404 on a second attempt); the same row settled `done`;
+  the write completed and the file appeared. The refusal path selected the
+  agent's own `reject_once` option, settled the row `error`, and the turn
+  finished explaining that it could not write. Both were also driven through
+  the browser — see `.github/screenshots/chat-permission.png`.
+- dsh does not take images. Its `initialize` answers
+  `promptCapabilities: { image: false, audio: false, embeddedContext: false }`,
+  so `capabilities.vision` stays false for it rather than being asserted from
+  the Vision Exp catalog entry.
 
 ## Remaining parity work
 
@@ -29,9 +43,9 @@ These are review findings, not claims of complete CLI parity:
 | Resume | Session IDs supported | ACP session resume supported |
 | Effort | CLI thinking setting mapped | ACP reasoning effort mapped |
 | Context | Standing and turn context injected | Standing and turn context injected |
-| Permissions | No enforced permission modes advertised | Read-only/edits/full mapped; no interactive approval round trip |
-| Questions | Launch uses `--no-extensions`; native question integration needs work | Structured ask tools render; ACP approvals need an interactive round trip |
-| Images | Vision not advertised | Vision not advertised despite a Vision Exp catalog entry; transport/support needs verification |
+| Permissions | No enforced permission modes advertised | Read-only/edits/full mapped; an `ask` policy now puts every `session/request_permission` to the user and the blocked turn continues on the answer |
+| Questions | Launch uses `--no-extensions`; native question integration needs work | Structured ask tools render; ACP approvals have an interactive round trip (`lib/turn-requests`, `POST /api/chat/respond`) |
+| Images | Vision not advertised | Vision read from `promptCapabilities` rather than assumed; dsh 0.0.1 answers `image: false`, so it stays off. The transport is implemented and covered by tests for an agent that says yes |
 
 Do not enable capability flags without implementing and testing their transport
 and enforcement. A model appearing in a catalog does not establish image support.
