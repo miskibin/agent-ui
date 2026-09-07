@@ -78,8 +78,11 @@ async function compare(rel) {
     missing.push(rel)
     return
   }
-  const [a, b] = await Promise.all([readFile(here), readFile(there)])
-  if (!a.equals(b)) drifted.push(rel)
+  const [a, b] = await Promise.all([readFile(here, "utf8"), readFile(there, "utf8")])
+  // Both repos check text out as LF (.gitattributes), but a checkout made
+  // before that, or one with core.autocrlf on, must not read as drift.
+  const lf = (text) => text.replaceAll("\r\n", "\n")
+  if (lf(a) !== lf(b)) drifted.push(rel)
 }
 
 for (const name of readdirSync(join(ROOT, "components/ui"))) {
