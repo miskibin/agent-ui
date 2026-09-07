@@ -167,11 +167,20 @@ export async function GET(req: Request) {
         { status: 415 }
       )
     }
+    const truncated = info.size > MAX_BYTES
     return NextResponse.json({
       path: name,
-      content: bytes.toString("utf8"),
-      // Too big to send whole: the head is still worth rendering.
-      ...(info.size > MAX_BYTES ? { truncated: true } : null),
+      /**
+       * `stream: true` on a cut read, so the decoder *holds back* a multi-byte
+       * character `MAX_BYTES` landed in the middle of instead of emitting a
+       * U+FFFD for its first half. A whole file is decoded normally: bytes
+       * that are genuinely invalid there are the file's own, and showing the
+       * replacement character is the honest answer.
+       */
+      content: new TextDecoder("utf-8").decode(bytes, { stream: truncated }),
+      // Too big to send whole: the head is still worth rendering, and the
+      // panel says so — which it can only do if it is told the real size.
+      ...(truncated ? { truncated: true, bytes: info.size } : null),
     })
   } catch {
     return NextResponse.json({ error: "Could not read that file" }, { status: 500 })

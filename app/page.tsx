@@ -5,7 +5,7 @@ import dynamic from "next/dynamic"
 import * as React from "react"
 
 import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
-import { BinaryFilePanel } from "@/components/binary-file"
+import { FilePanel } from "@/components/file-panel"
 import { PendingLineComments } from "@/components/line-comments"
 import { ChatChanges } from "@/components/chat-changes"
 import { ChatUsageSummary } from "@/components/chat-usage"
@@ -28,7 +28,6 @@ import { PendingQuestion, PendingUserRequest } from "@/components/pending-questi
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
 import { ChatInput } from "@/components/ui/chat-input"
-import { FilePreview } from "@/components/ui/file-preview"
 import { MessageList } from "@/components/ui/message-list"
 import { DEFAULT_MODEL_EFFORTS, ModelPicker } from "@/components/ui/model-picker"
 import { PromptSuggestions } from "@/components/ui/prompt-suggestions"
@@ -230,6 +229,7 @@ export default function ChatPage() {
   const {
     preview,
     previewBinary,
+    previewNotice,
     previewSize,
     previewPrefs,
     closePreview,
@@ -535,7 +535,7 @@ export default function ChatPage() {
   const { chatPaneRef, composerBoxRef } = useComposerHeight()
 
   // The file panel is a resizable pane on desktop and an overlay below md.
-  // Derived, so exactly one FilePreview is ever mounted.
+  // Derived, so exactly one FilePanel is ever mounted.
   const dockedPreview = isDesktop ? preview : null
   const overlayPreview = isDesktop ? null : preview
 
@@ -970,31 +970,20 @@ export default function ChatPage() {
                     className="flex min-w-0 flex-col"
                     style={{ overflow: "hidden" }}
                   >
-                    {/* Not text, and the route said so: the panel shows the
-                        name and the same actions menu rather than a diff
-                        about bytes nobody can read. */}
-                    {previewBinary ? (
-                      <BinaryFilePanel
-                        path={dockedPreview.path}
-                        actions={fileActions}
-                        onCopyPath={handleCopyPath}
-                        onClose={closePreview}
-                        className="border-l"
-                      />
-                    ) : (
-                      <FilePreview
-                        file={dockedPreview}
-                        onClose={closePreview}
-                        actions={fileActions}
-                        onCopyPath={handleCopyPath}
-                        onLineComment={panel.handleLineComment}
-                        diffLayout={previewPrefs.layout}
-                        onDiffLayoutChange={setDiffLayout}
-                        wrap={previewPrefs.wrap}
-                        onWrapChange={setWrap}
-                        className="border-l"
-                      />
-                    )}
+                    <FilePanel
+                      file={dockedPreview}
+                      binary={previewBinary}
+                      notice={previewNotice}
+                      onClose={closePreview}
+                      actions={fileActions}
+                      onCopyPath={handleCopyPath}
+                      onLineComment={panel.handleLineComment}
+                      diffLayout={previewPrefs.layout}
+                      onDiffLayoutChange={setDiffLayout}
+                      wrap={previewPrefs.wrap}
+                      onWrapChange={setWrap}
+                      className="border-l"
+                    />
                   </ResizablePanel>
                 </>
               ) : null}
@@ -1023,28 +1012,20 @@ export default function ChatPage() {
               )}
             >
               {overlayPreview ? (
-                previewBinary ? (
-                  <BinaryFilePanel
-                    path={overlayPreview.path}
-                    actions={fileActions}
-                    onCopyPath={handleCopyPath}
-                    onClose={closePreview}
-                    className="border-l"
-                  />
-                ) : (
-                  <FilePreview
-                    file={overlayPreview}
-                    onClose={closePreview}
-                    actions={fileActions}
-                    onCopyPath={handleCopyPath}
-                    onLineComment={panel.handleLineComment}
-                    diffLayout={previewPrefs.layout}
-                    onDiffLayoutChange={setDiffLayout}
-                    wrap={previewPrefs.wrap}
-                    onWrapChange={setWrap}
-                    className="border-l"
-                  />
-                )
+                <FilePanel
+                  file={overlayPreview}
+                  binary={previewBinary}
+                  notice={previewNotice}
+                  onClose={closePreview}
+                  actions={fileActions}
+                  onCopyPath={handleCopyPath}
+                  onLineComment={panel.handleLineComment}
+                  diffLayout={previewPrefs.layout}
+                  onDiffLayoutChange={setDiffLayout}
+                  wrap={previewPrefs.wrap}
+                  onWrapChange={setWrap}
+                  className="border-l"
+                />
               ) : null}
             </div>
           </DiffWorkers>

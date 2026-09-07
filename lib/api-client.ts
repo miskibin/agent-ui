@@ -235,6 +235,8 @@ export type FileResponse = {
   content: string
   /** The file was over the route's cap — `content` is only its head. */
   truncated?: boolean
+  /** The file's real size on disk, sent only when it was truncated. */
+  bytes?: number
   /**
    * The file is not text. `content` is empty and the panel says so instead of
    * rendering a screenful of replacement characters — an outcome, not a
