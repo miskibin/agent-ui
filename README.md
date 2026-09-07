@@ -109,6 +109,31 @@ npm run desktop:build
 installers and update metadata are published on
 [GitHub Releases](https://github.com/miskibin/agent-ui/releases).
 
+### Download size
+
+The installer carries a Node.js runtime and the Next standalone server, so it
+is measured in hundreds of megabytes rather than tens — that is the price of an
+app that runs its own server on `127.0.0.1` with nothing to install first. Two
+things keep it from being larger than it needs to be, and both are easy to undo
+by accident:
+
+- **Only NSIS is bundled on Windows.** `bundle.targets` in
+  `src-tauri/tauri.conf.json` lists every target except `msi`; WiX packed the
+  same payload into an installer roughly twice the size of the NSIS one
+  (v0.6.0: 478 MB against 235 MB), and the updater feeds off NSIS anyway. Going
+  back to `"all"` republishes that second, larger download.
+- **sharp is excluded from the server trace.** Next traces `sharp` and its
+  libvips prebuilds — about 46 MB, more than half the standalone bundle — into
+  every server build, whether or not the image optimizer can be reached. This
+  app renders every image through a plain `<img>`, so `images.unoptimized` turns
+  the `/_next/image` route off and `outputFileTracingExcludes` in
+  `next.config.ts` drops the package. The two belong together: excluding sharp
+  while leaving the optimizer routable would fail at runtime instead of at
+  build time.
+
+Together they take the staged payload from 108 MB to 59 MB. `du -sh
+.next/standalone .next/static` after a build is the number to watch.
+
 ## Screenshots
 
 | Sidebar shelves | Everything the chat changed |
