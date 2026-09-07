@@ -38,6 +38,20 @@ export type ProviderCapabilities = {
    * so the harness's own settings stay in charge. Absent = unknown.
    */
   defaultPermissionMode?: PermissionMode
+  /**
+   * The backend fixes a conversation's mode when the conversation is created,
+   * so a resumed session cannot be moved to another one.
+   *
+   * True only for cursor-agent, and only because of how its CLI spells the
+   * modes: `--mode ask` and `--mode plan` are flags, while the agent that
+   * edits is the *absence* of one — so there is nothing to pass on a resume
+   * that would take a chat back out of ask mode, and the session answers
+   * "I'm in Ask mode, switch to Agent mode" forever. Where this is set, the
+   * mode joins the working folder as part of a stored session's identity:
+   * asking for a different one starts a fresh backend session instead of
+   * resuming a conversation that cannot honour it.
+   */
+  permissionModePerSession?: boolean
 }
 
 export type ProviderInfo = {

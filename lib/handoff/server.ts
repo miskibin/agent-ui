@@ -4,6 +4,7 @@ import { buildHandoff } from "@/lib/handoff/build"
 import {
   nextAgentSessionState,
   resolveResumeSessionId,
+  type SessionMode,
 } from "@/lib/handoff/cursor"
 import { lastSeq } from "@/lib/handoff/journal"
 import { readDiffStat, readWorktreeSnapshot } from "@/lib/handoff/snapshot"
@@ -49,12 +50,19 @@ export async function prepareTurn(args: {
   providerId: string
   cwd: string | undefined
   canResume: boolean
+  /** This turn's mode, where the harness locks one per conversation. */
+  mode?: SessionMode
   enabled: boolean
 }): Promise<PreparedTurn> {
   const agentSessions = args.session.agentSessions ?? {}
   const entry = agentSessions[args.providerId]
 
-  const resumeSessionId = resolveResumeSessionId(entry, args.cwd, args.canResume)
+  const resumeSessionId = resolveResumeSessionId(
+    entry,
+    args.cwd,
+    args.canResume,
+    args.mode
+  )
 
   if (!args.enabled) return { resumeSessionId, agentSessions, entry }
 
@@ -103,6 +111,8 @@ export async function commitTurn(args: {
   events: NewJournalEvent[]
   runStarted: boolean
   providerSessionId?: string
+  /** This turn's mode, where the harness locks one per conversation. */
+  mode?: SessionMode
   enabled: boolean
 }): Promise<Record<string, AgentSessionState>> {
   const previous = args.prepared.entry
@@ -130,6 +140,7 @@ export async function commitTurn(args: {
     ...(args.providerSessionId
       ? { providerSessionId: args.providerSessionId }
       : null),
+    ...(args.mode ? { mode: args.mode } : null),
     ...(snapshot ? { snapshot } : null),
     now: Date.now(),
   })

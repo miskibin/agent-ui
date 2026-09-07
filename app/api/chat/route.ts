@@ -166,6 +166,22 @@ export async function POST(req: Request) {
   let usage: AgentTokenUsage | undefined
   const cwd = body.cwd?.trim() || session.cwd
 
+  // Like `cwd`: the turn's own choice, else what the chat last stored — and
+  // only when this backend actually publishes the mode, so a client that
+  // never sends one (or sends a mode this harness cannot enforce) leaves the
+  // provider on its configured policy exactly as before.
+  //
+  // Resolved before the handoff, not after: a harness that fixes a
+  // conversation's mode when it is created (cursor-agent) needs this turn's
+  // mode to decide whether its stored session can be resumed at all.
+  const permissionMode = allowedPermissionMode(
+    info.capabilities.permissionModes,
+    body.permissionMode?.trim() || session.permissionMode
+  )
+  const sessionMode = info.capabilities.permissionModePerSession
+    ? { perSession: true as const, permissionMode }
+    : undefined
+
   /**
    * The backend session this provider owns in this chat, plus whatever the
    * *other* agents did while it was away.
@@ -179,17 +195,10 @@ export async function POST(req: Request) {
     providerId,
     cwd,
     canResume: info.capabilities.resume,
+    mode: sessionMode,
     enabled: settings.handoff.enabled,
   })
   let providerSessionId = prepared.resumeSessionId
-  // Like `cwd`: the turn's own choice, else what the chat last stored — and
-  // only when this backend actually publishes the mode, so a client that
-  // never sends one (or sends a mode this harness cannot enforce) leaves the
-  // provider on its configured policy exactly as before.
-  const permissionMode = allowedPermissionMode(
-    info.capabilities.permissionModes,
-    body.permissionMode?.trim() || session.permissionMode
-  )
 
   /**
    * Standing user memory for this turn, when the feature is on.
@@ -340,6 +349,7 @@ export async function POST(req: Request) {
         events: journalEvents,
         runStarted,
         providerSessionId,
+        mode: sessionMode,
         enabled: settings.handoff.enabled,
       })
     } catch {

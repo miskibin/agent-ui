@@ -36,6 +36,98 @@ test("no entry, no resume", () => {
   assert.equal(resolveResumeSessionId(undefined, "/repo", true), undefined)
 })
 
+/**
+ * cursor-agent spells its modes as flags for `ask` and `plan` and as the
+ * absence of one for the agent that edits, so a resumed session cannot be
+ * taken back out of ask mode. Where a provider says so, the mode joins the
+ * folder in a stored session's identity.
+ */
+const asked: AgentSessionState = { ...entry, permissionMode: "read-only" }
+
+test("a mode-locked session resumes only under the mode it was minted in", () => {
+  assert.equal(
+    resolveResumeSessionId(asked, "/repo", true, {
+      perSession: true,
+      permissionMode: "read-only",
+    }),
+    "backend-1"
+  )
+  assert.equal(
+    resolveResumeSessionId(asked, "/repo", true, {
+      perSession: true,
+      permissionMode: "full",
+    }),
+    undefined
+  )
+})
+
+test("a harness that can switch modes resumes whatever the mode is now", () => {
+  assert.equal(resolveResumeSessionId(asked, "/repo", true), "backend-1")
+  assert.equal(
+    resolveResumeSessionId(asked, "/repo", true, {
+      perSession: false,
+      permissionMode: "full",
+    }),
+    "backend-1"
+  )
+})
+
+test("a mode-locked id minted before the rule existed is not resumed blind", () => {
+  // No stored mode means the id was minted by a build that did not record
+  // one; resuming it under a named mode is exactly the guess this prevents.
+  assert.equal(
+    resolveResumeSessionId(entry, "/repo", true, {
+      perSession: true,
+      permissionMode: "full",
+    }),
+    undefined
+  )
+})
+
+test("a turn that minted an id stores the mode it was minted under", () => {
+  const next = nextAgentSessionState({
+    previous: asked,
+    journalEnd: 6,
+    wrote: true,
+    runStarted: true,
+    cwd: "/repo",
+    providerSessionId: "backend-2",
+    mode: { perSession: true, permissionMode: "full" },
+    now: 200,
+  })
+  assert.equal(next.providerSessionId, "backend-2")
+  assert.equal(next.permissionMode, "full")
+})
+
+test("a turn that reached no backend leaves the id and its mode paired", () => {
+  const next = nextAgentSessionState({
+    previous: asked,
+    journalEnd: 6,
+    wrote: true,
+    // The spawn failed under a different mode: it minted nothing, so the
+    // stored pair must survive intact and stay resumable by its own mode.
+    runStarted: false,
+    cwd: "/repo",
+    mode: { perSession: true, permissionMode: "full" },
+    now: 200,
+  })
+  assert.equal(next.providerSessionId, "backend-1")
+  assert.equal(next.permissionMode, "read-only")
+})
+
+test("a harness with no per-session mode records none", () => {
+  const next = nextAgentSessionState({
+    journalEnd: 2,
+    wrote: true,
+    runStarted: true,
+    cwd: "/repo",
+    providerSessionId: "backend-9",
+    mode: { perSession: false, permissionMode: "full" },
+    now: 200,
+  })
+  assert.equal(next.permissionMode, undefined)
+})
+
 test("a started run advances the cursor past what it was handed", () => {
   const next = nextAgentSessionState({
     previous: entry,
@@ -173,6 +265,23 @@ test("an existing map wins over the legacy field and is field-checked", () => {
     lastActiveAt: 0,
     snapshot: { head: "h", status: ["a"] },
   })
+})
+
+test("a stored mode survives a read of the index", () => {
+  const migrated = migrateAgentSessions(
+    {
+      cursorAgent: {
+        providerSessionId: "c-1",
+        cwd: "/repo",
+        permissionMode: "plan",
+        lastSeenSeq: 1,
+        lastWroteSeq: 1,
+        lastActiveAt: 3,
+      },
+    },
+    { providerId: "cursorAgent", providerSessionId: "", updatedAt: 0 }
+  )
+  assert.equal(migrated?.cursorAgent.permissionMode, "plan")
 })
 
 test("snapshots differ on head, on membership, and not on order", () => {

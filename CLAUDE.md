@@ -136,7 +136,12 @@ one interface:
   shows up only then — ACP's generic client offers read-only/full, dsh maps all three of
   its levels onto its own sandbox, and `cursor` offers read-only/plan/full, which are its
   CLI's own `--mode ask`, `--mode plan` and no flag at all (`edits` is absent because
-  cursor-agent has nothing between "does not write" and "writes anywhere"). `plan` is the
+  cursor-agent has nothing between "does not write" and "writes anywhere"). Because the
+  third of those is the *absence* of a flag, `--resume` cannot take a cursor conversation
+  back out of ask or plan mode — it answers "I'm in Ask mode" for the rest of the chat — so
+  `cursor` alone declares `capabilities.permissionModePerSession` and a turn that asks for
+  another mode starts a fresh backend session instead of resuming one that cannot honour
+  it. `plan` is the
   one mode no policy can be synthesized into: it is read-only *plus* an obligation to
   write the change down, so only a backend that has such a mode publishes it. The chosen
   mode is persisted per session.
@@ -242,12 +247,15 @@ one interface:
   become file names.
 - Handing one agent's work to the next (`lib/handoff/`, on by default): a chat is one
   conversation, but each backend in it is a different one. `SessionMeta.agentSessions` keys a
-  small record by provider id — `{ providerSessionId, cwd, lastSeenSeq, lastWroteSeq,
-  lastActiveAt, snapshot }` — so switching agents mid-chat no longer throws the other one's
-  resumable session away. An index written before this migrates on read from the single
-  `providerSessionId` field (still written, for whichever provider ran last). A stored id is
-  only reused when the chat's folder still matches the one it was minted in; the model is not
-  part of that identity.
+  small record by provider id — `{ providerSessionId, cwd, permissionMode, lastSeenSeq,
+  lastWroteSeq, lastActiveAt, snapshot }` — so switching agents mid-chat no longer throws the
+  other one's resumable session away. An index written before this migrates on read from the
+  single `providerSessionId` field (still written, for whichever provider ran last). A stored
+  id is only reused when the chat's folder still matches the one it was minted in — and, for a
+  harness that declares `capabilities.permissionModePerSession`, when the permission mode does
+  too; the model is not part of that identity. `permissionMode` is recorded only beside an id
+  the turn actually minted, so a run that never reached the backend leaves the stored pair
+  resumable by the mode that made it.
 
   Beside the transcript, each chat keeps `sessions/<id>.journal.json`: an append-only log of
   *semantic* events — `user-message` (truncated), `tool` (name, done/error, paths, command,

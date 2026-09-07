@@ -43,6 +43,13 @@ export type AgentSessionState = {
   providerSessionId?: string
   /** Folder the id was minted in — a different one means a fresh session. */
   cwd?: string
+  /**
+   * Permission mode the id was minted under, recorded only by the harnesses
+   * that cannot change a live conversation's mode
+   * (`capabilities.permissionModePerSession`). For those, a different one
+   * means a fresh session, exactly as a different folder does.
+   */
+  permissionMode?: string
   /** Highest journal seq this agent has already seen. */
   lastSeenSeq: number
   /** Highest journal seq this agent wrote. */

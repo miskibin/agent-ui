@@ -111,6 +111,9 @@ export function createCursorProvider(
           permissionModes: CURSOR_PERMISSION_MODES,
           // No flag = the agent that edits, which is what the CLI does today.
           defaultPermissionMode: "full",
+          // …and because it is the absence of a flag, `--resume` cannot undo
+          // an `--mode ask` session. See the capability's own note.
+          permissionModePerSession: true,
         },
         available,
         unavailableReason: reason,

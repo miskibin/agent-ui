@@ -18,14 +18,37 @@ import {
  * repointing the chat starts a fresh backend session rather than a confused
  * one. Changing the *model* is not part of the identity — the same harness
  * carries on with the same conversation.
+ *
+ * The permission mode joins the folder for the harnesses that cannot change a
+ * live conversation's mode — `mode` is passed only for those, and only they
+ * ever recorded one. cursor-agent is the case that forces this: its `--mode
+ * ask` is a flag and its agent mode is the absence of one, so resuming an ask
+ * session leaves it refusing to edit for the rest of the chat however the
+ * picker is set. A fresh session is the honest answer, and the same one the
+ * folder rule already gives.
  */
 export function resolveResumeSessionId(
   entry: AgentSessionState | undefined,
   cwd: string | undefined,
-  canResume: boolean
+  canResume: boolean,
+  mode?: SessionMode
 ): string | undefined {
   if (!canResume || !entry?.providerSessionId) return undefined
-  return sameWorkingFolder(entry.cwd, cwd) ? entry.providerSessionId : undefined
+  if (!sameWorkingFolder(entry.cwd, cwd)) return undefined
+  if (mode?.perSession && entry.permissionMode !== mode.permissionMode) {
+    return undefined
+  }
+  return entry.providerSessionId
+}
+
+/**
+ * What this provider's mode means for its stored session: whether the mode is
+ * fixed for a conversation's life, and which one this turn asked for. Absent
+ * where the harness can switch freely, which is every harness but cursor's.
+ */
+export type SessionMode = {
+  perSession: boolean
+  permissionMode?: string
 }
 
 /**
@@ -47,6 +70,8 @@ export function nextAgentSessionState(args: {
   runStarted: boolean
   cwd?: string
   providerSessionId?: string
+  /** This turn's mode, for the harnesses whose sessions are stuck with one. */
+  mode?: SessionMode
   snapshot?: WorktreeSnapshot
   now: number
 }): AgentSessionState {
@@ -61,10 +86,19 @@ export function nextAgentSessionState(args: {
     : undefined
   const providerSessionId =
     args.providerSessionId || inherited?.providerSessionId || undefined
+  // The mode a stored id was minted under, and only ever beside that id: it is
+  // rewritten when this turn minted one and inherited otherwise, so a turn
+  // that never reached the backend leaves the pair — the id and the mode it
+  // belongs to — exactly as it found it, resumable by the mode that made it.
+  const permissionMode =
+    args.mode?.perSession && args.providerSessionId
+      ? args.mode.permissionMode
+      : inherited?.permissionMode
   const snapshot = args.snapshot ?? inherited?.snapshot
   return {
     ...(providerSessionId ? { providerSessionId } : null),
     ...(args.cwd ? { cwd: args.cwd } : null),
+    ...(permissionMode ? { permissionMode } : null),
     lastSeenSeq: args.runStarted
       ? Math.max(args.journalEnd, previous?.lastSeenSeq ?? 0)
       : (previous?.lastSeenSeq ?? 0),
@@ -102,6 +136,9 @@ export function migrateAgentSessions(
           ? { providerSessionId: state.providerSessionId }
           : null),
         ...(typeof state.cwd === "string" ? { cwd: state.cwd } : null),
+        ...(typeof state.permissionMode === "string" && state.permissionMode
+          ? { permissionMode: state.permissionMode }
+          : null),
         lastSeenSeq: asCount(state.lastSeenSeq),
         lastWroteSeq: asCount(state.lastWroteSeq),
         lastActiveAt:
