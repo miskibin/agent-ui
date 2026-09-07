@@ -50,6 +50,7 @@ const SHARED_FILES = [
   "lib/cursor-agent-types.ts",
   "lib/cursor-agent.ts",
   "lib/cursor-stream.ts",
+  "lib/cursor-transport-failure.ts",
   "lib/layout-transition.ts",
   "lib/mock-agent.ts",
 ]

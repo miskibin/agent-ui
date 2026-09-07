@@ -4,23 +4,32 @@ import { spawn } from "node:child_process"
 
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import { resolveAcpCommand, type AcpCommand } from "@/lib/acp-runtime"
-import { exitCodeFrom } from "@/lib/providers/exit-code"
+import {
+  cancellationReply,
+  mapAcpUpdate,
+  sessionUpdateIsReplay,
+  stringifyField,
+  type AcpToolCallState,
+  type AcpToolCallSummary,
+} from "@/lib/acp-protocol"
+import {
+  detachedSpawnOptions,
+  killProcessTree,
+  trackChildProcess,
+} from "@/lib/process-tree"
 import { LineBuffer } from "@/lib/stream-framing"
+import { UnfinishedTools } from "@/lib/unfinished-tools"
 import {
   ACP_ERROR,
   ACP_PROTOCOL_VERSION,
   AcpRpcError,
   type AcpConfigOption,
-  type AcpContentBlock,
   type AcpInitializeResult,
   type AcpPermissionOption,
   type AcpPromptResult,
   type AcpReadTextFileParams,
   type AcpRequestPermissionParams,
   type AcpSessionNewResult,
-  type AcpSessionUpdate,
-  type AcpSessionUpdateParams,
-  type AcpToolCallContent,
   type AcpWriteTextFileParams,
   type JsonRpcId,
   type JsonRpcMessage,
@@ -44,7 +53,6 @@ import {
  * across process restarts.
  */
 
-const MAX_FIELD = 50_000
 /** The handshake is bounded; the turn itself is bounded by the route's abort. */
 const HANDSHAKE_MS = 45_000
 /** Config options are a refinement of the turn, so they wait much less. */
@@ -61,12 +69,9 @@ export type AcpSpawnSpec = {
   env: Record<string, string>
 }
 
-export type AcpToolCallSummary = {
-  toolCallId: string
-  title?: string
-  kind?: string
-  rawInput?: unknown
-}
+/** Re-exported so a consumer of the client needs only this module. */
+export type { AcpToolCallState, AcpToolCallSummary }
+export { mapAcpUpdate }
 
 export type AcpClientHandlers = {
   /** Absolute path in, file contents out. Throw `AcpRpcError` to refuse. */
@@ -120,6 +125,12 @@ type AcpConnection = {
   notify(method: string, params?: unknown): void
   onNotification(handler: (method: string, params: unknown) => void): void
   onRequest(handler: InboundHandler): void
+  /**
+   * Answers every inbound request still waiting on us, so an agent blocked on
+   * a permission it can no longer be granted can settle its own turn instead
+   * of hanging until the pipe closes under it.
+   */
+  cancelPendingRequests(): void
   /** The spawn errno, if the process never started. */
   spawnFailure(): NodeJS.ErrnoException | undefined
   stderr(): string
@@ -135,7 +146,12 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
     env: { ...process.env, ...spec.env },
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
+    // An ACP agent's shell tool runs commands as this process's
+    // grandchildren; terminating the agent has to reach those too, and only a
+    // process group can.
+    ...detachedSpawnOptions,
   })
+  trackChildProcess(child)
 
   // Decoding per chunk would tear a multi-byte character in half wherever the
   // pipe happened to break; the stream's own decoder holds the tail back until
@@ -144,6 +160,8 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
   child.stderr?.setEncoding("utf8")
 
   const pending = new Map<JsonRpcId, PendingCall>()
+  /** Requests *from* the agent that we have not answered yet, by id. */
+  const inbound = new Map<JsonRpcId, { method: string; answer: (payload: object) => void }>()
   const stderrChunks: string[] = []
   const failure: { error?: NodeJS.ErrnoException } = {}
   let nextId = 0
@@ -244,6 +262,14 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
     if (message.id !== undefined && message.method) {
       const id = message.id
       const method = message.method
+      // JSON-RPC allows exactly one response per id, and a sweep on stop races
+      // the handler that is still running — so whichever answers first wins
+      // and the other is dropped.
+      const reply = (payload: object) => {
+        if (!inbound.delete(id)) return
+        write({ jsonrpc: "2.0", id, ...payload })
+      }
+      inbound.set(id, { method, answer: reply })
       const handler = onRequest
       const answer = handler
         ? handler(method, message.params)
@@ -251,7 +277,7 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
             new AcpRpcError(ACP_ERROR.methodNotFound, `Method not found: ${method}`)
           )
       void answer.then(
-        (result) => write({ jsonrpc: "2.0", id, result: result ?? null }),
+        (result) => reply({ result: result ?? null }),
         (err: unknown) => {
           const rpc =
             err instanceof AcpRpcError
@@ -260,7 +286,7 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
                   code: ACP_ERROR.internalError,
                   message: err instanceof Error ? err.message : String(err),
                 }
-          write({ jsonrpc: "2.0", id, error: rpc })
+          reply({ error: rpc })
         }
       )
       return
@@ -308,6 +334,11 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
     onRequest(handler) {
       onRequest = handler
     },
+    cancelPendingRequests() {
+      for (const { method, answer } of [...inbound.values()]) {
+        answer(cancellationReply(method))
+      }
+    },
     spawnFailure: () => failure.error,
     stderr: () => stderrChunks.join("").trim(),
     dispose() {
@@ -319,13 +350,9 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
         /* already closed */
       }
       const timer = setTimeout(() => {
-        if (child.exitCode == null && !child.signalCode) {
-          try {
-            child.kill("SIGTERM")
-          } catch {
-            /* already gone */
-          }
-        }
+        // The whole group, not the agent alone: whatever its shell tool
+        // started is still running in there.
+        killProcessTree(child)
       }, SHUTDOWN_MS)
       timer.unref?.()
       child.once("close", () => clearTimeout(timer))
@@ -396,259 +423,6 @@ class EventQueue {
 }
 
 /* -------------------------------------------------------------------------- */
-/*                              event translation                             */
-/* -------------------------------------------------------------------------- */
-
-/**
- * One `session/update` in, zero or more stream events out.
- *
- * `tool_call_update` omits `title` and `kind`, so creations are remembered in
- * `tools` and their titles replayed onto every later patch —
- * `lib/message-stream.ts#upsertToolPart` merges by id, so repeated events on
- * one id refine the same card instead of resetting it.
- */
-export function mapAcpUpdate(
-  params: unknown,
-  tools: Map<string, AcpToolCallSummary>
-): AgentStreamEvent[] {
-  const update = (params as AcpSessionUpdateParams | undefined)?.update
-  if (!update) return []
-
-  switch (update.sessionUpdate) {
-    case "agent_message_chunk": {
-      // Despite the name these are committed messages, not token deltas: dsh
-      // delivers a whole answer as one chunk at turn end.
-      const text = blockText(update.content as AcpContentBlock | undefined)
-      return text ? [{ type: "text", text }] : []
-    }
-    case "agent_thought_chunk": {
-      const text = blockText(update.content as AcpContentBlock | undefined)
-      return text ? [{ type: "thinking", text }] : []
-    }
-    case "tool_call":
-    case "tool_call_update":
-      return [mapToolCall(update, tools)].filter(
-        (event): event is AgentStreamEvent => event !== null
-      )
-    case "plan": {
-      // `AgentStreamEvent` has no plan variant. Folding it into a single
-      // upserting tool call is what lets the vendored components render it:
-      // `todo-list` reads exactly these arguments, so the plan reaches both
-      // the tool row and the panel above the composer with no new event type.
-      const todos = planTodos(update.entries)
-      return todos
-        ? [
-            {
-              type: "tool",
-              id: "acp-plan",
-              name: "plan",
-              status: "done",
-              input: todos,
-            },
-          ]
-        : []
-    }
-    // Echoes of our own prompt, token counters, and surfaces this app has no
-    // home for yet (slash commands, modes, config changes).
-    case "user_message_chunk":
-    case "usage_update":
-    case "available_commands_update":
-    case "current_mode_update":
-    case "config_option_update":
-    case "session_info_update":
-    default:
-      return []
-  }
-}
-
-function mapToolCall(
-  update: AcpSessionUpdate,
-  tools: Map<string, AcpToolCallSummary>
-): AgentStreamEvent | null {
-  const id = update.toolCallId
-  if (!id) return null
-  const known = tools.get(id)
-  const summary: AcpToolCallSummary = {
-    toolCallId: id,
-    title: update.title ?? known?.title,
-    kind: update.kind ?? known?.kind,
-    rawInput: update.rawInput ?? known?.rawInput,
-  }
-  tools.set(id, summary)
-
-  const status =
-    update.status === "completed"
-      ? "done"
-      : update.status === "failed"
-        ? "error"
-        : "running"
-
-  const raw =
-    update.content === undefined
-      ? undefined
-      : flattenToolContent(update.content as AcpToolCallContent[])
-  const read = raw ? unwrapReadEnvelope(raw) : null
-  const output = read ? read.body : raw
-  const input = toolInput(update.rawInput, summary.rawInput, read)
-  const exitCode = exitCodeFrom(update.rawOutput)
-
-  return {
-    type: "tool",
-    id,
-    name: summary.title || "tool",
-    status,
-    ...(input ? { input } : null),
-    ...(output ? { output } : null),
-    ...(exitCode === undefined ? null : { exitCode }),
-  }
-}
-
-/* -------------------------------------------------------------------------- */
-/*                             read-tool envelopes                            */
-/* -------------------------------------------------------------------------- */
-
-type ReadEnvelope = { path?: string; body: string; startLine?: number }
-
-/**
- * dsh reports a file read as its own envelope — `<path>…</path>`, `<type>`, then
- * a `<content>` whose every line is prefixed `N: ` — where pi and cursor hand
- * back the bare body. Left as-is the vendored read-file card draws its own
- * gutter next to dsh's prefixes (two columns of numbers) and shows the tags as
- * if they were the first lines of the file. Unwrapping the envelope here, in
- * app-local code, fixes the card without touching it and without any other
- * harness — whose output never matches this shape — seeing a change.
- */
-const READ_ENVELOPE =
-  /^\s*<path>([^<]*)<\/path>\s*(?:<type>([^<]*)<\/type>\s*)?<content>\r?\n?([\s\S]*?)(?:\r?\n?<\/content>)?\s*$/
-
-function unwrapReadEnvelope(output: string): ReadEnvelope | null {
-  const match = READ_ENVELOPE.exec(output)
-  if (!match) return null
-  const path = match[1].trim() || undefined
-  const body = match[3]
-  // A directory listing is not numbered; only a file body gets the strip.
-  if ((match[2] ?? "file").trim() === "directory") return { path, body }
-  const stripped = stripLineNumbers(body)
-  return stripped ? { path, ...stripped } : { path, body }
-}
-
-/**
- * `N: text` on consecutive lines and nothing else — the numbering dsh adds, not
- * a numbered list that happens to live in the file. Any gap or unnumbered line
- * aborts the strip and the body is shown verbatim; the last line is exempt
- * because `truncate` can cut one in half.
- */
-function stripLineNumbers(
-  body: string
-): { body: string; startLine: number } | null {
-  const lines = body.split("\n")
-  while (lines.length > 0 && lines[lines.length - 1].trim() === "") lines.pop()
-  if (lines.length === 0) return null
-
-  const out: string[] = []
-  let expected = 0
-  for (const [index, line] of lines.entries()) {
-    const match = /^ *(\d+): ?([\s\S]*)$/.exec(line)
-    if (!match) {
-      if (index === lines.length - 1 && index > 0) {
-        out.push(line)
-        break
-      }
-      return null
-    }
-    const number = Number(match[1])
-    if (index === 0) expected = number
-    else if (number !== expected + index) return null
-    out.push(match[2])
-  }
-  return { body: out.join("\n"), startLine: expected }
-}
-
-/**
- * The args the card shows — and reads the file's path and window out of, for
- * its language and its gutter. dsh names neither in `rawInput`, so an unwrapped
- * envelope supplies them; whatever the agent did send always wins.
- */
-function toolInput(
-  updated: unknown,
-  known: unknown,
-  read: ReadEnvelope | null
-): string | undefined {
-  const derived: Record<string, unknown> = {}
-  if (read?.path) derived.path = read.path
-  if (read?.startLine && read.startLine > 1) derived.offset = read.startLine
-
-  const base = updated ?? known
-  if (Object.keys(derived).length === 0) {
-    return updated === undefined ? undefined : stringify(updated)
-  }
-  if (base && typeof base === "object" && !Array.isArray(base)) {
-    return stringify({ ...derived, ...(base as Record<string, unknown>) })
-  }
-  return base === undefined || base === null
-    ? stringify(derived)
-    : stringify(base)
-}
-
-/** Flattens the `content` / `diff` / `terminal` variants down to text. */
-function flattenToolContent(content: AcpToolCallContent[] | undefined): string | undefined {
-  if (!Array.isArray(content)) return undefined
-  const parts = content
-    .map((part) => {
-      if (!part || typeof part !== "object") return ""
-      if (part.type === "diff") {
-        const header = part.path ? `--- ${part.path}\n` : ""
-        return `${header}${part.newText ?? ""}`
-      }
-      if (part.type === "terminal") {
-        return part.terminalId ? `[terminal ${part.terminalId}]` : ""
-      }
-      return blockText(part.content) ?? ""
-    })
-    .filter(Boolean)
-  return parts.length ? truncate(parts.join("\n")) : undefined
-}
-
-function blockText(block: AcpContentBlock | undefined): string | undefined {
-  if (!block || typeof block !== "object") return undefined
-  if (typeof block.text === "string" && block.text) return block.text
-  if (typeof block.resource?.text === "string") return block.resource.text
-  if (typeof block.uri === "string") return block.uri
-  return undefined
-}
-
-/**
- * ACP plan entries as the argument payload a todo tool would have sent —
- * `{ todos: [{ content, status }] }`, which is what `parseTodoItems` in
- * `components/ui/todo-list` reads. ACP's own status words (`pending`,
- * `in_progress`, `completed`) are already the ones it normalizes to.
- */
-function planTodos(entries: unknown): string | undefined {
-  if (!Array.isArray(entries) || entries.length === 0) return undefined
-  const todos = entries
-    .map((entry) => {
-      const item = (entry ?? {}) as { content?: string; status?: string }
-      return { content: item.content ?? "", status: item.status ?? "pending" }
-    })
-    .filter((item) => item.content)
-  return todos.length ? JSON.stringify({ todos }) : undefined
-}
-
-function stringify(value: unknown): string | undefined {
-  if (value == null) return undefined
-  if (typeof value === "string") return truncate(value)
-  try {
-    return truncate(JSON.stringify(value, null, 2))
-  } catch {
-    return undefined
-  }
-}
-
-function truncate(value: string) {
-  return value.length > MAX_FIELD ? `${value.slice(0, MAX_FIELD)}…` : value
-}
-
-/* -------------------------------------------------------------------------- */
 /*                                  the turn                                  */
 /* -------------------------------------------------------------------------- */
 
@@ -658,19 +432,28 @@ export async function* runAcpAgent(
   const startedAt = Date.now()
   const conn = connectAcp(options.spawn)
   const queue = new EventQueue()
-  const tools = new Map<string, AcpToolCallSummary>()
+  const tools = new Map<string, AcpToolCallState>()
   /** `session/load` replays the whole transcript; we already have it stored. */
   const replay = { suppress: false }
   const cancelled = { value: false }
+  /** Rows the agent started and never closed, for the abnormal ends below. */
+  const openTools = new UnfinishedTools()
 
   const onAbort = () => {
     cancelled.value = true
+    // The agent is blocked on whatever it last asked us. Answering "cancelled"
+    // lets it settle its own turn instead of waiting for the pipe to close.
+    conn.cancelPendingRequests()
     queue.finish()
   }
   options.signal?.addEventListener("abort", onAbort)
 
   conn.onNotification((method, params) => {
-    if (method !== "session/update" || replay.suppress) return
+    if (method !== "session/update") return
+    // Two ways an agent says "this is history, not news": the `session/load`
+    // call we made (latched around the request) and a per-notification marker
+    // some agents send instead. Either way we already have the transcript.
+    if (replay.suppress || sessionUpdateIsReplay(params)) return
     for (const event of mapAcpUpdate(params, tools)) queue.push(event)
   })
 
@@ -701,6 +484,11 @@ export async function* runAcpAgent(
       // update we already saw.
       const summary = tools.get(toolCallId) ?? { toolCallId }
       const choices = Array.isArray(p.options) ? p.options : []
+      // A request that arrives after the stop is answered here; one that was
+      // already in flight is answered by the sweep in `onAbort`. Today's
+      // policy decides synchronously, so that window is an instant — but it is
+      // the window that would open the moment a policy ever has to await, and
+      // an unanswered permission is a turn the agent can never settle.
       if (cancelled.value) return { outcome: { outcome: "cancelled" } }
 
       const { option, reason } = options.handlers.decidePermission({
@@ -713,7 +501,7 @@ export async function* runAcpAgent(
         id: `acp-permission-${toolCallId || choices.length}`,
         name: "permission",
         status: option ? "done" : "error",
-        input: stringify({
+        input: stringifyField({
           tool: summary.title ?? toolCallId,
           request: summary.rawInput,
         }),
@@ -805,6 +593,7 @@ export async function* runAcpAgent(
     try {
       for await (const event of queue.drain()) {
         if (cancelled.value) break
+        openTools.track(event)
         yield event
       }
       // `turn` never rejects, so skipping it on abort leaks nothing — and
@@ -822,6 +611,11 @@ export async function* runAcpAgent(
       }
     }
 
+    // Whatever ended the turn — a stop, an agent-side failure, a stream that
+    // stopped before the tool call came back — a row left `running` would spin
+    // for the rest of the transcript's life.
+    yield* openTools.finish()
+
     if (cancelled.value) return
 
     if (settled.error) {
@@ -835,6 +629,7 @@ export async function* runAcpAgent(
     }
     yield { type: "done", sessionId, durationMs: Date.now() - startedAt }
   } catch (err) {
+    yield* openTools.finish()
     if (!options.signal?.aborted) {
       yield { type: "error", message: describeTurnFailure(err, options.label) }
     }
@@ -977,6 +772,44 @@ export async function probeAcpConfigOptions(
     return created?.configOptions ?? []
   } catch (err) {
     throw new Error(describeTurnFailure(err, label))
+  } finally {
+    conn.dispose()
+  }
+}
+
+/**
+ * One ACP method call over a throwaway process: spawn, `initialize`, ask, kill.
+ *
+ * It exists for the *extension* methods an agent publishes outside the base
+ * protocol — Cursor's `cursor/list_available_models` is the one this app uses
+ * — which answer straight after the handshake and need no session at all. No
+ * inbound request is served while it runs: there is no turn behind it that
+ * could honour one.
+ */
+export async function acpExtensionRequest<T>(
+  spec: AcpSpawnSpec,
+  method: string,
+  params: unknown = {},
+  timeoutMs = HANDSHAKE_MS
+): Promise<T> {
+  const conn = connectAcp(spec)
+  conn.onRequest(async () => {
+    throw new AcpRpcError(ACP_ERROR.methodNotFound, "Not available while probing")
+  })
+  try {
+    await conn.request<AcpInitializeResult>(
+      "initialize",
+      {
+        protocolVersion: ACP_PROTOCOL_VERSION,
+        clientCapabilities: {
+          fs: { readTextFile: false, writeTextFile: false },
+          terminal: false,
+        },
+        clientInfo: { name: "agent-ui", title: "Agent UI", version: "1" },
+      },
+      timeoutMs
+    )
+    return await conn.request<T>(method, params, timeoutMs)
   } finally {
     conn.dispose()
   }

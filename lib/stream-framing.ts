@@ -7,7 +7,14 @@ export class LineBuffer {
   private fragments: string[] = []
   private pendingLength = 0
 
-  constructor(private readonly maxRecordLength = 64 * 1024 * 1024) {}
+  private readonly maxRecordLength: number
+
+  // Written out rather than as a constructor parameter property: `node --test`
+  // strips types without compiling them, and that one piece of syntax it
+  // cannot strip — which would make every module reaching this one untestable.
+  constructor(maxRecordLength = 64 * 1024 * 1024) {
+    this.maxRecordLength = maxRecordLength
+  }
 
   private assertWithinLimit(length: number) {
     if (length > this.maxRecordLength) {

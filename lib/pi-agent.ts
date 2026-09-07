@@ -1,6 +1,6 @@
 import "server-only"
 
-import { spawn, type ChildProcess } from "node:child_process"
+import { spawn } from "node:child_process"
 
 import type {
   AgentStreamEvent,
@@ -8,7 +8,13 @@ import type {
 } from "@/lib/cursor-agent-types"
 import { exitCodeFrom } from "@/lib/providers/exit-code"
 import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
+import {
+  detachedSpawnOptions,
+  killProcessTree,
+  trackChildProcess,
+} from "@/lib/process-tree"
 import { LineBuffer } from "@/lib/stream-framing"
+import { UnfinishedTools } from "@/lib/unfinished-tools"
 
 /**
  * Spawns the `pi` CLI in `--mode json` and translates its event stream into
@@ -106,7 +112,11 @@ export async function* runPiAgent(
     },
     windowsHide: true,
     stdio: ["ignore", "pipe", "pipe"],
+    // pi's bash tool runs commands as this process's grandchildren; stopping
+    // the turn has to take those down too, and only a process group can.
+    ...detachedSpawnOptions,
   })
+  trackChildProcess(child)
 
   // A process that never starts emits `error`, not `exit` — and an unhandled
   // one would surface as a bare errno ("spawn EINVAL") with no hint at what
@@ -135,8 +145,11 @@ export async function* runPiAgent(
     stderrChunks.push(chunk)
   })
 
-  const onAbort = () => killPi(child)
+  const onAbort = () => killProcessTree(child)
   options.signal?.addEventListener("abort", onAbort)
+
+  /** Rows pi started and never closed, for the abnormal ends below. */
+  const openTools = new UnfinishedTools()
 
   let sawError = false
   let sawText = false
@@ -201,6 +214,7 @@ export async function* runPiAgent(
         for (const mapped of mapLine(line)) {
           if (mapped.type === "error") sawError = true
           if (mapped.type === "text" && mapped.text.trim()) sawText = true
+          openTools.track(mapped)
           yield mapped
         }
       }
@@ -210,20 +224,26 @@ export async function* runPiAgent(
       for (const mapped of mapLine(tail)) {
         if (mapped.type === "error") sawError = true
         if (mapped.type === "text" && mapped.text.trim()) sawText = true
+        openTools.track(mapped)
         yield mapped
       }
     }
 
     const exitCode = await exited
 
-    if (options.signal?.aborted) return
+    if (options.signal?.aborted) {
+      yield* openTools.finish()
+      return
+    }
 
     if (failure.error) {
+      yield* openTools.finish()
       yield { type: "error", message: describeSpawnFailure(failure.error, command) }
       return
     }
 
     if (exitCode !== 0) {
+      yield* openTools.finish()
       yield {
         type: "error",
         message: truncate(
@@ -232,6 +252,10 @@ export async function* runPiAgent(
       }
       return
     }
+
+    // A clean exit can still leave a row open — the stream ended between a
+    // tool's start and its `tool_execution_end`.
+    yield* openTools.finish()
 
     if (sawError) return
 
@@ -247,7 +271,7 @@ export async function* runPiAgent(
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort)
-    killPi(child)
+    killProcessTree(child)
   }
 }
 
@@ -418,13 +442,4 @@ function stringify(value: unknown): string | undefined {
 
 function truncate(value: string) {
   return value.length > MAX_FIELD ? `${value.slice(0, MAX_FIELD)}…` : value
-}
-
-function killPi(child: ChildProcess) {
-  if (child.exitCode != null || child.signalCode) return
-  try {
-    child.kill("SIGTERM")
-  } catch {
-    /* already gone */
-  }
 }

@@ -41,13 +41,15 @@ export const ACP_ERROR = {
  * can throw one without pulling `node:child_process` into its import graph.
  */
 export class AcpRpcError extends Error {
-  constructor(
-    readonly code: number,
-    message: string,
-    readonly data?: unknown
-  ) {
+  readonly code: number
+  readonly data?: unknown
+  // Written out as fields rather than constructor parameter properties: the
+  // strip-only TypeScript loader `node --test` uses cannot parse the latter.
+  constructor(code: number, message: string, data?: unknown) {
     super(message)
     this.name = "AcpRpcError"
+    this.code = code
+    this.data = data
   }
 }
 
