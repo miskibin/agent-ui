@@ -5,8 +5,8 @@ import * as React from "react"
 
 import { AppHeaderButton } from "@/components/app-header"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { formatCost } from "@/lib/model-pricing"
-import { formatTokens, type ChatUsage } from "@/lib/usage"
+import { formatCost, type ModelPriceOverrides } from "@/lib/model-pricing"
+import { formatTokens, repriceUsage, type ChatUsage } from "@/lib/usage"
 
 /**
  * What this chat has spent, beside the count of files it changed.
@@ -20,10 +20,32 @@ import { formatTokens, type ChatUsage } from "@/lib/usage"
  * chat routinely mixes a hosted model with a local one.
  *
  * Presentational: the aggregation is `lib/usage`'s, memoized upstream in
- * `app/hooks/use-thread-view`, so a streaming turn does not rebuild it.
+ * `app/hooks/use-thread-view`, so a streaming turn does not rebuild it. The
+ * one thing done here is applying the user's own prices
+ * (`settings.usage.priceOverrides`) to that aggregate — re-pricing four token
+ * counts per model, never re-walking the transcript.
  */
-export function ChatUsageSummary({ usage }: { usage: ChatUsage | null }) {
+export function ChatUsageSummary({
+  usage: aggregate,
+  priceOverrides,
+}: {
+  usage: ChatUsage | null
+  /**
+   * The user's price table. Passed in where the page already holds settings;
+   * left out, this reads it once itself rather than making the header wait on
+   * a fetch it usually does not need.
+   */
+  priceOverrides?: ModelPriceOverrides
+}) {
   const [open, setOpen] = React.useState(false)
+  const overrides = usePriceOverrides(aggregate, priceOverrides)
+  const usage = React.useMemo(
+    () =>
+      aggregate && overrides && Object.keys(overrides).length > 0
+        ? repriceUsage(aggregate, overrides)
+        : aggregate,
+    [aggregate, overrides]
+  )
   if (!usage || usage.turns === 0) return null
 
   const priced = usage.cost != null
@@ -145,4 +167,101 @@ function summaryLabel(usage: ChatUsage) {
         }`
       : ""
   return `${tokens}, ${cost}${rest}`
+}
+
+/* -------------------------------------------------------------------------- */
+/* The price table                                                             */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * `settings.usage.priceOverrides`, read straight off `GET /api/settings` and
+ * held for a minute.
+ *
+ * The header is on the app's critical path, so this is deliberately the
+ * cheapest thing that can work: nothing is fetched until a chat actually has
+ * usage to price, one request is shared by every caller, and a table that has
+ * not changed costs nothing to keep using. A price edited in the settings
+ * panel shows up here on the next turn, which is soon enough for an estimate.
+ */
+const OVERRIDES_TTL = 60_000
+
+let cached: { at: number; value: ModelPriceOverrides } | null = null
+let inFlight: Promise<ModelPriceOverrides> | null = null
+
+function loadPriceOverrides(): Promise<ModelPriceOverrides> {
+  if (cached && Date.now() - cached.at < OVERRIDES_TTL) {
+    return Promise.resolve(cached.value)
+  }
+  inFlight ??= fetch("/api/settings", { cache: "no-store" })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data: unknown) => {
+      const value = readOverrides(data)
+      cached = { at: Date.now(), value }
+      return value
+    })
+    .catch(() => cached?.value ?? {})
+    .finally(() => {
+      inFlight = null
+    })
+  return inFlight
+}
+
+/**
+ * Only the fields this component prices with, checked one by one: the settings
+ * file is hand-editable, and a string where a rate belongs must leave the
+ * built-in price standing rather than produce `NaN` in a header.
+ */
+function readOverrides(data: unknown): ModelPriceOverrides {
+  const usage = (data as { usage?: { priceOverrides?: unknown } } | null)?.usage
+  const raw = usage?.priceOverrides
+  if (!raw || typeof raw !== "object") return {}
+  const out: ModelPriceOverrides = {}
+  for (const [model, entry] of Object.entries(raw as Record<string, unknown>)) {
+    const price = entry as Record<string, unknown> | null
+    if (!price || typeof price !== "object") continue
+    const input = rate(price.input)
+    const output = rate(price.output)
+    if (input == null || output == null) continue
+    const cacheRead = rate(price.cacheRead)
+    const cacheWrite = rate(price.cacheWrite)
+    out[model] = {
+      input,
+      output,
+      ...(cacheRead == null ? {} : { cacheRead }),
+      ...(cacheWrite == null ? {} : { cacheWrite }),
+    }
+  }
+  return out
+}
+
+function rate(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null
+}
+
+function usePriceOverrides(
+  usage: ChatUsage | null,
+  given: ModelPriceOverrides | undefined
+) {
+  const [fetched, setFetched] = React.useState<ModelPriceOverrides | null>(
+    () => cached?.value ?? null
+  )
+
+  React.useEffect(() => {
+    if (!usage || given) return
+    let cancelled = false
+    void loadPriceOverrides().then((value) => {
+      if (!cancelled) setFetched(value)
+    })
+    return () => {
+      cancelled = true
+    }
+    // The aggregate's identity changes when a turn settles, which is the one
+    // moment a stale table is worth re-checking; inside the TTL that costs a
+    // resolved promise and re-renders nothing, because the value is the same
+    // object.
+  }, [usage, given])
+
+  return given ?? fetched ?? undefined
 }

@@ -28,8 +28,8 @@ export type AppSettingsApi = {
 
 /**
  * Reads and writes the `providers`, `modelProviders`, `chat`, `files`,
- * `editor`, `memory`, `handoff` and `checkpoints` parts of settings.json —
- * every subtree this panel edits, and no other.
+ * `editor`, `memory`, `handoff`, `checkpoints` and `usage` parts of
+ * settings.json — every subtree this panel edits, and no other.
  *
  * `appearance` (owned by `lib/theme/theme-client`) and `recentFolders` (the
  * folder picker, through `lib/api-client`) deliberately stay out of the write
@@ -61,6 +61,7 @@ export function useAppSettings(): AppSettingsApi {
         memory: next.memory,
         handoff: next.handoff,
         checkpoints: next.checkpoints,
+        usage: next.usage,
       }))
     } catch {
       toast.error("Couldn't save settings.")

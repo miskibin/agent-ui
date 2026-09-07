@@ -161,6 +161,41 @@ const CLAUDE_CODE_ALIASES: Record<string, string> = {
 }
 
 /**
+ * A user's own price table, keyed exactly as the app spells a model id —
+ * `<source>/<model>` for a hosted one, the bare tag for a harness that only
+ * ever reports one (`sonnet`, `gpt-5-codex`). Prices are dollars per million
+ * tokens, same units as the tables above, and `0` means free rather than
+ * unknown: it is the one way to tell this app that a model on a subscription,
+ * a local box or a free tier costs nothing.
+ *
+ * Kept as a plain record so it can be persisted verbatim in settings.json
+ * (`usage.priceOverrides`) and passed straight in here.
+ */
+export type ModelPriceOverrides = Record<string, ModelPrice>
+
+/**
+ * The override for one id, if the user wrote one.
+ *
+ * Exact match on the trimmed id first — an override is written against the id
+ * the usage table showed, so a prefix rule here would let `gpt-5` silently
+ * re-price `gpt-5-nano`. The case-insensitive second pass exists only for a
+ * hand-typed key, and still matches the *whole* id.
+ */
+function overrideFor(
+  id: string,
+  overrides: ModelPriceOverrides | undefined
+): ModelPrice | null {
+  if (!overrides) return null
+  const direct = overrides[id]
+  if (direct) return direct
+  const lower = id.toLowerCase()
+  for (const [key, price] of Object.entries(overrides)) {
+    if (key.trim().toLowerCase() === lower) return price
+  }
+  return null
+}
+
+/**
  * The price of a model id, or `null` when it is not one this table knows.
  * `ollama/…` is a local model, as is any bare id run by the Ollama harness;
  * a bare id from another harness (`cursor` running `gpt-5`) is priced by
@@ -173,9 +208,19 @@ const CLAUDE_CODE_ALIASES: Record<string, string> = {
  * per-token bill at all — but it is the same estimate the CLI itself prints
  * as `total_cost_usd`, and it beats showing nothing.
  */
-export function priceForModel(modelId: string, providerId?: string): ModelPrice | null {
+export function priceForModel(
+  modelId: string,
+  providerId?: string,
+  overrides?: ModelPriceOverrides
+): ModelPrice | null {
   const id = modelId.trim()
   if (!id) return null
+  // The user's table wins over every rule below, including the ones that
+  // answer without consulting a table at all: an override is the only way to
+  // say what a model this app has never heard of costs, and the only way to
+  // correct one it prices wrongly.
+  const own = overrideFor(id, overrides)
+  if (own) return own
   const cut = id.indexOf("/")
   if (cut <= 0) {
     if (providerId === "ollama") return FREE
@@ -187,13 +232,13 @@ export function priceForModel(modelId: string, providerId?: string): ModelPrice 
   const model = id.slice(cut + 1).toLowerCase()
   if (source === "ollama") return FREE
 
-  const own = BY_SOURCE[source]
-  if (own) return longestPrefix(own, model)
+  const table = BY_SOURCE[source]
+  if (table) return longestPrefix(table, model)
 
   // An aggregator: `anthropic/claude-sonnet-4-6`, `openai/gpt-4o`, …
   const bare = model.includes("/") ? model.slice(model.indexOf("/") + 1) : model
-  for (const table of ALL_TABLES) {
-    const hit = longestPrefix(table, bare) ?? longestPrefix(table, model)
+  for (const candidate of ALL_TABLES) {
+    const hit = longestPrefix(candidate, bare) ?? longestPrefix(candidate, model)
     if (hit) return hit
   }
   return null
@@ -218,9 +263,10 @@ export function estimateCost(
   inputTokens: number,
   outputTokens: number,
   providerId?: string,
-  cache?: Pick<TurnTokens, "cachedInputTokens" | "cacheCreationTokens">
+  cache?: Pick<TurnTokens, "cachedInputTokens" | "cacheCreationTokens">,
+  overrides?: ModelPriceOverrides
 ): number | null {
-  const price = priceForModel(modelId, providerId)
+  const price = priceForModel(modelId, providerId, overrides)
   if (!price) return null
   const cacheRead = price.cacheRead ?? price.input * CACHE_READ_RATIO
   const cacheWrite = price.cacheWrite ?? price.input * CACHE_WRITE_RATIO
@@ -231,6 +277,23 @@ export function estimateCost(
       (cache?.cacheCreationTokens ?? 0) * cacheWrite) /
     1_000_000
   )
+}
+
+/**
+ * Where a model's price came from, for a UI that has to say so: an override
+ * the user wrote, this file's own list prices, or nothing at all. "unpriced"
+ * is not "free" — see `lib/usage`, which counts such a turn's tokens and
+ * keeps it out of every sum.
+ */
+export type PriceSource = "override" | "builtin" | "unpriced"
+
+export function priceSource(
+  modelId: string,
+  providerId?: string,
+  overrides?: ModelPriceOverrides
+): PriceSource {
+  if (overrideFor(modelId.trim(), overrides)) return "override"
+  return priceForModel(modelId, providerId) ? "builtin" : "unpriced"
 }
 
 /** `$0.0042`, `$1.30`, `free` — sized to the magnitude of the number. */

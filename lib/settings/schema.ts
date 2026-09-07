@@ -169,6 +169,18 @@ export type ChatSettings = {
    * this is for when you are not.
    */
   desktopNotifications: boolean
+  /**
+   * Branch a new worktree off the remote's head rather than off whatever the
+   * checkout currently has. On by default: a worktree is opened to start
+   * something new, and starting it on a stale local head is the mistake that
+   * only shows up at merge time.
+   */
+  newWorktreesStartFromOrigin: boolean
+  /**
+   * Days a finished chat is left alone before it settles itself. `0` means
+   * never — the chat stays exactly where it is until someone moves it.
+   */
+  autoSettleAfterDays: number
 }
 
 /**
@@ -243,6 +255,33 @@ export type CheckpointSettings = {
 }
 
 /**
+ * One model's price, in US dollars per million tokens — the same units
+ * `lib/model-pricing` keeps its own tables in, so an entry here drops straight
+ * into that lookup. `0` is a real price, not a missing one: it is how a model
+ * on a subscription or a free tier is told apart from one this app has never
+ * heard of, which stays *unknown* and out of every sum.
+ *
+ * Cache rates are optional; left out, the same ratios the built-in tables use
+ * apply to the input rate.
+ */
+export type ModelPriceOverride = {
+  input: number
+  output: number
+  cacheRead?: number
+  cacheWrite?: number
+}
+
+/**
+ * What the user has decided models cost, keyed by the id the app spells a
+ * model with — `<source>/<model>` for a hosted one, the bare tag for a harness
+ * that reports only that. Applied to past and future turns alike: usage is
+ * re-priced on read, never stored with a price baked in.
+ */
+export type UsageSettings = {
+  priceOverrides: Record<string, ModelPriceOverride>
+}
+
+/**
  * One OpenAI-compatible model source, keyed in `modelProviders` by a slug that
  * becomes the `<slug>/<model>` prefix of every composite model id it serves.
  * Every preset ships disabled and keyless: a provider only appears in the
@@ -275,6 +314,8 @@ export type AppSettings = {
   memory: MemorySettings
   handoff: HandoffSettings
   checkpoints: CheckpointSettings
+  /** Cost estimation the user has corrected — see `ModelPriceOverride`. */
+  usage: UsageSettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
   recentFolders: string[]
 }
@@ -324,6 +365,18 @@ function defaultModelProviders(): Record<string, ModelProviderEntry> {
 export const DEFAULT_MEMORY_BUDGET = 2_000
 export const MEMORY_BUDGET_RANGE = { min: 500, max: 8_000 } as const
 
+/** Two weeks — long enough that a chat you are still coming back to survives. */
+export const DEFAULT_AUTO_SETTLE_DAYS = 14
+/** Anything longer is "never" said the long way, and `0` says it outright. */
+export const MAX_AUTO_SETTLE_DAYS = 365
+
+/**
+ * How many models the user may price by hand. A generous ceiling on a
+ * hand-written table — it is here so a corrupt or hostile settings.json
+ * cannot make every price lookup walk an unbounded map.
+ */
+export const MAX_PRICE_OVERRIDES = 500
+
 export const DEFAULT_SETTINGS: AppSettings = {
   appearance: {
     theme: "modern-minimal",
@@ -360,6 +413,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoTitle: true,
     notificationSounds: true,
     desktopNotifications: true,
+    newWorktreesStartFromOrigin: true,
+    autoSettleAfterDays: DEFAULT_AUTO_SETTLE_DAYS,
   },
   files: {
     anyPath: true,
@@ -380,6 +435,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   checkpoints: {
     enabled: true,
+  },
+  usage: {
+    priceOverrides: {},
   },
   recentFolders: [],
 }
@@ -440,6 +498,7 @@ export function normalizeSettings(raw: unknown): AppSettings {
     checkpoints: {
       enabled: asObject(value.checkpoints).enabled !== false,
     },
+    usage: { priceOverrides: normalizePriceOverrides(asObject(value.usage).priceOverrides) },
     recentFolders: asFolderList(value.recentFolders),
   }
 }
@@ -495,7 +554,72 @@ function normalizeChat(raw: unknown): ChatSettings {
       value.desktopNotifications,
       fallback.desktopNotifications
     ),
+    newWorktreesStartFromOrigin: asBoolean(
+      value.newWorktreesStartFromOrigin,
+      fallback.newWorktreesStartFromOrigin
+    ),
+    autoSettleAfterDays: asSettleDays(
+      value.autoSettleAfterDays,
+      fallback.autoSettleAfterDays
+    ),
   }
+}
+
+/** Whole days, never negative, `0` meaning never; anything else is the default. */
+function asSettleDays(value: unknown, fallback: number): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) return fallback
+  return Math.min(MAX_AUTO_SETTLE_DAYS, Math.max(0, Math.round(value)))
+}
+
+/**
+ * The price table, checked entry by entry.
+ *
+ * A price is money on a screen, so a half-written entry is dropped rather than
+ * half-applied: `input` and `output` are both required and both have to be
+ * finite and non-negative, and the two cache rates are kept only when they are
+ * too. The key is a model id — it is only ever a lookup key here, never a path
+ * — so it is trimmed and length-capped rather than validated against an
+ * alphabet, and the map is built on a null prototype so a `__proto__` key in
+ * the file cannot reach `Object.prototype` on its way out.
+ */
+function normalizePriceOverrides(
+  raw: unknown
+): Record<string, ModelPriceOverride> {
+  const stored = asObject(raw)
+  const out: Record<string, ModelPriceOverride> = Object.create(null)
+  let kept = 0
+  for (const [key, entry] of Object.entries(stored)) {
+    if (kept >= MAX_PRICE_OVERRIDES) break
+    const model = key.trim()
+    if (!model || model.length > 200) continue
+    const price = normalizePrice(entry)
+    if (!price) continue
+    out[model] = price
+    kept += 1
+  }
+  return { ...out }
+}
+
+function normalizePrice(raw: unknown): ModelPriceOverride | null {
+  const value = asObject(raw)
+  const input = asRate(value.input)
+  const output = asRate(value.output)
+  if (input == null || output == null) return null
+  const cacheRead = asRate(value.cacheRead)
+  const cacheWrite = asRate(value.cacheWrite)
+  return {
+    input,
+    output,
+    ...(cacheRead == null ? {} : { cacheRead }),
+    ...(cacheWrite == null ? {} : { cacheWrite }),
+  }
+}
+
+/** Dollars per million tokens: finite, non-negative, and nothing else. */
+function asRate(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null
 }
 
 const PERMISSION_MODES = new Set<PermissionMode>(["read-only", "edits", "full"])
