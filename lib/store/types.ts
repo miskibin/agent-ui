@@ -107,6 +107,22 @@ export type StoredMessage = ChatMessageData & {
   internal?: boolean
 }
 
+/**
+ * One worktree, as a chat remembers it. Structurally the `WorktreeRef` that
+ * `lib/worktree` returns — declared here as well so the client bundle and the
+ * store can share it without importing a server-only module.
+ */
+export type SessionWorktree = {
+  /** Absolute path of the worktree — the same value as `SessionMeta.cwd`. */
+  root: string
+  /** The branch checked out in it. */
+  branch: string
+  /** What that branch was created from, when it is known. */
+  baseBranch?: string
+  /** The main checkout the worktree belongs to. */
+  repoRoot: string
+}
+
 export type SessionMeta = {
   id: string
   title: string
@@ -137,6 +153,21 @@ export type SessionMeta = {
   /** Git branch shown next to the folder. Display only — nothing checks out. */
   gitBranch?: string
   /**
+   * The git worktree this chat was started in, when it was started in one of
+   * its own (see `lib/worktree`).
+   *
+   * `cwd` already points at `root` — this is the *provenance* beside it: which
+   * repository the worktree belongs to, which branch it is on, and what that
+   * branch was cut from. Three things read it and nothing else could answer
+   * them from `cwd` alone: the sidebar, to label the section as a worktree of
+   * a repo rather than as an unrelated folder; the delete path, to offer to
+   * remove the worktree when the last chat using it goes away; and anything
+   * that wants the *repository* rather than this checkout of it.
+   *
+   * Absent on every chat that simply picked a folder, which is most of them.
+   */
+  worktree?: SessionWorktree
+  /**
    * Per-chat permission mode (`lib/providers/types`'s `PermissionMode`), for
    * harnesses that publish `capabilities.permissionModes`. Kept as a plain
    * string here so the store never has to be migrated when the vocabulary
@@ -160,6 +191,7 @@ export type SessionPatch = Partial<
     | "agentSessions"
     | "cwd"
     | "gitBranch"
+    | "worktree"
     | "permissionMode"
   >
 >
@@ -170,5 +202,6 @@ export type CreateSessionInput = {
   model?: string
   cwd?: string
   gitBranch?: string
+  worktree?: SessionWorktree
   permissionMode?: string
 }
