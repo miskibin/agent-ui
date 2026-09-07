@@ -94,11 +94,13 @@ export type MockSettings = {
 /**
  * What we answer an ACP agent's `session/request_permission` with. The turn is
  * a live subprocess blocked on our reply, and the browser's only channel back
- * is a *new* POST, so v1 decides from this policy instead of asking the user
- * mid-run — the same stance `pi` (no prompt at all) and `cursorAgent`
- * (`--trust --force`) already ship with.
+ * is a *new* POST — which is exactly what `ask` now uses (`lib/turn-requests`,
+ * `POST /api/chat/respond`): the request is published as a waiting tool row,
+ * the form above the composer answers it, and the blocked turn continues.
+ * The other three decide from the policy alone, without a prompt.
  */
 export type AcpPermissionMode =
+  | "ask"
   | "auto-approve"
   | "auto-approve-reads"
   | "reject-all"
@@ -643,6 +645,7 @@ function normalizeClaudeCode(raw: unknown): ClaudeCodeSettings {
 }
 
 const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
+  "ask",
   "auto-approve",
   "auto-approve-reads",
   "reject-all",

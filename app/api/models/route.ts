@@ -43,6 +43,14 @@ export async function GET(req: Request) {
 
   try {
     const models = await provider.listModels()
+    /**
+     * Read back *after* the listing, not before it. An ACP agent only says
+     * whether it takes images during the handshake the model probe pays for,
+     * so the capabilities computed above the listing are a turn behind — and
+     * a composer told "no vision" would hide the attach button until the
+     * models happened to be fetched a second time.
+     */
+    const capabilities = (await provider.info().catch(() => info)).capabilities
     // Best-effort: a vision probe failing (older server, flaky network)
     // degrades to "no model known to take images" rather than a 500.
     const visionModels = provider.visionModels
@@ -55,7 +63,7 @@ export async function GET(req: Request) {
     return NextResponse.json({
       providerId,
       models,
-      capabilities: info.capabilities,
+      capabilities,
       ...(visionModels ? { visionModels } : null),
       ...(groups?.length ? { groups } : null),
     })

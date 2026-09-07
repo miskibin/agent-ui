@@ -32,12 +32,14 @@ import { StatusBadge, statusKey, type StatusPhase, type ProviderStatus } from ".
  */
 
 const PERMISSION_LABELS: Record<AcpPermissionMode, string> = {
+  ask: "Ask me",
   "auto-approve": "Approve everything",
   "auto-approve-reads": "Approve reads only",
   "reject-all": "Reject everything",
 }
 
 const PERMISSION_HINTS: Record<AcpPermissionMode, string> = {
+  ask: "Every permission request stops the turn and waits for you — the question appears above the composer and the agent continues on your answer.",
   "auto-approve":
     "Every permission request the agent raises is answered “allow”, with no prompt.",
   "auto-approve-reads":
@@ -333,8 +335,10 @@ function AcpAgentRow({
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
           {PERMISSION_HINTS[agent.permissionMode]} The agent runs shell commands
           and edits files in the workspace directory
-          {isDsh ? " — and loads a `.env` it finds there" : ""}. Permission
-          requests are answered by this policy, never by a prompt.
+          {isDsh ? " — and loads a `.env` it finds there" : ""}.
+          {agent.permissionMode === "ask"
+            ? " A chat's own permission picker still narrows the sandbox, but never turns this back into an automatic approval."
+            : " Permission requests are answered by this policy, never by a prompt."}
         </p>
       </div>
     </SettingsRow>

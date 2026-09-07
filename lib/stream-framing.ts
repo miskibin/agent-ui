@@ -6,12 +6,14 @@
 export class LineBuffer {
   private fragments: string[] = []
   private pendingLength = 0
-
   private readonly maxRecordLength: number
 
-  // Written out rather than as a constructor parameter property: `node --test`
-  // strips types without compiling them, and that one piece of syntax it
-  // cannot strip — which would make every module reaching this one untestable.
+  /**
+   * Written out rather than declared as a constructor parameter property:
+   * that syntax is the one thing `node --test`'s strip-only TypeScript cannot
+   * erase, and every module that frames a stream — `lib/acp-agent.ts` included
+   * — would be unimportable by the suite because of it.
+   */
   constructor(maxRecordLength = 64 * 1024 * 1024) {
     this.maxRecordLength = maxRecordLength
   }

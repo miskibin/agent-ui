@@ -25,6 +25,10 @@ import {
 } from "@/lib/message-stream"
 import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import { notifyAttention } from "@/lib/notifications"
+import {
+  isOpenUserRequestTool,
+  parseUserRequestInput,
+} from "@/lib/turn-requests"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { PermissionMode } from "@/lib/providers/types"
 import type {
@@ -153,7 +157,19 @@ export function useTurnRunner({
       const controller = new AbortController()
       abortsRef.current.set(sessionId, controller)
 
+      /**
+       * Whether the turn's two rows have been handed to React yet. The opening
+       * turn of a chat seeds them *inside* a view transition, which defers the
+       * callback — and a backend that answers within that window would have
+       * its first events applied to a thread that does not hold the assistant
+       * row yet, and silently dropped. An ACP agent asking permission is
+       * exactly that case: the request is often the first thing a turn emits,
+       * and losing it leaves a turn blocked with no form to unblock it.
+       */
+      let seeded = false
+
       const paint = () => {
+        seeded = true
         setThreads((prev) => ({
           ...prev,
           [sessionId]: seedOver(prev[sessionId]),
@@ -299,8 +315,6 @@ export function useTurnRunner({
       }
       const flush = () => {
         cancelFlush()
-        const batch = queued
-        queued = []
         /**
          * Aborting is not a reason to drop what already arrived: Stop leaves
          * the turn in place and the server persists every event it produced,
@@ -308,13 +322,30 @@ export function useTurnRunner({
          * A run that was superseded is safe on its own — `patchAssistant` is
          * keyed on `assistantId`, which the re-seeded thread no longer holds.
          */
-        if (batch.length === 0) return
+        if (queued.length === 0) return
+        // Nothing to apply to yet. Keep the batch and come back for it.
+        if (!seeded) {
+          schedule()
+          return
+        }
+        const batch = queued
+        queued = []
         patchAssistant((message) =>
           batch.reduce(
             (current, event) => applyStreamEvent(current, event),
             message
           )
         )
+      }
+      const schedule = () => {
+        if (frame || fallbackTimer !== undefined) return
+        frame =
+          typeof requestAnimationFrame === "function"
+            ? requestAnimationFrame(flush)
+            : 0
+        // Background WebViews can pause rAF indefinitely. The fallback keeps
+        // queued stream events bounded even while the window is hidden.
+        fallbackTimer = setTimeout(flush, document.hidden ? 50 : 100)
       }
       const enqueue = (event: AgentStreamEvent) => {
         const last = queued.at(-1)
@@ -332,14 +363,7 @@ export function useTurnRunner({
         } else {
           queued.push(event)
         }
-        if (frame || fallbackTimer !== undefined) return
-        frame =
-          typeof requestAnimationFrame === "function"
-            ? requestAnimationFrame(flush)
-            : 0
-        // Background WebViews can pause rAF indefinitely. The fallback keeps
-        // queued stream events bounded even while the window is hidden.
-        fallbackTimer = setTimeout(flush, document.hidden ? 50 : 100)
+        schedule()
       }
       /** Run-level events must not overtake the text they follow. */
       const drain = () => {
@@ -419,11 +443,22 @@ export function useTurnRunner({
         else if (event.type === "text") setStage("responding")
         else if (event.type === "tool") {
           setStage("searching")
-          if (isOpenAskTool(event)) {
+          /*
+           * A request is the one question that arrives *mid-turn*: the harness
+           * is blocked on it and `done` will not come until it is answered, so
+           * the notification cannot wait for the end of the run the way an ask
+           * does. `notifyAttention` is still silent while the window is in
+           * front, so this only ever reaches someone who has looked away.
+           */
+          const request = isOpenUserRequestTool(event)
+            ? parseUserRequestInput(event.input)
+            : null
+          if (request || isOpenAskTool(event)) {
             needsAttention = true
             if ((notificationSounds ?? true) && !notifiedAskTools.has(event.id)) {
               notifiedAskTools.add(event.id)
               playAgentNotificationSound("question")
+              if (request) notify("question", request.title)
             }
           }
         }

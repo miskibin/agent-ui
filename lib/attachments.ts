@@ -73,6 +73,72 @@ export function base64FromDataUrl(dataUrl: string) {
   return comma >= 0 ? dataUrl.slice(comma + 1) : dataUrl
 }
 
+/* -------------------------------------------------------------------------- */
+/*                              image type sniffing                           */
+/* -------------------------------------------------------------------------- */
+
+/** What an unrecognised payload is called, rather than refusing the turn. */
+export const DEFAULT_IMAGE_MIME = "image/png"
+
+const BASE64_ALPHABET =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+
+/**
+ * The first `count` bytes of a base64 payload, decoded by hand.
+ *
+ * `atob` and `Buffer` would each do this, but only one of them exists in each
+ * of the two places this module runs, and neither tolerates the url-safe
+ * alphabet or embedded newlines. Twelve lines is cheaper than the branching.
+ */
+function decodeBase64Prefix(base64: string, count: number): number[] {
+  const bytes: number[] = []
+  let buffer = 0
+  let bits = 0
+  for (const character of base64) {
+    if (character === "=") break
+    const value = BASE64_ALPHABET.indexOf(
+      character === "-" ? "+" : character === "_" ? "/" : character
+    )
+    if (value < 0) continue // whitespace, or the `data:` prefix's punctuation
+    buffer = (buffer << 6) | value
+    bits += 6
+    if (bits < 8) continue
+    bits -= 8
+    bytes.push((buffer >> bits) & 0xff)
+    if (bytes.length >= count) break
+  }
+  return bytes
+}
+
+function startsWithBytes(bytes: number[], signature: number[], at = 0) {
+  return signature.every((byte, index) => bytes[at + index] === byte)
+}
+
+/**
+ * The image type of a raw base64 payload, from its own magic bytes.
+ *
+ * The composer sends attachments as `data:` URLs but the chat route strips the
+ * prefix before a provider sees them (`AgentRunOptions.images` is bare base64),
+ * and a backend that wants a content block — ACP's `{type:"image"}` — needs a
+ * mime type. Sniffing keeps that shape unchanged instead of threading a second
+ * parallel array through every provider.
+ */
+export function sniffImageMimeType(base64: string): string {
+  const bytes = decodeBase64Prefix(base64, 12)
+  if (startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) {
+    return "image/png"
+  }
+  if (startsWithBytes(bytes, [0xff, 0xd8, 0xff])) return "image/jpeg"
+  if (startsWithBytes(bytes, [0x47, 0x49, 0x46, 0x38])) return "image/gif"
+  if (
+    startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46]) &&
+    startsWithBytes(bytes, [0x57, 0x45, 0x42, 0x50], 8)
+  ) {
+    return "image/webp"
+  }
+  return DEFAULT_IMAGE_MIME
+}
+
 /** Rough decoded-byte size of a base64 payload — good enough for a sanity cap. */
 export function estimateBase64Bytes(base64: string) {
   const padding = base64.endsWith("==") ? 2 : base64.endsWith("=") ? 1 : 0

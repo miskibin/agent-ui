@@ -43,8 +43,13 @@ export const ACP_ERROR = {
 export class AcpRpcError extends Error {
   readonly code: number
   readonly data?: unknown
-  // Written out as fields rather than constructor parameter properties: the
-  // strip-only TypeScript loader `node --test` uses cannot parse the latter.
+
+  /**
+   * The fields are assigned rather than declared as constructor parameter
+   * properties: that is the one TypeScript form `node --test`'s strip-only
+   * loader refuses, and it would put this whole module — and everything that
+   * imports it, `lib/acp-agent.ts` included — out of the suite's reach.
+   */
   constructor(code: number, message: string, data?: unknown) {
     super(message)
     this.name = "AcpRpcError"

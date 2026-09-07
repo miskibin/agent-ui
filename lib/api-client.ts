@@ -13,6 +13,7 @@ import type {
 import { writeSettings } from "@/lib/settings/client"
 import { MAX_RECENT_FOLDERS, type AppSettings } from "@/lib/settings/schema"
 import { LineBuffer } from "@/lib/stream-framing"
+import type { UserRequestAnswer } from "@/lib/turn-requests"
 import type { UsageReport } from "@/lib/usage"
 import type {
   CreateSessionInput,
@@ -374,6 +375,29 @@ export async function streamChat(
   consume(lines.push(decoder.decode()))
   const tail = lines.finish()
   if (tail !== null) consume([tail, ""])
+}
+
+/**
+ * Answers a request a *running* turn is blocked on — an ACP permission prompt,
+ * say. It is a second POST on purpose: the turn's own response is an SSE
+ * stream the browser is still reading, and the outcome comes back down it as
+ * another tool event rather than in this reply.
+ *
+ * A 404 means nothing was waiting any more (the turn was stopped, or another
+ * tab answered first), which callers surface rather than retry.
+ */
+export function respondToRequest(
+  sessionId: string,
+  requestId: string,
+  answer: UserRequestAnswer
+): Promise<void> {
+  return fetch("/api/chat/respond", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ sessionId, requestId, answer }),
+  }).then(async (res) => {
+    if (!res.ok) throw new Error(await errorText(res))
+  })
 }
 
 /* -------------------------------------------------------------------------- */

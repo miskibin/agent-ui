@@ -1,5 +1,6 @@
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type { ModelOption } from "@/components/ui/model-picker"
+import type { AskUser } from "@/lib/turn-requests"
 
 export type { AgentStreamEvent }
 
@@ -131,6 +132,19 @@ export type AgentRunOptions = {
    * as the sandbox the agent reads and writes in); ones that do not, ignore it.
    */
   cwd?: string
+  /**
+   * Puts one question to the user *while the turn is still running* and waits
+   * for the answer — an ACP `session/request_permission`, a CLI prompting on
+   * stdin. The provider announces what it is waiting for as an ordinary tool
+   * event (`lib/turn-requests`), so the wire protocol grows nothing; the
+   * answer arrives through `POST /api/chat/respond`.
+   *
+   * Absent means there is no interactive channel this turn: a backend with a
+   * configured policy falls back to it, and one that can only ask (pi's
+   * extension dialogs) treats the request as cancelled rather than block, and
+   * says so in the `question` row it publishes for the wait.
+   */
+  askUser?: AskUser
   signal: AbortSignal
 }
 

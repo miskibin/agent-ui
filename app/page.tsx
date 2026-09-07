@@ -24,7 +24,7 @@ import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
-import { PendingQuestion } from "@/components/pending-question"
+import { PendingQuestion, PendingUserRequest } from "@/components/pending-question"
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
 import { ChatInput } from "@/components/ui/chat-input"
@@ -406,6 +406,7 @@ export default function ChatPage() {
     handleSend,
     handleStop,
     handleAskAnswer,
+    handleRequestAnswer,
     handlePlanBuild,
     handleCompact,
     handleEditMessage,
@@ -452,7 +453,7 @@ export default function ChatPage() {
     activeCost,
     lastTurnFinishedAt,
     usage,
-    pendingAsk,
+    pendingRequest,
     waitingCount,
     chatChanges,
     history,
@@ -466,10 +467,10 @@ export default function ChatPage() {
     isGenerating,
   })
 
-  /* The composer only cares *whether* an answer is owed. `pendingAsk` is a new
-     object every time the transcript is rewritten, so the memoized composer
+  /* The composer only cares *whether* an answer is owed. `pendingRequest` is a
+     new object every time the transcript is rewritten, so the memoized composer
      takes the boolean and stays off the per-token render path. */
-  const hasPendingAsk = pendingAsk !== null
+  const hasPendingAsk = pendingRequest?.kind === "ask"
 
   const {
     sessionItems,
@@ -928,12 +929,22 @@ export default function ChatPage() {
                       items={todos}
                       running={isGenerating}
                     />
-                    {pendingAsk ? (
+                    {pendingRequest?.kind === "ask" ? (
                       <PendingQuestion
-                        key={`${activeId}:${pendingAsk.messageId}:${pendingAsk.toolId}`}
-                        {...pendingAsk}
+                        key={`${activeId}:${pendingRequest.messageId}:${pendingRequest.toolId}`}
+                        messageId={pendingRequest.messageId}
+                        toolId={pendingRequest.toolId}
+                        input={pendingRequest.input}
                         disabled={isGenerating}
                         onAnswer={handleAskAnswer}
+                      />
+                    ) : pendingRequest ? (
+                      /* Deliberately *not* disabled while generating: a running
+                         turn blocked on this answer is the only time it exists. */
+                      <PendingUserRequest
+                        key={`${activeId}:${pendingRequest.request.id}`}
+                        request={pendingRequest.request}
+                        onAnswer={handleRequestAnswer}
                       />
                     ) : null}
                     <PendingLineComments />

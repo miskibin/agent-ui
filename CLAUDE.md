@@ -73,7 +73,7 @@ everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `l
 `lib/completion.ts`, `lib/model-pricing.ts`, `lib/file-actions.tsx`, `lib/drafts.ts`,
 `lib/slash-commands.ts`, `lib/app-shortcuts.ts`, `lib/notifications.ts`, `lib/attachments.ts`,
 `lib/local-media.ts`, `lib/chat-helpers.ts`, `lib/ask-tools.ts`, `lib/ui-cache.ts`,
-`lib/todo-plan.ts`, `lib/usage.ts`, `components/chat-usage.tsx`,
+`lib/todo-plan.ts`, `lib/turn-requests.ts`, `lib/usage.ts`, `components/chat-usage.tsx`,
 `lib/message-search.ts`, `lib/search-ranking.ts`, `lib/skills.ts`, `lib/skills-scan.ts`,
 `lib/import/`, `lib/worktree.ts`, `lib/git-naming.ts`, `lib/git-commit.ts`, `lib/git-exec.ts`,
 `lib/checkpoints.ts`, `lib/dev-servers.ts`, `lib/shell-env.ts`, `instrumentation.ts`,
@@ -120,8 +120,9 @@ Each concern is one hook, and they are called in the order the data flows:
 
 Pure helpers stay in `lib/` and are exported so they can be unit tested: `lib/chat-helpers.ts`
 (time and label formatting, `pickProvider`, `omit`, `errorMessage`), `lib/ask-tools.ts`
-(`findPendingAsk`, `completeAsk`, `isInternalMessage`), `lib/ui-cache.ts` (every `agent-ui:*`
-snapshot key, in one place) and `lib/todo-plan.ts` (`latestTodos`).
+(`findPendingAsk`, `findPendingRequest`, `completeAsk`, `isInternalMessage`),
+`lib/ui-cache.ts` (every `agent-ui:*` snapshot key, in one place) and
+`lib/todo-plan.ts` (`latestTodos`).
 
 ## What this app is
 
@@ -155,15 +156,57 @@ one interface:
   one mode no policy can be synthesized into: it is read-only *plus* an obligation to
   write the change down, so only a backend that has such a mode publishes it. The chosen
   mode is persisted per session.
+- A turn that must ask the user something before it can continue: `lib/turn-requests.ts`.
+  `AgentRunOptions.askUser` hands the provider one `UserRequest` (`permission | select |
+  confirm | input`) and waits; an in-memory registry keyed by `${sessionId}:${request.id}` is
+  what `POST /api/chat/respond` resolves, and the turn's own abort answers
+  `{ cancelled: true }` for everything still parked on it. **The wire protocol grows nothing**:
+  a waiting provider emits an ordinary `tool` event named `permission` (or `question` for the
+  other kinds) whose `input` *is* the request, then re-emits that same tool id as
+  `done`/`error` with the outcome — `parseUserRequestInput` and `isOpenUserRequestTool` are the
+  one definition of that shape, and the module imports nothing from `node:` so the page shares
+  it. The page lifts it into `components/pending-question.tsx` above the composer and leaves it
+  **enabled while the turn generates**, which is the only time it exists; the AskQuestion form
+  beside it ends its turn and so stays disabled then, and the transcript row reads "Waiting for
+  your answer" rather than growing a second form. ACP is the first caller: its `ask` permission
+  mode puts every `session/request_permission` to the user instead of to a policy, and a chat's
+  own permission mode then only narrows dsh's sandbox — it never turns `ask` back into an
+  automatic approval. `fs/write_text_file` is served outside that dance, so under `ask` it
+  follows the chat's mode: a read-only chat gets no writer.
 - Providers: `mock` (scripted), `cursor` (spawns the `cursor-agent` CLI, resumes by session id),
   `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
-  `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over *every* configured
+  `pi` (spawns the `pi` CLI in `--mode rpc` as an agentic harness over *every* configured
   model source — the local Ollama server, the hosted providers under `settings.modelProviders`,
-  or either on its own; it is unavailable only when neither is there. Four tools, resumes by pi
-  session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-agent.ts` owns the subprocess and
-  event translation, and a generated `models.json` under `$AGENT_UI_DIR/pi` writes one entry per
-  source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and on
-  for the hosted ones, which read it),
+  or either on its own; it is unavailable only when neither is there. Four tools plus one of
+  ours, resumes by pi session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-protocol.ts` is
+  the pure half — the argv, the stdin commands and the event translation, importing nothing
+  `node --test` cannot load — and `lib/pi-agent.ts` owns the subprocess. RPC rather than json
+  mode because json mode is one-way: the prompt goes over stdin as a `prompt` command, which is
+  the same channel an `extension_ui_request` is answered on, and a turn ends on `agent_settled`
+  (`agent_end` arms a short grace as the fallback) rather than on end of stdout. There is no
+  session header line either, so the id to resume with is asked for with `get_state`, written up
+  front beside the prompt. A generated `models.json` under `$AGENT_UI_DIR/pi` writes one entry
+  per source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and
+  on for the hosted ones, which read it, and `input` per model, without which pi drops an
+  attached image from the request without a word.
+
+  Two things that config directory now carries beside the catalog. **A generated extension**,
+  `extensions/ask-user.ts` from a string constant in `lib/pi-extension.ts`, loaded with an
+  explicit `--extension`: `--no-extensions` stays, because it turns *discovery* off — the user's
+  own extensions, each one context the model pays for — while an explicit path still loads. It
+  registers `request_user_input`, whose `execute` calls `ctx.ui.select`/`ctx.ui.input` and
+  returns the answer as the tool result, so the model carries on in the *same* run. The dialog
+  surfaces as an `extension_ui_request`, is mapped to a `UserRequest` (`lib/turn-requests.ts`),
+  put to `AgentRunOptions.askUser`, and published as a `question` tool row — running before the
+  wait, done or error after. No `askUser` cancels every request rather than hanging, and a
+  dialog carrying a `timeout` stops being waited on when pi's own clock runs out. The tool is
+  deliberately *not* one of the names `isAskToolName` claims: those belong to the between-turns
+  ask flow, which answers by rewriting the transcript and sending a fresh user turn, while this
+  one's run is still open and blocked on stdin. **Vision**, per model rather than per provider:
+  a local tag is asked (`/api/show` reports `vision`), a hosted one can only be read off its id
+  because no OpenAI-compatible `/models` reports modality, and the one predicate drives both
+  `visionModels()` and the `input` written into the catalog, so the attachment button and the
+  request can never disagree),
   `claude-code` (spawns the `claude` CLI as `-p --output-format stream-json --verbose
   --include-partial-messages`, resumes by CLI session id; `lib/claude-code-runtime.ts` finds the
   binary, `lib/claude-code-protocol.ts` is the pure half — the argv and the event translation,
@@ -200,6 +243,12 @@ one interface:
   (`hasDeepSeekCredentials`) is the matching fallback on the other side: dsh — and only dsh,
   never a generic ACP agent — stays available on its hosted DeepSeek route when that optional
   local overlay is down.
+  An ACP agent's `capabilities.vision` is whatever it said on `initialize`
+  (`promptCapabilities.image`), captured by the same handshake the model probe already pays
+  for and cached per agent; images then ride as `{type:"image"}` prompt blocks, with the mime
+  type sniffed from the payload (`sniffImageMimeType`, `lib/attachments.ts`) because the route
+  hands providers bare base64. dsh reports `image: false` today, so it stays vision-less — a
+  catalog entry naming vision is not evidence of a transport.
 - Themes: complete shadcn theme items vendored from the tweakcn registry.
   `lib/theme/themes/generated.ts` is generated by `scripts/import-tweakcn.mjs` (curated list
   lives in that script) and holds each item's `cssVars` verbatim; `lib/theme/apply.ts` emits
@@ -508,6 +557,9 @@ one interface:
   while the window is not in front (the shell's `tauri-plugin-notification`, else the web
   `Notification` API, whose click reopens the chat), bounces the dock, and mirrors the count
   of chats waiting on an answer onto the dock badge (`setBadgeCount`) and the tab title.
+  Waiting is both shapes: a finished turn holding an unanswered question, and a *running*
+  one blocked on a `lib/turn-requests` request — which is also notified the moment it
+  arrives, since its turn will not end until it is answered.
   `settings.chat.desktopNotifications` switches it off. Sidebar folder headers poll
   `GET /api/git/status` (`lib/git-status.ts`: ahead/behind, dirty count, the branch's PR via
   `gh` when present) once a minute and on focus. "Regenerate title" (`POST

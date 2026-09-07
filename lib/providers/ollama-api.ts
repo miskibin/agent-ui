@@ -76,13 +76,25 @@ const VISION_HINTS = [
 ]
 const VISION_HINT_PATTERN = /(^|[^a-z0-9])(vl|vision)([^a-z0-9]|$)/
 
-/** Cheap fallback when `/api/show` doesn't report capabilities: family/name hints. */
-export function looksVisionCapable(model: OllamaModel) {
-  const haystack = `${model.family ?? ""} ${model.id}`.toLowerCase()
+/**
+ * The same hints against a bare model id, for catalogs that report no
+ * modality at all. Every OpenAI-compatible `/v1/models` is one of those: it
+ * answers with ids and nothing else, so a hosted model that takes images can
+ * only be recognised by saying so in its name (`…-vision-exp`, `…-vl`). Weaker
+ * evidence than `/api/show`, and treated as such — it is the *only* thing on
+ * offer for a hosted source, never a substitute where a real answer exists.
+ */
+export function looksVisionCapableId(id: string) {
+  const haystack = id.toLowerCase()
   return (
     VISION_HINTS.some((hint) => haystack.includes(hint)) ||
     VISION_HINT_PATTERN.test(haystack)
   )
+}
+
+/** Cheap fallback when `/api/show` doesn't report capabilities: family/name hints. */
+export function looksVisionCapable(model: OllamaModel) {
+  return looksVisionCapableId(`${model.family ?? ""} ${model.id}`)
 }
 
 const SHOW_MS = 2_000
