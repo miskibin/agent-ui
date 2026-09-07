@@ -11,7 +11,7 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 [Download for Windows](https://github.com/miskibin/agent-ui/releases/latest) ·
 [Chat Components](https://github.com/miskibin/chat-components)
 
-![Agent UI showing a streaming coding-agent run with reasoning, tool calls, files changed, and a composer](.github/screenshots/chat-run.png)
+![Agent UI showing a coding-agent run: the turn folded into one line, its streamed markdown answer, and the composer](.github/screenshots/chat-run.png)
 
 ## Why Agent UI
 
@@ -111,13 +111,17 @@ installers and update metadata are published on
 
 ## Screenshots
 
+| Sidebar shelves | Everything the chat changed |
+| --- | --- |
+| ![Sidebar with folder groups and the snoozed and settled shelves](.github/screenshots/sidebar-shelves.png) | ![Changed files as a tree, with commit and push below it](.github/screenshots/changes-tree.png) |
+
 | File review | Agent handoff |
 | --- | --- |
-| ![Side-by-side file actions and source review](.github/screenshots/file-actions.png) | ![Expanded handoff between coding agents](.github/screenshots/handoff.png) |
+| ![A file's diff beside the conversation, with its right-click menu open](.github/screenshots/file-actions.png) | ![Expanded handoff between coding agents](.github/screenshots/handoff.png) |
 
 | Command palette | Usage by model and folder |
 | --- | --- |
-| ![Agent UI command palette](.github/screenshots/palette.png) | ![Token usage and estimated cost grouped by model and working folder](.github/screenshots/settings-usage.png) |
+| ![Command palette matching chats and the words inside their messages](.github/screenshots/palette.png) | ![Token usage and estimated cost grouped by model and working folder](.github/screenshots/settings-usage.png) |
 
 ## Data and permissions
 
