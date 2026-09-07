@@ -6,7 +6,12 @@ import path from "node:path"
 
 import type { ModelOption } from "@/components/ui/model-picker"
 import { acpConfigDir, hasAcpBinary } from "@/lib/acp-runtime"
-import { ACP_ERROR, AcpRpcError, type AcpConfigOption } from "@/lib/acp-types"
+import {
+  ACP_ERROR,
+  AcpRpcError,
+  type AcpAgentCapabilities,
+  type AcpConfigOption,
+} from "@/lib/acp-types"
 import {
   DSH_ACP_ARGS,
   dshEnv,
@@ -26,6 +31,11 @@ import type {
 } from "@/lib/settings/schema"
 import { hasDeepSeekCredentials } from "@/lib/providers/acp-availability"
 import { withPromptContext } from "@/lib/providers/system-prefix"
+import type {
+  AskUser,
+  UserRequest,
+  UserRequestOption,
+} from "@/lib/turn-requests"
 import type {
   AgentProvider,
   AgentRunOptions,
@@ -81,6 +91,23 @@ const DSH_PERMISSION_MODES: PermissionMode[] = ["read-only", "edits", "full"]
 const MODEL_CACHE_MS = 5 * 60 * 1000
 type ModelCacheEntry = { at: number; models: ModelOption[]; raw: Map<string, string> }
 const modelCache = new Map<string, ModelCacheEntry>()
+
+/**
+ * What each agent said it accepts beside text, learned from the one `initialize`
+ * the model probe already pays for. It is kept apart from `modelCache` and
+ * never expires: an installed binary's prompt capabilities are a property of
+ * the binary, not of a five-minute window, and `info()` must not spawn a
+ * process just to answer whether the picker may offer an image button.
+ */
+const promptCapsCache = new Map<
+  string,
+  AcpAgentCapabilities["promptCapabilities"]
+>()
+
+/** Whether this agent has *told us* it takes images. Unknown reads as no. */
+function acceptsImages(id: string): boolean {
+  return promptCapsCache.get(id)?.image === true
+}
 
 export function createAcpProvider(
   key: string,
@@ -168,7 +195,10 @@ export function createAcpProvider(
           // rather than failing the turn — so the control is offered to every
           // ACP agent and simply does nothing on the ones that ignore it.
           effort: true,
-          vision: false,
+          // Only ever true once the agent has said so on `initialize` — which
+          // the model probe below is what discovers. A catalog entry that
+          // mentions vision proves nothing about the transport.
+          vision: acceptsImages(id),
           permissionModes: modes,
           defaultPermissionMode: configuredMode(agent, isDsh, modes),
         },
@@ -206,8 +236,11 @@ export function createAcpProvider(
       try {
         // ACP has no model-listing RPC — an agent publishes its selectable
         // settings as `configOptions` on a session, so this costs a spawn and a
-        // throwaway session. Hence the cache.
-        options = await probeAcpConfigOptions(spec, label)
+        // throwaway session. Hence the cache. The same handshake is the only
+        // place an agent says whether it takes images, so it is remembered too.
+        const probed = await probeAcpConfigOptions(spec, label)
+        options = probed.options
+        promptCapsCache.set(id, probed.promptCapabilities)
       } catch (err) {
         // A configured local endpoint is enough to name the models ourselves;
         // otherwise the picker degrades to empty with the error shown.
@@ -220,6 +253,19 @@ export function createAcpProvider(
       const models = toModelOptions(options)
       remember(id, models)
       return models.models
+    },
+
+    /**
+     * Image support in ACP is a property of the *agent*, not of the model it
+     * happens to be routing to: `promptCapabilities` is published once on
+     * `initialize` and applies to every `session/prompt`. So either every
+     * listed model takes images or none does.
+     */
+    async visionModels(): Promise<string[]> {
+      if (!acceptsImages(id)) return []
+      // `/api/models` lists before it asks, so the cache is warm by now; a
+      // cold one means nothing has been probed and there is nothing to claim.
+      return (modelCache.get(id)?.models ?? []).map((model) => model.id)
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
@@ -245,10 +291,36 @@ export function createAcpProvider(
         return
       }
 
-      // The approval policy this turn actually runs under. `fs/write_text_file`
-      // is a write we perform *for* the agent, outside the permission dance, so
-      // anything short of auto-approve must not be served one.
-      const policy = acpPolicy(options.permissionMode) ?? agent.permissionMode
+      /**
+       * The approval policy this turn actually runs under.
+       *
+       * `ask` is the one setting a per-chat override cannot overrule: the
+       * point of it is that a human sees every request, and quietly promoting
+       * it to auto-approve because the composer says "Full access" would be
+       * the opposite of what was configured. The override still applies to the
+       * other axis — dsh's sandbox, chosen in `spawnSpec` — so a read-only
+       * chat is still a read-only process, it just also asks.
+       */
+      const configured = agent.permissionMode
+      const policy =
+        configured === "ask"
+          ? "ask"
+          : (acpPolicy(options.permissionMode) ?? configured)
+
+      /**
+       * `fs/write_text_file` is a write we perform *for* the agent, outside
+       * the permission dance, so anything short of auto-approve must not be
+       * served one. Under `ask` there is no request to put to the user — the
+       * capability is declared in the handshake, once, before the turn — so it
+       * follows the chat's own mode instead: a read-only chat gets no writer,
+       * anything else does.
+       */
+      const canWriteFiles =
+        policy === "auto-approve" ||
+        (policy === "ask" && options.permissionMode !== "read-only")
+
+      /** Unique within the turn; ACP tool-call ids repeat across turns. */
+      let requestSeq = 0
 
       const { runAcpAgent } = await import("@/lib/acp-agent")
       yield* runAcpAgent({
@@ -258,7 +330,11 @@ export function createAcpProvider(
         effort: options.effort,
         sessionId: options.sessionId,
         label,
-        canWriteFiles: policy === "auto-approve",
+        canWriteFiles,
+        // Only sent when the agent said it takes them; `runAcpAgent` checks
+        // `promptCapabilities.image` again against this turn's own handshake.
+        images: acceptsImages(id) ? options.images : undefined,
+        askUser: options.askUser,
         signal: options.signal,
         handlers: {
           async readTextFile({ path: requested, line, limit }) {
@@ -274,8 +350,8 @@ export function createAcpProvider(
             await mkdir(path.dirname(target), { recursive: true })
             await writeFile(target, content, "utf8")
           },
-          decidePermission({ toolCall, options: choices }) {
-            return decide(policy, toolCall, choices)
+          decidePermission({ toolCall, options: choices, ask }) {
+            return decide(policy, toolCall, choices, ask, () => ++requestSeq)
           },
         },
       })
@@ -341,10 +417,13 @@ const MODE_RANK: Record<PermissionMode, number> = {
  *
  * `reject-all` approves strictly less than `read-only` does — the picker has
  * no mode for "refuses everything" — so it reads as the narrowest one there
- * is. This is only ever used to label a default, never to send one back.
+ * is. `ask` sits at the other end: nothing is refused in advance, so its
+ * ceiling is whatever the user approves, which is `full` (still clamped by
+ * dsh's sandbox below). This is only ever used to label a default, never to
+ * send one back.
  */
 function policyAsMode(policy: AcpAgentSettings["permissionMode"]): PermissionMode {
-  return policy === "auto-approve" ? "full" : "read-only"
+  return policy === "auto-approve" || policy === "ask" ? "full" : "read-only"
 }
 
 /** A configured dsh sandbox level, read back as one of the app's modes. */
@@ -388,23 +467,56 @@ function configuredMode(
   return picked
 }
 
+/** Whether a permission option lets the tool call proceed. */
+function isAllowKind(kind: string | undefined) {
+  return kind === "allow_once" || kind === "allow_always"
+}
+
 /**
- * `session/request_permission` is a live subprocess blocked on our answer, and
- * the browser's only way to talk back mid-run is a *new* POST — so v1 answers
- * from a per-agent policy instead. That is the same bar the rest of this app
- * already ships at: `pi` never asks, and `cursorAgent` runs `--trust --force`.
+ * `session/request_permission` is a live subprocess blocked on our answer.
+ * Three of the four policies decide from settings alone; `ask` puts the
+ * decision to the user over `lib/turn-requests` and waits for it, which is
+ * what `ask` (present only when the run has an interactive channel) is.
  */
-function decide(
+async function decide(
   mode: AcpAgentSettings["permissionMode"],
-  toolCall: { title?: string; kind?: string },
-  choices: PermissionChoice[]
-): { option: PermissionChoice | null; reason: string } {
+  toolCall: { toolCallId?: string; title?: string; kind?: string; rawInput?: unknown },
+  choices: PermissionChoice[],
+  ask: AskUser | undefined,
+  nextSeq: () => number
+): Promise<{ option: PermissionChoice | null; reason: string; approved?: boolean }> {
   const allow =
     choices.find((choice) => choice.kind === "allow_once") ??
     choices.find((choice) => choice.kind === "allow_always") ??
     null
   const name = toolCall.title || "this tool call"
 
+  if (mode === "ask") {
+    // No channel means no user: refusing is the only honest answer, and the
+    // row says why rather than silently falling back to a wider policy.
+    if (!ask) {
+      return {
+        option: null,
+        reason: `Rejected: this agent asks before every tool call, and this run has no way to reach you.`,
+      }
+    }
+    const answer = await ask(permissionRequest(toolCall, choices, nextSeq()))
+    if (answer.cancelled || !answer.optionId) {
+      return { option: null, reason: `You did not allow ${name}.`, approved: false }
+    }
+    const picked = choices.find((choice) => choice.optionId === answer.optionId)
+    if (!picked) {
+      return { option: null, reason: `You did not allow ${name}.`, approved: false }
+    }
+    const approved = isAllowKind(picked.kind)
+    return {
+      option: picked,
+      approved,
+      reason: approved
+        ? `You allowed ${name}${picked.kind === "allow_always" ? " — and every one like it" : ""}.`
+        : `You refused ${name}${picked.kind === "reject_always" ? " — and every one like it" : ""}.`,
+    }
+  }
   if (mode === "reject-all") {
     return { option: null, reason: `Rejected: the permission policy for this agent is "never allow".` }
   }
@@ -424,6 +536,67 @@ function decide(
     reason: `Rejected: ${name} is not read-only and this agent only auto-approves reads.`,
   }
 }
+
+/** ACP's four option kinds, for an agent that named none. */
+const PERMISSION_KIND_LABELS: Record<string, string> = {
+  allow_once: "Allow once",
+  allow_always: "Always allow",
+  reject_once: "Reject",
+  reject_always: "Always reject",
+}
+
+/**
+ * One ACP permission request, in the app's own vocabulary. The option ids are
+ * the agent's opaque ones and travel back untouched — the form only ever
+ * echoes what it was handed.
+ */
+function permissionRequest(
+  toolCall: { toolCallId?: string; title?: string; kind?: string; rawInput?: unknown },
+  choices: PermissionChoice[],
+  seq: number
+): UserRequest {
+  const name = toolCall.title || "this tool call"
+  const options: UserRequestOption[] = []
+  for (const choice of choices) {
+    if (!choice.optionId) continue
+    options.push({
+      id: choice.optionId,
+      label: choice.name?.trim() || PERMISSION_KIND_LABELS[choice.kind ?? ""] || choice.optionId,
+      ...(choice.kind ? { kind: choice.kind } : null),
+    })
+  }
+  return {
+    id: `acp-permission-${seq}-${toolCall.toolCallId || "call"}`,
+    kind: "permission",
+    title: `Allow ${name}?`,
+    ...(describeToolInput(toolCall.rawInput)
+      ? { description: describeToolInput(toolCall.rawInput) }
+      : null),
+    options,
+    tool: { name, ...(toolCall.rawInput === undefined ? null : { input: toolCall.rawInput }) },
+  }
+}
+
+/** The agent's own arguments, short enough to sit under the question. */
+function describeToolInput(rawInput: unknown): string | undefined {
+  if (rawInput == null) return undefined
+  const text =
+    typeof rawInput === "string" ? rawInput : safeJson(rawInput)
+  if (!text) return undefined
+  const collapsed = text.replace(/\s+/g, " ").trim()
+  if (!collapsed) return undefined
+  return collapsed.length > 300 ? `${collapsed.slice(0, 299)}…` : collapsed
+}
+
+function safeJson(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return undefined
+  }
+}
+
+
 
 /* -------------------------------------------------------------------------- */
 /*                              workspace scoping                             */

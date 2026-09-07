@@ -5,11 +5,20 @@ import { spawn } from "node:child_process"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import { resolveAcpCommand, type AcpCommand } from "@/lib/acp-runtime"
 import { exitCodeFrom } from "@/lib/providers/exit-code"
+import { sniffImageMimeType } from "@/lib/attachments"
 import { LineBuffer } from "@/lib/stream-framing"
+import {
+  USER_REQUEST_WAITING,
+  formatUserRequestInput,
+  userRequestToolName,
+  type AskUser,
+  type UserRequest,
+} from "@/lib/turn-requests"
 import {
   ACP_ERROR,
   ACP_PROTOCOL_VERSION,
   AcpRpcError,
+  type AcpAgentCapabilities,
   type AcpConfigOption,
   type AcpContentBlock,
   type AcpInitializeResult,
@@ -68,19 +77,38 @@ export type AcpToolCallSummary = {
   rawInput?: unknown
 }
 
+/** Which option to select, or null to fall back to a rejecting one, and why. */
+export type AcpPermissionDecision = {
+  option: AcpPermissionOption | null
+  reason: string
+  /**
+   * Whether the tool call was allowed — the row's status. Defaults to "an
+   * option was named", which is what a policy decision means; a user who
+   * picks `reject_always` names an option and is still refusing.
+   */
+  approved?: boolean
+}
+
 export type AcpClientHandlers = {
   /** Absolute path in, file contents out. Throw `AcpRpcError` to refuse. */
   readTextFile(params: { path: string; line?: number; limit?: number }): Promise<string>
   writeTextFile(params: { path: string; content: string }): Promise<void>
   /**
-   * Which option to select, or null to pick a rejecting one. Answered from a
-   * policy setting — see `lib/providers/acp.ts`. Must not block on a browser
-   * round-trip: the agent's turn is stopped until this returns.
+   * Answers one `session/request_permission`. The agent's turn is stopped
+   * until this resolves, which is exactly why it may take as long as it likes:
+   * the policy paths answer synchronously, and the `ask` policy hands the
+   * decision to the user through `ask` below.
    */
   decidePermission(request: {
     toolCall: AcpToolCallSummary
     options: AcpPermissionOption[]
-  }): { option: AcpPermissionOption | null; reason: string }
+    /**
+     * Puts the decision to the user and waits. Present only when the run was
+     * given an `askUser`; calling it is what publishes the waiting tool row,
+     * so a policy that never asks never emits one.
+     */
+    ask?: AskUser
+  }): AcpPermissionDecision | Promise<AcpPermissionDecision>
 }
 
 export type AcpRunOptions = {
@@ -100,6 +128,18 @@ export type AcpRunOptions = {
    * that asks for the write anyway must not be handed one.
    */
   canWriteFiles: boolean
+  /**
+   * Base64 image payloads (no `data:` prefix) to send beside the prompt. Only
+   * attached when the agent's `promptCapabilities.image` is true — an agent
+   * that does not advertise images is sent none, whatever the chat carried.
+   */
+  images?: string[]
+  /**
+   * The channel a blocked turn answers through. Given one, the `ask` policy
+   * puts every `session/request_permission` to the user instead of deciding
+   * from settings.
+   */
+  askUser?: AskUser
   handlers: AcpClientHandlers
   signal?: AbortSignal
 }
@@ -703,20 +743,67 @@ export async function* runAcpAgent(
       const choices = Array.isArray(p.options) ? p.options : []
       if (cancelled.value) return { outcome: { outcome: "cancelled" } }
 
-      const { option, reason } = options.handlers.decidePermission({
+      const rowId = `acp-permission-${toolCallId || choices.length}`
+      /**
+       * Asking publishes the row *before* awaiting, never after: `queue.push`
+       * only wakes the drain loop, and the generator can only reach the
+       * consumer while this handler is parked on the promise below. Push after
+       * the await and the user is looking at a turn that has gone silent with
+       * no sign of what it is waiting for.
+       */
+      let asked = false
+      const ask: AskUser | undefined = options.askUser
+        ? async (request: UserRequest) => {
+            asked = true
+            queue.push({
+              type: "tool",
+              id: rowId,
+              name: userRequestToolName(request.kind),
+              status: "running",
+              input: formatUserRequestInput(request),
+              output: USER_REQUEST_WAITING,
+            })
+            return options.askUser!(request)
+          }
+        : undefined
+
+      const decision = await options.handlers.decidePermission({
         toolCall: summary,
         options: choices,
+        ask,
       })
+      // Stopping the turn while the form was open is not a decision: the row
+      // says so and the agent is told its prompt was cancelled.
+      if (cancelled.value) {
+        if (asked) {
+          queue.push({
+            type: "tool",
+            id: rowId,
+            name: "permission",
+            status: "error",
+            output: "Stopped before you answered.",
+          })
+        }
+        return { outcome: { outcome: "cancelled" } }
+      }
+      const { option, reason } = decision
+      const approved = decision.approved ?? option !== null
       const chosen = option ?? pickRejection(choices)
       queue.push({
         type: "tool",
-        id: `acp-permission-${toolCallId || choices.length}`,
+        id: rowId,
         name: "permission",
-        status: option ? "done" : "error",
-        input: stringify({
-          tool: summary.title ?? toolCallId,
-          request: summary.rawInput,
-        }),
+        status: approved ? "done" : "error",
+        // An asked row already carries the request as its input;
+        // `upsertToolPart` keeps it when the settling event brings none.
+        ...(asked
+          ? null
+          : {
+              input: stringify({
+                tool: summary.title ?? toolCallId,
+                request: summary.rawInput,
+              }),
+            }),
         output: reason,
       })
       return chosen?.optionId
@@ -787,7 +874,10 @@ export async function* runAcpAgent(
     const turn = conn
       .request<AcpPromptResult>("session/prompt", {
         sessionId,
-        prompt: [{ type: "text", text: options.prompt }],
+        prompt: promptBlocks(
+          options.prompt,
+          caps.promptCapabilities?.image === true ? options.images : undefined
+        ),
       })
       .then(
         (result) => {
@@ -912,6 +1002,25 @@ function configCandidates(configId: string, value: string): string[] {
   return [...new Set([value, ...aliases])]
 }
 
+/**
+ * The `session/prompt` content blocks for one turn. Images are only ever
+ * appended by a caller that checked `promptCapabilities.image` — an agent that
+ * does not advertise them is sent text alone rather than a block it will
+ * reject, and the route's base64 carries no mime type, so it is sniffed from
+ * the payload's own magic bytes (`lib/attachments`).
+ */
+function promptBlocks(
+  prompt: string,
+  images: string[] | undefined
+): Array<Record<string, unknown>> {
+  const blocks: Array<Record<string, unknown>> = [{ type: "text", text: prompt }]
+  for (const data of images ?? []) {
+    if (!data) continue
+    blocks.push({ type: "image", data, mimeType: sniffImageMimeType(data) })
+  }
+  return blocks
+}
+
 function pickRejection(options: AcpPermissionOption[]): AcpPermissionOption | null {
   return (
     options.find((option) => option.kind === "reject_once") ??
@@ -945,10 +1054,21 @@ function clip(value: string, max = 600) {
  * a spawn and a throwaway session, so callers cache the result — same reasoning
  * as `lib/providers/cursor.ts`'s `modelCache` around `cursor-agent ls`.
  */
+export type AcpProbeResult = {
+  options: AcpConfigOption[]
+  /**
+   * What the agent said it accepts beside text on `initialize`. It is the only
+   * honest source for `capabilities.vision`: a model appearing in a catalog
+   * says nothing about the transport, so an agent that publishes nothing here
+   * stays vision-less.
+   */
+  promptCapabilities?: AcpAgentCapabilities["promptCapabilities"]
+}
+
 export async function probeAcpConfigOptions(
   spec: AcpSpawnSpec,
   label: string
-): Promise<AcpConfigOption[]> {
+): Promise<AcpProbeResult> {
   const conn = connectAcp(spec)
   conn.onRequest(async () => {
     throw new AcpRpcError(ACP_ERROR.methodNotFound, "Not available while probing")
@@ -974,7 +1094,12 @@ export async function probeAcpConfigOptions(
         .request("session/close", { sessionId: created.sessionId }, HANDSHAKE_MS)
         .catch(() => undefined)
     }
-    return created?.configOptions ?? []
+    return {
+      options: created?.configOptions ?? [],
+      ...(init?.agentCapabilities?.promptCapabilities
+        ? { promptCapabilities: init.agentCapabilities.promptCapabilities }
+        : null),
+    }
   } catch (err) {
     throw new Error(describeTurnFailure(err, label))
   } finally {
