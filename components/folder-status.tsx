@@ -1,6 +1,6 @@
 "use client"
 
-import { ArrowDown, ArrowUp, CircleDot, GitPullRequest } from "lucide-react"
+import { ArrowDown, ArrowUp, CircleDot, Globe, GitPullRequest } from "lucide-react"
 import * as React from "react"
 
 import * as api from "@/lib/api-client"
@@ -81,6 +81,78 @@ export function useFolderStatus(cwd: string, sessionId: string) {
   return status
 }
 
+// Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
+
+/** A dev server comes and goes with a command; the branch state does not. */
+const DEV_SERVER_POLL_MS = 30_000
+
+const NO_SERVERS: api.DevServer[] = []
+
+/** Last answer per chat, so a header that remounts does not blink empty. */
+const devServers = new Map<string, api.DevServer[]>()
+/** One request per chat at a time: the scan behind it walks the machine. */
+const devServerProbes = new Map<string, Promise<api.DevServer[]>>()
+
+function probeDevServers(sessionId: string) {
+  const running = devServerProbes.get(sessionId)
+  if (running) return running
+  const probe = api
+    .fetchDevServers(sessionId)
+    .then((servers) => {
+      devServers.set(sessionId, servers)
+      return servers
+    })
+    .finally(() => {
+      devServerProbes.delete(sessionId)
+    })
+  devServerProbes.set(sessionId, probe)
+  return probe
+}
+
+/**
+ * The local dev servers running for this folder.
+ *
+ * An agent told to "start the dev server" leaves a listener behind and says so
+ * in prose; `GET /api/dev-servers` looks instead — which ports answer with a
+ * page — so the folder header can offer the thing itself. Polled on its own
+ * cadence rather than with the git state: a server appears seconds after a
+ * command runs, and a minute of a header not mentioning it is a minute of the
+ * user going looking in the transcript.
+ *
+ * Everything about it is best-effort: a failed probe leaves the last answer
+ * standing, and a hidden window asks for nothing at all.
+ */
+export function useDevServers(sessionId: string) {
+  const [servers, setServers] = React.useState<api.DevServer[]>(
+    () => devServers.get(sessionId) ?? NO_SERVERS
+  )
+
+  React.useEffect(() => {
+    if (!sessionId) return
+    let cancelled = false
+    const load = () => {
+      if (document.hidden) return
+      probeDevServers(sessionId)
+        .then((next) => {
+          if (!cancelled) setServers(next)
+        })
+        .catch(() => {
+          /* the chips simply stay as they were */
+        })
+    }
+    load()
+    const timer = setInterval(load, DEV_SERVER_POLL_MS)
+    window.addEventListener("focus", load)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+      window.removeEventListener("focus", load)
+    }
+  }, [sessionId])
+
+  return servers
+}
+
 const chip =
   "inline-flex shrink-0 items-center gap-0.5 rounded-sm px-1 font-mono text-[10.5px] tabular-nums normal-case"
 
@@ -95,9 +167,15 @@ export const FolderStatus = React.memo(function FolderStatus({
   className?: string
 }) {
   const status = useFolderStatus(cwd, sessionId)
-  if (!status?.isGitRepo) return null
-  const { ahead, behind, dirty, pr } = status
-  if (!ahead && !behind && !dirty && !pr) return null
+  const servers = useDevServers(sessionId)
+  // A folder that is not a checkout still runs things: the git half stays
+  // silent for it, and the dev servers are shown either way.
+  const repo = status?.isGitRepo ? status : null
+  const ahead = repo?.ahead ?? 0
+  const behind = repo?.behind ?? 0
+  const dirty = repo?.dirty ?? 0
+  const pr = repo?.pr
+  if (!ahead && !behind && !dirty && !pr && servers.length === 0) return null
 
   return (
     <span
@@ -155,6 +233,29 @@ export const FolderStatus = React.memo(function FolderStatus({
           <GitPullRequest className="size-2.5" />#{pr.number}
         </button>
       ) : null}
+      {servers.map((server) => (
+        <button
+          key={server.url}
+          type="button"
+          data-slot="folder-dev-server"
+          title={[server.url, server.command, server.title]
+            .filter(Boolean)
+            .join(" · ")}
+          onClick={(event) => {
+            // Same as the pull request chip: the header is a disclosure, and
+            // this click is not about opening it.
+            event.stopPropagation()
+            void openExternal(server.url)
+          }}
+          className={cn(
+            chip,
+            "text-sky-600 outline-none transition-colors hover:bg-sidebar-accent focus-visible:ring-[3px] focus-visible:ring-sidebar-ring/50 dark:text-sky-400"
+          )}
+        >
+          <Globe className="size-2.5" />
+          {server.port}
+        </button>
+      ))}
     </span>
   )
 })

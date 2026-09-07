@@ -5,9 +5,15 @@ import { type Layout } from "react-resizable-panels"
 import { toast } from "sonner"
 
 import { refreshFolderStatus } from "@/components/folder-status"
+import {
+  addLineComment,
+  clearLineComments,
+  setLineCommentComposer,
+} from "@/components/line-comments"
 import type { FileActionItem } from "@/components/ui/change-summary"
 import {
   filePreviewFromTool,
+  type DiffLineCommentRange,
   type FilePreviewDiffLayout,
   type FilePreviewFile,
 } from "@/components/ui/file-preview"
@@ -77,7 +83,8 @@ export function useFilePanel({
   revertProvider: string
   defaultEditor: string
 }) {
-  const { activeIdRef, providerIdRef, sessionsRef, threadsRef } = refs
+  const { activeIdRef, composerRef, providerIdRef, sessionsRef, threadsRef } =
+    refs
 
   /** The file open in the right-hand panel; null = the panel is closed. */
   const [preview, setPreview] = React.useState<FilePreviewFile | null>(null)
@@ -503,6 +510,36 @@ export function useFilePanel({
     [activeIdRef, openPreview, threadsRef]
   )
 
+  /**
+   * Lines picked in the panel, on their way to the composer.
+   *
+   * The pending list is not state of this hook — it has to be readable from
+   * the chips bar above the prompt, which is not in this hook's tree — so it
+   * lives in the small store `components/line-comments.tsx` owns, and this is
+   * where its lifetime is decided: the composer it writes into is registered
+   * here, because this is the layer that already holds the chat's refs, and a
+   * chat switch drops whatever was never sent.
+   */
+  React.useEffect(() => {
+    setLineCommentComposer(composerRef)
+    return () => setLineCommentComposer(null)
+  }, [composerRef])
+
+  React.useEffect(() => {
+    // A comment is about a file in *this* chat, and it names lines by number:
+    // carrying it into the next chat would point at whatever happened to be on
+    // those lines there.
+    clearLineComments()
+  }, [activeId])
+
+  /** Handed to `FilePreview`; the panel calls it when a range is commented on. */
+  const handleLineComment = React.useCallback(
+    (range: DiffLineCommentRange) => {
+      addLineComment(range)
+    },
+    []
+  )
+
   const handleReviewChanges = React.useCallback(
     (messageId: string) => {
       const thread = threadsRef.current[activeIdRef.current] ?? EMPTY_MESSAGES
@@ -537,5 +574,6 @@ export function useFilePanel({
     handleFileReferenceClick,
     handleChatChangeClick,
     handleReviewChanges,
+    handleLineComment,
   }
 }
