@@ -165,13 +165,38 @@ one interface:
   follows the chat's mode: a read-only chat gets no writer.
 - Providers: `mock` (scripted), `cursor` (spawns the `cursor-agent` CLI, resumes by session id),
   `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
-  `pi` (spawns the `pi` CLI in `--mode json` as an agentic harness over *every* configured
+  `pi` (spawns the `pi` CLI in `--mode rpc` as an agentic harness over *every* configured
   model source — the local Ollama server, the hosted providers under `settings.modelProviders`,
-  or either on its own; it is unavailable only when neither is there. Four tools, resumes by pi
-  session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-agent.ts` owns the subprocess and
-  event translation, and a generated `models.json` under `$AGENT_UI_DIR/pi` writes one entry per
-  source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and on
-  for the hosted ones, which read it),
+  or either on its own; it is unavailable only when neither is there. Four tools plus one of
+  ours, resumes by pi session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-protocol.ts` is
+  the pure half — the argv, the stdin commands and the event translation, importing nothing
+  `node --test` cannot load — and `lib/pi-agent.ts` owns the subprocess. RPC rather than json
+  mode because json mode is one-way: the prompt goes over stdin as a `prompt` command, which is
+  the same channel an `extension_ui_request` is answered on, and a turn ends on `agent_settled`
+  (`agent_end` arms a short grace as the fallback) rather than on end of stdout. There is no
+  session header line either, so the id to resume with is asked for with `get_state`, written up
+  front beside the prompt. A generated `models.json` under `$AGENT_UI_DIR/pi` writes one entry
+  per source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and
+  on for the hosted ones, which read it, and `input` per model, without which pi drops an
+  attached image from the request without a word.
+
+  Two things that config directory now carries beside the catalog. **A generated extension**,
+  `extensions/ask-user.ts` from a string constant in `lib/pi-extension.ts`, loaded with an
+  explicit `--extension`: `--no-extensions` stays, because it turns *discovery* off — the user's
+  own extensions, each one context the model pays for — while an explicit path still loads. It
+  registers `request_user_input`, whose `execute` calls `ctx.ui.select`/`ctx.ui.input` and
+  returns the answer as the tool result, so the model carries on in the *same* run. The dialog
+  surfaces as an `extension_ui_request`, is mapped to a `UserRequest` (`lib/turn-requests.ts`),
+  put to `AgentRunOptions.askUser`, and published as a `question` tool row — running before the
+  wait, done or error after. No `askUser` cancels every request rather than hanging, and a
+  dialog carrying a `timeout` stops being waited on when pi's own clock runs out. The tool is
+  deliberately *not* one of the names `isAskToolName` claims: those belong to the between-turns
+  ask flow, which answers by rewriting the transcript and sending a fresh user turn, while this
+  one's run is still open and blocked on stdin. **Vision**, per model rather than per provider:
+  a local tag is asked (`/api/show` reports `vision`), a hosted one can only be read off its id
+  because no OpenAI-compatible `/models` reports modality, and the one predicate drives both
+  `visionModels()` and the `input` written into the catalog, so the attachment button and the
+  request can never disagree),
   `claude-code` (spawns the `claude` CLI as `-p --output-format stream-json --verbose
   --include-partial-messages`, resumes by CLI session id; `lib/claude-code-runtime.ts` finds the
   binary, `lib/claude-code-protocol.ts` is the pure half — the argv and the event translation,

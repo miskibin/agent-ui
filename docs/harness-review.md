@@ -44,11 +44,22 @@ These are review findings, not claims of complete CLI parity:
 | Effort | CLI thinking setting mapped | ACP reasoning effort mapped |
 | Context | Standing and turn context injected | Standing and turn context injected |
 | Permissions | No enforced permission modes advertised | Read-only/edits/full mapped; an `ask` policy now puts every `session/request_permission` to the user and the blocked turn continues on the answer |
-| Questions | Launch uses `--no-extensions`; native question integration needs work | Structured ask tools render; ACP approvals have an interactive round trip (`lib/turn-requests`, `POST /api/chat/respond`) |
-| Images | Vision not advertised | Vision read from `promptCapabilities` rather than assumed; dsh 0.0.1 answers `image: false`, so it stays off. The transport is implemented and covered by tests for an agent that says yes |
+| Questions | `--mode rpc` plus a generated `ask-user` extension; `request_user_input` blocks the turn, the answer returns through `askUser` and a `question` row | Structured ask tools render; ACP approvals have an interactive round trip (`lib/turn-requests`, `POST /api/chat/respond`) |
+| Images | Vision advertised per model: `/api/show` for local tags, the id for hosted ones, and `input` written into the catalog. Verified end to end on `deepseek-v4-flash-vision-exp` | Vision read from `promptCapabilities` rather than assumed; dsh 0.0.1 answers `image: false`, so it stays off. The transport is implemented and covered by tests for an agent that says yes |
 
 Do not enable capability flags without implementing and testing their transport
 and enforcement. A model appearing in a catalog does not establish image support.
+
+The two Pi rows above were closed on 2026-09-07 against pi-coding-agent 0.84.4.
+Both were tested live rather than reasoned about: the question row was watched
+on the SSE stream of the standalone server going running then done around the
+wait, and the image run was confirmed by a model naming the two halves of a
+generated 8x8 PNG. The same image sent to a catalog entry left at the default
+`input: ["text"]` was dropped silently and the token count showed it, which is
+why `input` is written per model rather than left out. Local `gemma4:e4b` takes
+the image over the OpenAI shim — the token count says it arrives — but answers
+that it cannot see one; unresolved, and the reason the local half of vision is
+reported as transported rather than as working on every model.
 
 ## Verification environment
 
