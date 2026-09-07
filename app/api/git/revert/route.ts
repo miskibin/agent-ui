@@ -1,17 +1,16 @@
-import { execFile } from "node:child_process"
 import path from "node:path"
-import { promisify } from "node:util"
 
 import { NextResponse } from "next/server"
 
 import { realPath } from "@/lib/fs-roots"
+import { runGit } from "@/lib/git-exec"
+import { invalidateGitStatus } from "@/lib/git-status"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { getSession } from "@/lib/store/sessions"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-const run = promisify(execFile)
 const GIT_TIMEOUT_MS = 5_000
 
 /**
@@ -22,6 +21,15 @@ const GIT_TIMEOUT_MS = 5_000
  *
  * The file is resolved against the chat's stored folder and must stay inside
  * it; git only ever sees a relative path as an argument after `--`.
+ *
+ * **And that path is a pathspec, not a file name.** This is the reason
+ * `lib/git-exec` puts `--literal-pathspecs` in front of every command it runs.
+ * The path here is whatever a tool call or an answer said, and to git
+ * `report[1].md` is a character class, `*.bak` is a glob and `:(exclude)src`
+ * is a magic pathspec — so a "revert this one file" on a name with a bracket
+ * in it silently reverted a different file, and on a name with a star in it
+ * reverted every file that matched. The flag turns all of that back into the
+ * literal name it always looked like.
  */
 export async function POST(req: Request) {
   const refused = crossOriginRefusal(req)
@@ -60,23 +68,29 @@ export async function POST(req: Request) {
   }
   const relative = path.relative(realRoot, target)
 
-  const git = (args: string[]) =>
-    run("git", args, { cwd: resolvedRoot, timeout: GIT_TIMEOUT_MS, windowsHide: true })
-
-  try {
-    const { stdout } = await git(["ls-files", "--error-unmatch", "--", relative])
-    if (!stdout.trim()) throw new Error("untracked")
-  } catch {
+  const tracked = await runGit(["ls-files", "--error-unmatch", "--", relative], {
+    cwd: resolvedRoot,
+    timeoutMs: GIT_TIMEOUT_MS,
+  })
+  if (!tracked.ok || !tracked.stdout.trim()) {
     return NextResponse.json(
       { error: "That file is not tracked by git — nothing to restore" },
       { status: 409 }
     )
   }
-  try {
-    await git(["checkout", "--", relative])
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "git checkout failed"
-    return NextResponse.json({ error: message }, { status: 500 })
+
+  const reverted = await runGit(["checkout", "--", relative], {
+    cwd: resolvedRoot,
+    timeoutMs: GIT_TIMEOUT_MS,
+    readOnlyConfig: false,
+  })
+  if (!reverted.ok) {
+    return NextResponse.json(
+      { error: reverted.stderr.trim() || "git checkout failed" },
+      { status: 500 }
+    )
   }
+  // The sidebar's dirty count is a second stale by design; this is not a poll.
+  invalidateGitStatus(resolvedRoot)
   return NextResponse.json({ ok: true, path: relative })
 }

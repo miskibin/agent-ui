@@ -22,6 +22,14 @@ import type { StoredMessage } from "@/lib/store/types"
  * are folded in here, after the edits and without stats, since nothing was
  * diffed.
  *
+ * When the turn has a **checkpoint** (`lib/checkpoints`), the edits come from
+ * there instead of from the tools. A checkpoint is a real diff of the worktree
+ * across the turn, so it is the only list that is actually true: it catches a
+ * file a shell command wrote, a formatter that ran on save and a generator's
+ * output, and it *drops* an edit the agent made and then undid, which the tool
+ * calls still claim happened. The extras below are folded in on top either
+ * way — an image is a product of the turn whether or not git can see it move.
+ *
  * Returns undefined when there is nothing to add, which leaves the card to the
  * component's own derivation (and keeps the message object identical, so the
  * memoized row does not re-render).
@@ -32,7 +40,19 @@ export function turnFiles(message: StoredMessage): ChangeSummaryFile[] | undefin
     ? message.tools
     : toolsFromParts(message.parts ?? [])
 
-  const changes = fileChangesFromTools(tools)
+  /**
+   * An empty array is an answer ("git saw nothing change"), not a missing one:
+   * a checkpoint whose diff could not be taken leaves the field undefined, and
+   * only then does the tool-derived list stand.
+   */
+  const measured = message.metadata?.checkpoint?.files
+  const changes = measured
+    ? measured.map((file) => ({
+        path: file.path,
+        additions: file.insertions,
+        deletions: file.deletions,
+      }))
+    : fileChangesFromTools(tools)
   const seen = new Set(changes.map((file) => fileKey(file.path)))
   const extra: ChangeSummaryFile[] = []
   const add = (path: string) => {
@@ -50,7 +70,10 @@ export function turnFiles(message: StoredMessage): ChangeSummaryFile[] | undefin
     for (const path of namedMedia(text)) add(path)
   }
 
-  return extra.length > 0 ? [...changes, ...extra] : undefined
+  // With a checkpoint the list always travels, even when it is empty or
+  // identical to the derived one: it is the measured answer, and the component
+  // has no way to arrive at it on its own.
+  return measured || extra.length > 0 ? [...changes, ...extra] : undefined
 }
 
 /** Images a tool touched — the agent viewing what it just rendered. */

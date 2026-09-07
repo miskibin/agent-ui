@@ -253,6 +253,55 @@ export function useFilePanel({
   )
 
   /**
+   * What the panel is showing, readable without closing over it. Written in an
+   * effect rather than during render, the way the rest of the chat's mirrors
+   * are: `restoreTurn` below has to know which file to re-read, and it must
+   * not be rebuilt every time the panel opens a different one.
+   */
+  const previewRef = React.useRef<FilePreviewFile | null>(null)
+  React.useEffect(() => {
+    previewRef.current = preview
+  }, [preview])
+
+  /**
+   * Undo an entire turn on disk: the chat's folder goes back to the worktree
+   * checkpoint taken before that turn ran (`lib/checkpoints`), and the open
+   * file is re-read afterwards so the panel stops showing a version that no
+   * longer exists.
+   *
+   * This deletes work — files the agent created since are removed — so it is
+   * deliberately *not* confirmed here. The caller asks first, through the same
+   * toast action "Revert changes" uses, and calls this from it.
+   */
+  const restoreTurn = React.useCallback(
+    async (turn: number) => {
+      if (!activeId) return false
+      try {
+        const response = await fetch("/api/checkpoints/restore", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sessionId: activeId, turn }),
+        })
+        if (!response.ok) {
+          const body = (await response.json().catch(() => null)) as {
+            error?: string
+          } | null
+          toast.error(body?.error ?? "Could not restore that checkpoint")
+          return false
+        }
+      } catch {
+        toast.error("Could not restore that checkpoint")
+        return false
+      }
+      toast.success("Restored the folder to before that turn")
+      const open = previewRef.current
+      if (open) handleReverted(open.path)
+      return true
+    },
+    [activeId, handleReverted]
+  )
+
+  /**
    * The right-click menu on every file in the chat. Rebuilt only when the
    * chat, its folder, the detected editors or the editor setting change —
    * the rows it reaches are memoized on the array's identity.
@@ -415,6 +464,7 @@ export function useFilePanel({
     setWrap,
     handleCopyPath,
     openPreview,
+    restoreTurn,
     fileActions,
     resolveFileUrl,
     handleOpenFile,

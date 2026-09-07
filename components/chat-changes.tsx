@@ -24,8 +24,10 @@ import type { StoredMessage } from "@/lib/store/types"
 /**
  * Union of every settled turn's change card, stats summed per path. A turn
  * carries an explicit `changes` list only when `lib/turn-files` had something
- * to add; otherwise its card is derived from the mutation tools, the way
- * `Message` derives it, so the two never disagree.
+ * to add; otherwise its card is derived here the way `Message` derives it, so
+ * the two never disagree — including the one thing that outranks both, the
+ * turn's own worktree checkpoint (`lib/checkpoints`), which is a measured diff
+ * rather than a claim made by a tool call.
  */
 const derivedChanges = new WeakMap<StoredMessage, ChangeSummaryFile[]>()
 
@@ -34,9 +36,16 @@ function changesOf(message: StoredMessage): ChangeSummaryFile[] {
   if (message.changes) return message.changes
   const cached = derivedChanges.get(message)
   if (cached) return cached
-  const changes = fileChangesFromTools(
-    message.tools?.length ? message.tools : toolsFromParts(message.parts ?? [])
-  )
+  const measured = message.metadata?.checkpoint?.files
+  const changes = measured
+    ? measured.map((file) => ({
+        path: file.path,
+        additions: file.insertions,
+        deletions: file.deletions,
+      }))
+    : fileChangesFromTools(
+        message.tools?.length ? message.tools : toolsFromParts(message.parts ?? [])
+      )
   derivedChanges.set(message, changes)
   return changes
 }

@@ -3,6 +3,12 @@ import "server-only"
 import { readdir, stat } from "node:fs/promises"
 import path from "node:path"
 
+import {
+  MAX_GIT_FILE_LIST_OUTPUT,
+  runGit,
+  splitNullSeparated,
+} from "@/lib/git-exec"
+
 /**
  * One bounded walk of a chat's working folder, shared by everything that has
  * to turn a name into a file: the composer's `@` menu, the preview panel and
@@ -15,9 +21,16 @@ import path from "node:path"
  * and every click on it dies. `resolveInRoot` is the repair: the direct join
  * first, then the walk, matching on the deepest path suffix that is unique.
  *
- * The walk is cached per folder for a short while — a menu that re-walks a
+ * The list is cached per folder for a short while — a menu that re-walks a
  * monorepo on every keystroke would be unusable — and bounded in depth and
  * count, skipping the directories nobody ever means.
+ *
+ * In a git checkout the list comes from git itself
+ * (`ls-files --cached --others --exclude-standard`), which is both faster than
+ * walking and *right*: it honours the repo's own `.gitignore`, so a build
+ * directory this file never heard of is excluded because the project says so,
+ * not because `SKIP_DIRS` below happened to name it. That hand-written list
+ * stays as the fallback for a folder git knows nothing about.
  */
 
 const MAX_FILES = 20_000
@@ -50,7 +63,43 @@ export type Walk = { at: number; files: string[]; truncated: boolean }
 
 const walks = new Map<string, Promise<Walk>>()
 
+/** As long as a cold monorepo needs; the caller is a menu, not a turn. */
+const GIT_LIST_TIMEOUT_MS = 20_000
+
+// Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
+/**
+ * The folder's files according to git — tracked plus untracked-and-not-ignored
+ * — or null when git cannot answer (no git, not a repo, a timeout).
+ *
+ * `-z` because a file name may contain anything but NUL, and the output cap is
+ * enforced by `runGit`: on a truncated read the final record is whatever the
+ * buffer cut in half, and `splitNullSeparated` drops it rather than offering
+ * the menu half a path.
+ */
+async function gitFiles(root: string): Promise<Walk | null> {
+  const listed = await runGit(
+    ["ls-files", "--cached", "--others", "--exclude-standard", "-z"],
+    {
+      cwd: root,
+      timeoutMs: GIT_LIST_TIMEOUT_MS,
+      maxBuffer: MAX_GIT_FILE_LIST_OUTPUT,
+    }
+  )
+  // A truncated read is still a usable read; anything else is a fallback.
+  if (!listed.ok && !listed.truncated) return null
+  const files = splitNullSeparated(listed.stdout, listed.truncated)
+  let truncated = listed.truncated
+  if (files.length > MAX_FILES) {
+    files.length = MAX_FILES
+    truncated = true
+  }
+  files.sort()
+  return { at: Date.now(), files, truncated }
+}
+
 async function walk(root: string): Promise<Walk> {
+  const fromGit = await gitFiles(root)
+  if (fromGit) return fromGit
   const files: string[] = []
   let truncated = false
   const visit = async (dir: string, depth: number) => {
@@ -76,6 +125,19 @@ async function walk(root: string): Promise<Walk> {
   }
   await visit(root, 0)
   return { at: Date.now(), files, truncated }
+}
+
+/**
+ * Forget what `root` held.
+ *
+ * A turn that just created a file is exactly when the cached list is wrong and
+ * the user is about to go looking for that file: `@` should offer it, and a
+ * chip naming it should resolve. Called when a turn settles.
+ */
+export function invalidateWalk(root: string) {
+  const resolved = path.resolve(root)
+  walks.delete(resolved)
+  if (resolved !== root) walks.delete(root)
 }
 
 /** The walk for `root`, reused for `CACHE_TTL_MS`. */

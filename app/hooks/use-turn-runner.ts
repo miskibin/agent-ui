@@ -27,7 +27,11 @@ import { playAgentNotificationSound } from "@/lib/notification-sounds"
 import { notifyAttention } from "@/lib/notifications"
 import type { MemoryChange } from "@/lib/memory/types"
 import type { PermissionMode } from "@/lib/providers/types"
-import type { SessionMeta, StoredMessage } from "@/lib/store/types"
+import type {
+  SessionMeta,
+  StoredMessage,
+  TurnCheckpoint,
+} from "@/lib/store/types"
 
 import type { SessionRun } from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
@@ -55,6 +59,24 @@ export type RunPromptArgs = {
 }
 
 export type RunPrompt = (args: RunPromptArgs) => Promise<void>
+
+/**
+ * A fire-and-forget POST that is allowed to fail. Module-level on purpose:
+ * nothing the memoized rows are handed may close over a render.
+ */
+async function postJson<T>(url: string, body: unknown): Promise<T | null> {
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+    if (!response.ok) return null
+    return (await response.json()) as T
+  } catch {
+    return null
+  }
+}
 
 /**
  * One agent turn, start to finish: seed the message pair, fold the stream into
@@ -429,6 +451,39 @@ export function useTurnRunner({
         )
       }
 
+      /**
+       * The chat's folder, for the two things that happen around a turn on
+       * disk: the worktree checkpoint, and forgetting the cached file list.
+       * A chat with no folder pays for neither.
+       */
+      const cwd = sessionsRef.current
+        .find((item) => item.id === sessionId)
+        ?.cwd?.trim()
+      /**
+       * Which turn this is, and therefore which checkpoint refs bracket it:
+       * the tree as it stood after turn N is the "before" of turn N+1, and the
+       * baseline before the very first turn is turn 0.
+       */
+      const priorTurns = prior.reduce(
+        (count, message) => (message.sender === "assistant" ? count + 1 : count),
+        0
+      )
+
+      /**
+       * The baseline, and it is awaited rather than fired off: a checkpoint
+       * taken after the agent has already written a file does not describe the
+       * state the user would want back. `ifMissing` is what keeps it cheap —
+       * in a chat that has been running, the previous turn's own capture is
+       * already that ref, and this costs one `rev-parse`.
+       */
+      if (cwd) {
+        await postJson("/api/checkpoints/capture", {
+          sessionId,
+          turn: priorTurns,
+          ifMissing: true,
+        })
+      }
+
       try {
         await api.streamChat(
           {
@@ -462,6 +517,40 @@ export function useTurnRunner({
           prev[sessionId]?.startedAt === startedAt ? omit(prev, sessionId) : prev
         )
         patchLocal(sessionId, { updatedAt: nowMs() })
+        /**
+         * What the turn actually did to the disk — a stopped one included,
+         * since Stop does not un-write the files the agent had already
+         * written. The route takes the checkpoint, diffs it against the
+         * baseline and stores the rows on the assistant message; the copy
+         * that comes back is folded in here so the file card is right without
+         * waiting for a reload.
+         *
+         * Awaited before the queue drains: the next turn's baseline is this
+         * turn's checkpoint, and two captures racing for the same ref would
+         * make the chain describe a tree neither of them saw.
+         */
+        if (cwd) {
+          const captured = await postJson<{ checkpoint?: TurnCheckpoint }>(
+            "/api/checkpoints/capture",
+            {
+              sessionId,
+              turn: priorTurns + 1,
+              baseTurn: priorTurns,
+              messageId: assistantId,
+            }
+          )
+          const checkpoint = captured?.checkpoint
+          if (checkpoint) {
+            patchAssistant((message) => ({
+              ...message,
+              metadata: { ...message.metadata, checkpoint },
+            }))
+          }
+        }
+        /* The `@` menu caches the folder's file list for half a minute, which
+           is exactly wrong the moment a turn creates the file the user is
+           about to go looking for. */
+        if (cwd) void postJson("/api/fs/invalidate", { sessionId })
         /* Only a turn that actually landed is worth learning from. A stopped
            one is usually about to be re-sent, and a failed one would spend a
            model call to stack a second toast under the failure's own. */

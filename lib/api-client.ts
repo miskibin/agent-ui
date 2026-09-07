@@ -450,19 +450,8 @@ export function searchFiles(
   )
 }
 
-export type GitStatus = {
-  isGitRepo: boolean
-  branch: string
-  ahead: number
-  behind: number
-  dirty: number
-  pr?: {
-    number: number
-    url: string
-    state: "OPEN" | "MERGED" | "CLOSED"
-    title: string
-  }
-}
+import type { GitStatus } from "@/lib/git-status"
+export type { GitStatus }
 
 /** The git state of a chat's folder, resolved server-side from the chat. */
 export function fetchGitStatus(sessionId: string): Promise<GitStatus> {
