@@ -6,6 +6,7 @@ import { toast } from "sonner"
 import * as api from "@/lib/api-client"
 import { errorMessage, omit } from "@/lib/chat-helpers"
 import { clearDraft } from "@/lib/drafts"
+import { folderName } from "@/lib/folder"
 import { runLayoutTransition } from "@/lib/layout-transition"
 import type { PermissionMode, ProviderInfo } from "@/lib/providers/types"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
@@ -184,8 +185,101 @@ export function useChatActions({
     ]
   )
 
+  /**
+   * The worktree a chat was working in, when it was working in one of its own.
+   *
+   * `worktree.root` is the recorded answer; `cwd` is the fallback, because a
+   * chat started before that field existed still has its folder — and the
+   * server is the one that decides whether a folder is a worktree the app
+   * made, so guessing here would be wrong either way.
+   */
+  const worktreeRootOf = React.useCallback((session: SessionMeta | undefined) => {
+    return session?.worktree?.root.trim() || session?.cwd?.trim() || ""
+  }, [])
+
+  /**
+   * Deleting the last chat that used a worktree offers to delete the worktree
+   * too — the folder and the branch both, since nothing else is holding them.
+   *
+   * It is an offer, not a consequence: an agent's work is on that branch, and
+   * "I deleted the chat" is not "I meant to throw away the code". So the toast
+   * says what would be lost (uncommitted files, commits that were never
+   * pushed) and does nothing until the user presses the action. The server
+   * decides whether the folder is a worktree at all — see
+   * `GET /api/worktrees/status`.
+   */
+  const offerWorktreeCleanup = React.useCallback(
+    (removed: (SessionMeta | undefined)[], remaining: SessionMeta[]) => {
+      const stillUsed = new Set(
+        remaining.map(worktreeRootOf).filter((root) => root.length > 0)
+      )
+      const orphans = new Map<string, SessionMeta>()
+      for (const session of removed) {
+        const root = worktreeRootOf(session)
+        // A worktree two chats share is not orphaned by losing one of them.
+        if (!session || !root || stillUsed.has(root) || orphans.has(root)) continue
+        orphans.set(root, session)
+      }
+      for (const [root, session] of orphans) {
+        void api
+          .fetchWorktreeCleanup(root)
+          .then((info) => {
+            if (!info.managed) return
+            const branch = info.branch || session.worktree?.branch || ""
+            const at = [folderName(info.root), branch].filter(Boolean).join(" · ")
+            const losses = [
+              info.status.dirty > 0 &&
+                `${info.status.dirty} uncommitted file${info.status.dirty === 1 ? "" : "s"}`,
+              info.status.unpushed > 0 &&
+                `${info.status.unpushed} unpushed commit${info.status.unpushed === 1 ? "" : "s"}`,
+            ].filter((part): part is string => typeof part === "string")
+            toast("Remove worktree and branch?", {
+              description: losses.length
+                ? `${at} still has ${losses.join(" and ")}.`
+                : at,
+              duration: 15_000,
+              action: {
+                label: "Remove",
+                onClick: () => {
+                  void api
+                    .removeWorktree({
+                      repoRoot: info.repoRoot,
+                      root: info.root,
+                      branch: branch || undefined,
+                      // The warning above is the confirmation: without this a
+                      // worktree with uncommitted work refuses to go, and the
+                      // user has just said to remove it anyway.
+                      force: true,
+                    })
+                    .then((result) => {
+                      toast.success(
+                        result.branchDeleted && branch
+                          ? `Removed the worktree and ${branch}`
+                          : "Removed the worktree"
+                      )
+                    })
+                    .catch((err: unknown) =>
+                      toast.error(
+                        errorMessage(err, "Could not remove the worktree")
+                      )
+                    )
+                },
+              },
+            })
+          })
+          .catch(() => {
+            /* the chat is already gone; a failed probe offers nothing */
+          })
+      }
+    },
+    [worktreeRootOf]
+  )
+
   const removeSession = React.useCallback(
     (id: string) => {
+      const known = sessionsRef.current
+      const removed = known.find((session) => session.id === id)
+      const remaining = known.filter((session) => session.id !== id)
       if (activeIdRef.current === id) closePreview()
       abortsRef.current.get(id)?.abort()
       abortsRef.current.delete(id)
@@ -209,6 +303,7 @@ export function useChatActions({
       })
       void api
         .deleteSession(id)
+        .then(() => offerWorktreeCleanup([removed], remaining))
         .catch((err: unknown) =>
           toast.error(errorMessage(err, "Could not delete the chat"))
         )
@@ -218,6 +313,8 @@ export function useChatActions({
       activeIdRef,
       closePreview,
       forgetDraft,
+      offerWorktreeCleanup,
+      sessionsRef,
       setActiveId,
       setFailures,
       setQueues,
@@ -231,6 +328,9 @@ export function useChatActions({
     (ids: string[]) => {
       if (ids.length === 0) return
       const idSet = new Set(ids)
+      const known = sessionsRef.current
+      const removed = known.filter((session) => idSet.has(session.id))
+      const remaining = known.filter((session) => !idSet.has(session.id))
       for (const id of ids) {
         abortsRef.current.get(id)?.abort()
         abortsRef.current.delete(id)
@@ -269,13 +369,15 @@ export function useChatActions({
         )
         return next
       })
-      for (const id of ids) {
-        void api
-          .deleteSession(id)
-          .catch((err: unknown) =>
-            toast.error(errorMessage(err, "Could not delete the chat"))
-          )
-      }
+      void Promise.all(
+        ids.map((id) =>
+          api
+            .deleteSession(id)
+            .catch((err: unknown) =>
+              toast.error(errorMessage(err, "Could not delete the chat"))
+            )
+        )
+      ).then(() => offerWorktreeCleanup(removed, remaining))
       toast.message(
         ids.length === 1 ? "Chat deleted" : `${ids.length} chats deleted`
       )
@@ -283,6 +385,8 @@ export function useChatActions({
     [
       abortsRef,
       forgetDraft,
+      offerWorktreeCleanup,
+      sessionsRef,
       setActiveId,
       setFailures,
       setQueues,

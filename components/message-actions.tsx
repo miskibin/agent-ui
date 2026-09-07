@@ -1,6 +1,6 @@
 "use client"
 
-import { Copy, Info, RefreshCw, Trash2 } from "lucide-react"
+import { Copy, History, Info, RefreshCw, Trash2 } from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
 
@@ -31,6 +31,13 @@ export type MessageActionsProps = {
   providerName?: string
   onRegenerate: (id: string) => void
   onDelete: (id: string) => void
+  /**
+   * Put the chat's folder back to the worktree checkpoint taken before this
+   * turn ran. Omitted when the chat has no folder — there is nothing to
+   * restore — and the row only appears for a turn that actually captured one.
+   * The caller asks for confirmation; this is only the button.
+   */
+  onRestoreCheckpoint?: (turn: number) => void
 }
 
 export const MessageActions = React.memo(function MessageActions({
@@ -38,7 +45,9 @@ export const MessageActions = React.memo(function MessageActions({
   providerName,
   onRegenerate,
   onDelete,
+  onRestoreCheckpoint,
 }: MessageActionsProps) {
+  const checkpoint = message.metadata?.checkpoint
   return (
     <div className="-mt-2 mb-4 flex gap-1 opacity-60 transition-opacity focus-within:opacity-100 hover:opacity-100">
       <ActionBtn
@@ -56,6 +65,17 @@ export const MessageActions = React.memo(function MessageActions({
       <ActionBtn title="Delete" onClick={() => onDelete(message.id)}>
         <Trash2 />
       </ActionBtn>
+      {checkpoint && onRestoreCheckpoint ? (
+        // A turn is the unit the user thinks in, so the undo is a turn too:
+        // every file the agent touched here goes back at once, from the
+        // measured checkpoint rather than from a re-read of what it claimed.
+        <ActionBtn
+          title="Restore files to before this turn"
+          onClick={() => onRestoreCheckpoint(checkpoint.turn)}
+        >
+          <History />
+        </ActionBtn>
+      ) : null}
       <MessageMetadata message={message} providerName={providerName} />
     </div>
   )

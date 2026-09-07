@@ -1,12 +1,21 @@
 "use client"
 
-import { ExternalLink, FolderOpen, Sparkles, SquareTerminal } from "lucide-react"
+import {
+  ExternalLink,
+  FolderOpen,
+  Pin,
+  PinOff,
+  Sparkles,
+  SquareTerminal,
+  Trash2,
+} from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
 
 import type {
   ChatSidebarItemData,
   SidebarItemMenuAction,
+  SidebarItemRenderActions,
 } from "@/components/ui/chat-sidebar"
 import type { GenerationStage } from "@/components/ui/generation-status"
 import type { ModelOption } from "@/components/ui/model-picker"
@@ -24,6 +33,10 @@ const STAGE_SUBTITLES: Record<Exclude<GenerationStage, "idle">, string> = {
   searching: "Searching",
   responding: "Responding",
 }
+
+/** The hover cluster's buttons — quiet, and sized to the row's meta slot. */
+const ROW_ACTION =
+  "inline-grid size-5 place-items-center rounded-sm text-current outline-none transition-colors hover:bg-sidebar-accent-foreground/10 focus-visible:ring-2 focus-visible:ring-sidebar-ring/60 [&_svg]:size-3.5"
 
 /**
  * The sidebar's view model: one row per chat, then the pinned group and one
@@ -43,6 +56,8 @@ export function useSidebarItems({
   models,
   providerName,
   regenerateTitle,
+  onTogglePin,
+  onDelete,
 }: {
   refs: ChatRefs
   sessions: SessionMeta[]
@@ -53,6 +68,8 @@ export function useSidebarItems({
   models: ModelOption[]
   providerName: (id: string) => string
   regenerateTitle: (id: string) => void
+  onTogglePin: (id: string, pinned: boolean) => void
+  onDelete: (id: string) => void
 }) {
   const { orderedIdsRef, sessionsRef } = refs
 
@@ -81,6 +98,10 @@ export function useSidebarItems({
           title: session.title,
           pinned: session.pinned,
           status: run ? "streaming" : failures[session.id] ? "fault" : undefined,
+          // Background work should not compete with the chat you are reading:
+          // a turn running in another chat dims until you hover it. A chat
+          // waiting on an *answer* never recedes — it is the one asking.
+          recede: !!run && session.id !== activeId,
           subtitle,
           meta: run ? (
             <WorkingFor startedAt={run.startedAt} dim={session.id !== activeId} />
@@ -106,6 +127,53 @@ export function useSidebarItems({
       ...folderGroups.flatMap((group) => group.items),
     ].map((item) => item.id)
   }, [folderGroups, orderedIdsRef, pinnedItems])
+
+  /**
+   * Pin and delete on the row itself, in the slot the timestamp holds at rest.
+   * The same two verbs the context menu carries — this is the version you can
+   * reach without a right-click.
+   *
+   * Pinned state is read back through the sidebar mirror rather than closed
+   * over, so the callback keeps one identity for the life of the page and the
+   * memoized rows are never rebuilt for it.
+   */
+  const sessionRowActions = React.useCallback<SidebarItemRenderActions>(
+    (item) => {
+      const pinned = !!sessionsRef.current.find((entry) => entry.id === item.id)
+        ?.pinned
+      return (
+        <>
+          <button
+            type="button"
+            className={ROW_ACTION}
+            title={pinned ? "Unpin chat" : "Pin chat"}
+            aria-label={pinned ? `Unpin ${item.title}` : `Pin ${item.title}`}
+            onClick={() => onTogglePin(item.id, !pinned)}
+          >
+            {pinned ? <PinOff /> : <Pin />}
+          </button>
+          <button
+            type="button"
+            className={ROW_ACTION}
+            title="Delete chat"
+            aria-label={`Delete ${item.title}`}
+            onClick={() =>
+              // Deleting a chat takes its transcript with it, so it gets the
+              // same second click every other destructive action here gets.
+              toast.warning(`Delete “${item.title || "Untitled"}”?`, {
+                description: "The conversation and its transcript are removed.",
+                duration: 8_000,
+                action: { label: "Delete", onClick: () => onDelete(item.id) },
+              })
+            }
+          >
+            <Trash2 />
+          </button>
+        </>
+      )
+    },
+    [onDelete, onTogglePin, sessionsRef]
+  )
 
   /**
    * Extra entries on a chat row's right-click menu. Built per row by the
@@ -157,5 +225,11 @@ export function useSidebarItems({
     [regenerateTitle, sessionsRef]
   )
 
-  return { sessionItems, pinnedItems, folderGroups, sessionMenuActions }
+  return {
+    sessionItems,
+    pinnedItems,
+    folderGroups,
+    sessionMenuActions,
+    sessionRowActions,
+  }
 }

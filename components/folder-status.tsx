@@ -22,6 +22,21 @@ type Status = api.GitStatus
 /** One in-flight/last-known status per folder, shared by every mount. */
 const cache = new Map<string, Status>()
 
+/** Every mounted reader of one folder, so a write to disk can wake them. */
+const listeners = new Map<string, Set<() => void>>()
+
+/**
+ * Re-read one folder's git state now, in every component showing it.
+ *
+ * The poll is once a minute, which is right for a commit landing in another
+ * window and wrong for something this app just did: restoring a checkpoint
+ * rewrites the worktree, and the sidebar badge and the changed-files tree
+ * would otherwise keep describing the tree from before it.
+ */
+export function refreshFolderStatus(cwd: string) {
+  for (const listener of listeners.get(cwd) ?? []) listener()
+}
+
 /**
  * `sessionId` names a chat inside the folder — the route reads the folder
  * back from it, so the client never hands over a path; `cwd` only keys the
@@ -51,10 +66,15 @@ export function useFolderStatus(cwd: string, sessionId: string) {
     load()
     const timer = setInterval(load, POLL_MS)
     window.addEventListener("focus", load)
+    const forFolder = listeners.get(cwd) ?? new Set<() => void>()
+    forFolder.add(load)
+    listeners.set(cwd, forFolder)
     return () => {
       cancelled = true
       clearInterval(timer)
       window.removeEventListener("focus", load)
+      forFolder.delete(load)
+      if (forFolder.size === 0) listeners.delete(cwd)
     }
   }, [cwd, sessionId])
 

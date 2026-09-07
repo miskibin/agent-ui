@@ -1,7 +1,7 @@
 "use client"
 
 import { arrayMove } from "@dnd-kit/sortable"
-import { Pencil, Search, Settings as SettingsIcon } from "lucide-react"
+import { Pencil, Pin, PinOff, Search, Settings as SettingsIcon } from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
 
@@ -18,13 +18,19 @@ import {
   SideRow,
   SidebarCollapsibleSection,
   SidebarEmptyState,
+  SidebarResizeRail,
   type ChatSidebarItemData,
   type SidebarItemMenuAction,
+  type SidebarItemRenderActions,
 } from "@/components/ui/chat-sidebar"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import { errorMessage } from "@/lib/chat-helpers"
-import { PINNED_GROUP_ID, type SessionGroup } from "@/lib/session-groups"
+import {
+  PINNED_GROUP_ID,
+  groupIdForSession,
+  type SessionGroup,
+} from "@/lib/session-groups"
 import type { SessionMeta } from "@/lib/store/types"
 
 /** The vendored toggle, dressed as a sidebar icon button. */
@@ -66,6 +72,9 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   onDeleteMany,
   onReorder,
   getMenuActions,
+  renderActions,
+  sidebarWidth,
+  onSidebarWidthChange,
 }: {
   sessionItems: ChatSidebarItemData[]
   pinnedItems: ChatSidebarItemData[]
@@ -91,17 +100,84 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   onDeleteMany: (ids: string[]) => void
   onReorder: (updater: (prev: SessionMeta[]) => SessionMeta[]) => void
   getMenuActions: (item: ChatSidebarItemData) => SidebarItemMenuAction[]
+  /** Pin and delete on the row, in the slot the timestamp holds at rest. */
+  renderActions: SidebarItemRenderActions
+  /** Persisted panel width, hydrated before the first paint; 0 = never set. */
+  sidebarWidth: number
+  onSidebarWidthChange: (width: number) => void
 }) {
+  /**
+   * The list a chat is filed under — the pinned group, its folder's section,
+   * or the folderless one. It is what makes a drag across sections mean
+   * something: `lib/session-groups` computes the same id the lists register
+   * themselves with.
+   */
+  const listOf = (id: string) => {
+    const session = sessionsRef.current.find((item) => item.id === id)
+    return session ? groupIdForSession(session) : null
+  }
+
   return (
     <ChatSidebarDnd
+      /*
+       * What a cross-list drop would do. Only two moves are real here — into
+       * the pinned group and back out of it — and the badge on the lifted row
+       * is what says which one the pointer is over.
+       */
+      resolveDropVerb={(fromListId, toListId) => {
+        if (toListId === PINNED_GROUP_ID) {
+          return { label: "Pin", icon: <Pin aria-hidden className="size-3" /> }
+        }
+        if (fromListId === PINNED_GROUP_ID) {
+          return {
+            label: "Unpin",
+            icon: <PinOff aria-hidden className="size-3" />,
+          }
+        }
+        return null
+      }}
+      /*
+       * Refuse the drops the app cannot honour, so a rejected target falls
+       * back to the row it was lifted from instead of landing somewhere that
+       * silently does nothing: a chat moves into the pinned group and back to
+       * its own folder, and nowhere else. A reorder survives only inside the
+       * pinned group (`lib/session-groups`), so that is the only list whose
+       * rows accept one.
+       */
+      canDrop={(itemId, overId) => {
+        const from = listOf(itemId)
+        const to = listOf(overId)
+        // A zone, or a row this sidebar does not know: leave it to the zones.
+        if (from === null || to === null) return true
+        if (to === PINNED_GROUP_ID) return true
+        if (from === PINNED_GROUP_ID) {
+          // Unpinning files the chat under its own folder; any other section
+          // is a move this app has nothing to write back for.
+          const session = sessionsRef.current.find((item) => item.id === itemId)
+          return !!session && to === groupIdForSession({ ...session, pinned: false })
+        }
+        return false
+      }}
       onDrop={(drop) => {
         if (drop.kind === "reorder") {
           // Only the pinned list reorders by hand: a folder section is
           // ordered by activity, and `order` is one global sequence with
           // nothing per-folder to write back to. `from`/`to` are indices
           // inside their own list, so the ids are what map onto `sessions`.
+          if (drop.fromListId !== drop.listId) {
+            // A drag that crosses lists is a pin or an unpin — the verb the
+            // lifted row was showing. `canDrop` has already refused the ones
+            // that would mean nothing.
+            if (drop.listId === PINNED_GROUP_ID) onTogglePin(drop.itemId, true)
+            else if (drop.fromListId === PINNED_GROUP_ID) {
+              onTogglePin(drop.itemId, false)
+            }
+            return
+          }
+          // Only the pinned list reorders by hand: a folder section is ordered
+          // by activity, and `order` is one global sequence with nothing
+          // per-folder to write back to.
           if (drop.listId !== PINNED_GROUP_ID) return
-          if (drop.fromListId !== drop.listId) return
           const list = sessionsRef.current
           const from = list.findIndex((item) => item.id === drop.itemId)
           const to = list.findIndex((item) => item.id === drop.overId)
@@ -131,9 +207,22 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           isDesktop ? onCollapsedChange(next) : onCloseDrawer()
         }
         edgeZones
-        // No rules anywhere in the panel (`dividers` defaults off): the
-        // sections are told apart by their uppercase headers and the space
-        // between them, which is what this gap is for.
+        /*
+         * The drag writes `--chat-sidebar-width` on the panel itself, once per
+         * frame, and tells React only on release — which is why the width is
+         * not state here. Disabled while collapsed: the rail is 60px wide and
+         * has nothing to resize.
+         */
+        overlays={
+          <SidebarResizeRail
+            width={sidebarWidth || undefined}
+            disabled={isDesktop && collapsed}
+            onWidthChange={onSidebarWidthChange}
+          />
+        }
+        // No rules under the header or above the footer (`dividers` defaults
+        // off): the sections are told apart by their own header rules and the
+        // space between them, which is what this gap is for.
         classNames={{ content: "flex flex-col gap-2 pt-2" }}
         brand={
           <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
@@ -213,6 +302,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
             onDelete={onDelete}
             onDeleteMany={onDeleteMany}
             getMenuActions={getMenuActions}
+            renderActions={renderActions}
           />
         ) : null}
 
@@ -230,6 +320,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
             onDelete={onDelete}
             onDeleteMany={onDeleteMany}
             getMenuActions={getMenuActions}
+            renderActions={renderActions}
           />
         ))}
       </ChatSidebar>

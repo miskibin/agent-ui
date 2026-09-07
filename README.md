@@ -27,11 +27,22 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   composer while you scroll; submitting or skipping restores their summary in
   the transcript.
 - **Workspace-aware files.** Give each chat a folder, inspect changed files and
-  diffs beside the transcript, then open them in your editor or terminal.
+  diffs beside the transcript, then open them in your editor or terminal. The
+  header opens a tree of everything the chat changed, and a lazy browser for the
+  rest of the folder; binary files say so instead of pretending to be text.
+- **Per-turn checkpoints.** Every turn in a git folder is bracketed by a
+  worktree snapshot, so one action puts the files back the way they were before
+  it ran. Switchable in Settings → Chat.
+- **Composer that remembers.** ArrowUp walks back through the prompts already
+  sent in the chat, drafts survive a chat switch, and answers render GitHub
+  alerts and clickable `path.ts:42` chips.
+- **A sidebar you can size.** Drag its edge (or resize it from the keyboard),
+  group chats by working folder, pin and delete from the row itself.
 - **Local persistence.** Chats, settings, provider sessions, and optional memory
   live under `~/.agent-ui`.
 - **Visible usage.** See tokens and estimated cost per chat, model, and working
-  folder over 7 days, 30 days, or all time.
+  folder over 7 days, 30 days, or all time — cache reads and writes counted at
+  their own rates, and unpriced turns reported rather than folded in.
 - **Desktop or browser.** The same Next.js application runs in a frameless
   Tauri shell or as a standalone local server.
 

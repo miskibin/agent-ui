@@ -16,6 +16,12 @@ export const CACHE_ACTIVE_KEY = "agent-ui:active-session"
  */
 export const CACHE_SECTIONS_KEY = "agent-ui:folder-sections"
 
+/**
+ * The sidebar's dragged width, in pixels. Seeded into the resize rail before
+ * the first paint, so a restored sidebar never shows the default width first.
+ */
+export const CACHE_SIDEBAR_WIDTH_KEY = "agent-ui:sidebar-width"
+
 /** Where the dragged file-panel width is remembered, as a percentage. */
 export const CACHE_SPLIT_KEY = "agent-ui:preview-size"
 /** The file panel's own preferences: split or unified diff, wrapped lines. */

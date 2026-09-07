@@ -33,6 +33,12 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
     [update]
   )
 
+  const setCheckpoints = React.useCallback(
+    (enabled: boolean) =>
+      update((current) => ({ ...current, checkpoints: { enabled } })),
+    [update]
+  )
+
   return (
     <SettingsSection
       id="chat"
@@ -120,6 +126,23 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
               // one; the desktop shell asks through its own plugin.
               if (desktopNotifications) void requestNotificationPermission()
             }}
+          />
+        }
+      />
+
+      {/* Two `git` reads around a turn, in a chat that has a folder — and the
+          only thing that makes "restore the files to before this turn" an
+          option at all. Turning it off leaves the turns already captured
+          restorable; it simply stops taking new ones. */}
+      <SettingsRow
+        title="Turn checkpoints"
+        htmlFor="chat-checkpoints"
+        description="Snapshot the chat's folder around every turn, so you can put the files back the way they were before it ran."
+        control={
+          <Switch
+            id="chat-checkpoints"
+            checked={settings.checkpoints.enabled}
+            onCheckedChange={setCheckpoints}
           />
         }
       />

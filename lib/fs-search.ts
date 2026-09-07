@@ -39,7 +39,12 @@ const CACHE_TTL_MS = 30_000
 /** A few roots at a time; each can hold `MAX_FILES` paths. */
 const MAX_ROOTS = 8
 
-const SKIP_DIRS = new Set([
+/**
+ * Directories nobody means when they name a file. Exported because the folder
+ * browser (`GET /api/fs/tree`) skips exactly the same ones — a tree that
+ * offers `node_modules` is a tree nobody opens twice.
+ */
+export const SKIP_DIRS = new Set([
   ".git",
   "node_modules",
   ".next",

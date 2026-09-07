@@ -7,9 +7,9 @@ import {
   ChatSidebarItemList,
   SidebarCollapsibleSection,
   SidebarItemBadge,
-  SidebarItemStatusDot,
   type ChatSidebarItemData,
   type SidebarItemMenuAction,
+  type SidebarItemRenderActions,
 } from "@/components/ui/chat-sidebar"
 import type { SessionGroup } from "@/lib/session-groups"
 
@@ -25,6 +25,8 @@ export type SidebarSectionProps = {
   onDelete: (id: string) => void
   onDeleteMany: (ids: string[]) => void
   getMenuActions?: (item: ChatSidebarItemData) => SidebarItemMenuAction[]
+  /** Pin and delete in the row's meta slot, on hover or keyboard focus. */
+  renderActions?: SidebarItemRenderActions
 }
 
 export const SidebarSessionSection = React.memo(function SidebarSessionSection({
@@ -32,6 +34,8 @@ export const SidebarSessionSection = React.memo(function SidebarSessionSection({
   title,
   action,
   sortable = false,
+  rule = false,
+  live = false,
   open,
   onToggle,
   sessions,
@@ -43,6 +47,10 @@ export const SidebarSessionSection = React.memo(function SidebarSessionSection({
   action?: React.ReactNode
   /** Hand-made order — only the pinned group has one to keep. */
   sortable?: boolean
+  /** Header as a label, a hairline and a chevron — the per-folder shape. */
+  rule?: boolean
+  /** Something inside is streaming; the header says so while it is folded. */
+  live?: boolean
   sessions: ChatSidebarItemData[]
 }) {
   const toggle = React.useCallback(() => onToggle(id), [id, onToggle])
@@ -52,6 +60,8 @@ export const SidebarSessionSection = React.memo(function SidebarSessionSection({
       open={open}
       onToggle={toggle}
       action={action}
+      rule={rule}
+      live={live}
       count={sessions.length}
     >
       <ChatSidebarItemList
@@ -61,12 +71,17 @@ export const SidebarSessionSection = React.memo(function SidebarSessionSection({
         renameRequest={rest.renameRequest}
         sortable={sortable}
         draggable
+        // Rows ease between their layout positions — a chat arriving, one
+        // being deleted, a drag released. Transform and opacity only, and it
+        // stands down entirely under `prefers-reduced-motion`.
+        motion
         onSelect={rest.onSelect}
         onRename={rest.onRename}
         onTogglePin={rest.onTogglePin}
         onDelete={rest.onDelete}
         onDeleteMany={rest.onDeleteMany}
         getMenuActions={rest.getMenuActions}
+        renderActions={rest.renderActions}
       />
     </SidebarCollapsibleSection>
   )
@@ -87,6 +102,12 @@ export const SidebarFolderSection = React.memo(function SidebarFolderSection({
       {...rest}
       id={group.id}
       open={open}
+      // One line per working folder: the label, a hairline, the branch and
+      // the chevron — rather than a stack of uppercase captions.
+      rule
+      // The section's own dot while it is folded away. Owned by the component,
+      // which stops animating it when the tab or the row goes out of sight.
+      live={group.running}
       title={<span title={group.cwd || undefined}>{group.label}</span>}
       action={
         <span className="flex min-w-0 items-center gap-1.5 normal-case">
@@ -95,9 +116,6 @@ export const SidebarFolderSection = React.memo(function SidebarFolderSection({
           ) : null}
           {group.cwd && group.items[0] ? (
             <FolderStatus cwd={group.cwd} sessionId={group.items[0].id} />
-          ) : null}
-          {group.running && !open ? (
-            <SidebarItemStatusDot status="streaming" />
           ) : null}
         </span>
       }

@@ -460,6 +460,14 @@ export function useTurnRunner({
         .find((item) => item.id === sessionId)
         ?.cwd?.trim()
       /**
+       * Checkpoints are two `git` reads bracketing the turn, and a switch in
+       * Settings → Chat. Read off the settings mirror rather than a prop, so
+       * the runner is not rebuilt when the value lands or changes; a chat with
+       * no folder has nothing to snapshot either way.
+       */
+      const checkpointCwd =
+        cwd && settingsRef.current?.checkpoints.enabled !== false ? cwd : undefined
+      /**
        * Which turn this is, and therefore which checkpoint refs bracket it:
        * the tree as it stood after turn N is the "before" of turn N+1, and the
        * baseline before the very first turn is turn 0.
@@ -476,7 +484,7 @@ export function useTurnRunner({
        * in a chat that has been running, the previous turn's own capture is
        * already that ref, and this costs one `rev-parse`.
        */
-      if (cwd) {
+      if (checkpointCwd) {
         await postJson("/api/checkpoints/capture", {
           sessionId,
           turn: priorTurns,
@@ -529,7 +537,7 @@ export function useTurnRunner({
          * turn's checkpoint, and two captures racing for the same ref would
          * make the chain describe a tree neither of them saw.
          */
-        if (cwd) {
+        if (checkpointCwd) {
           const captured = await postJson<{ checkpoint?: TurnCheckpoint }>(
             "/api/checkpoints/capture",
             {

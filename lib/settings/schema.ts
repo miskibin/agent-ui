@@ -233,6 +233,16 @@ export type HandoffSettings = {
 }
 
 /**
+ * Per-turn worktree checkpoints (`lib/checkpoints`). On by default: they are
+ * two `git` reads around a turn, written to refs the app owns, and they are
+ * what makes "restore the files to before this turn" possible at all. A chat
+ * with no folder never takes one either way.
+ */
+export type CheckpointSettings = {
+  enabled: boolean
+}
+
+/**
  * One OpenAI-compatible model source, keyed in `modelProviders` by a slug that
  * becomes the `<slug>/<model>` prefix of every composite model id it serves.
  * Every preset ships disabled and keyless: a provider only appears in the
@@ -264,6 +274,7 @@ export type AppSettings = {
   editor: EditorSettings
   memory: MemorySettings
   handoff: HandoffSettings
+  checkpoints: CheckpointSettings
   /** Most-recently used working folders, newest first — the folder picker's list. */
   recentFolders: string[]
 }
@@ -367,6 +378,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   handoff: {
     enabled: true,
   },
+  checkpoints: {
+    enabled: true,
+  },
   recentFolders: [],
 }
 
@@ -422,6 +436,9 @@ export function normalizeSettings(raw: unknown): AppSettings {
     memory: normalizeMemory(value.memory),
     handoff: {
       enabled: asObject(value.handoff).enabled !== false,
+    },
+    checkpoints: {
+      enabled: asObject(value.checkpoints).enabled !== false,
     },
     recentFolders: asFolderList(value.recentFolders),
   }

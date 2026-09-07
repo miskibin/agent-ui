@@ -62,6 +62,7 @@ does not ship them, so they have no upstream to match. They are listed in the ch
 `components/provider-picker.tsx`, `components/provider-logo.tsx`, `components/permission-picker.tsx`,
 `components/pending-question.tsx`, `components/theme-provider.tsx`,
 `components/chat-sidebar-panel.tsx`, `components/sidebar-sections.tsx`,
+`components/binary-file.tsx`, `components/diff-workers.tsx`,
 `components/chat-skeletons.tsx`, `components/chat-suggestions.tsx`, `components/live-time.tsx`,
 `app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
