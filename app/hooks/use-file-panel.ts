@@ -24,6 +24,12 @@ import type {
 import { isImagePath } from "@/components/ui/message-parts"
 import * as api from "@/lib/api-client"
 import { buildFileActions } from "@/lib/file-actions"
+import {
+  mergeDiskRead,
+  needsDiskRead,
+  noticeFromDiskRead,
+  type PreviewNotice,
+} from "@/lib/file-preview-source"
 import { localFileUrlFrom, resolveLocalPath } from "@/lib/local-media"
 import { toolsFromParts } from "@/lib/message-stream"
 import {
@@ -95,6 +101,15 @@ export function useFilePanel({
    */
   const [previewBinary, setPreviewBinary] = React.useState(false)
   /**
+   * The panel is showing a head, not the file: `GET /api/file` stops at its
+   * own cap. Beside `preview` for the same reason `previewBinary` is — this is
+   * the app saying something *about* the body, not a field the vendored
+   * component reads.
+   */
+  const [previewNotice, setPreviewNotice] = React.useState<PreviewNotice | null>(
+    null
+  )
+  /**
    * Which open the panel is on. A read that lands after the reader has moved
    * on belongs to the file they left, so it is dropped rather than applied to
    * the one they are looking at.
@@ -150,6 +165,7 @@ export function useFilePanel({
   const closePreview = React.useCallback(() => {
     setPreview(null)
     setPreviewBinary(false)
+    setPreviewNotice(null)
   }, [])
 
   /**
@@ -203,11 +219,16 @@ export function useFilePanel({
    * Opens the panel from what the transcript already holds, then fills in the
    * file's text from disk when that arrives. The fetch is strictly an
    * enrichment: it never gates the open, and a failure (no such file, another
-   * machine's workspace, a path outside it) leaves the diff-only view standing.
+   * machine's workspace, a path outside it) leaves whatever the turn carried
+   * standing.
    *
-   * Disk text is only merged when the transcript carried none — a tool that
-   * streamed its own after-file already matches the diff beside it, and a
-   * partial read carries a `startLine` the whole file would not line up with.
+   * Which bodies survive that read is the whole subtlety, and it lives in
+   * `lib/file-preview-source`: a read tool's output is a *window* on a file —
+   * `offset` and `limit` are the point of that tool, and every harness caps
+   * tool output at 50k characters besides — so it is a placeholder to paint
+   * while the real read lands, never the file. A mutation tool's after-file is
+   * the state that turn produced and stands, because the diff beside it
+   * describes exactly that.
    */
   const openPreview = React.useCallback(
     (file: FilePreviewFile) => {
@@ -224,17 +245,21 @@ export function useFilePanel({
         : file
       setPreview(opened)
       setPreviewBinary(false)
+      setPreviewNotice(null)
       const nonce = ++openNonceRef.current
-      if (opened.imageSrc || opened.content !== undefined) return
+      if (!needsDiskRead(opened)) return
       const provider = session?.providerId || providerIdRef.current
       if (!provider) return
       void api
         .fetchFile(file.path, provider, session?.id ?? "")
         .then((data) => {
+          // A read that landed after the reader moved on belongs to the file
+          // they left. Checked once, for both outcomes: `path` alone cannot
+          // tell a re-open of the same file from the open it replaced.
+          if (openNonceRef.current !== nonce) return
           // Not text: the panel says so, with the same actions menu, instead
           // of falling back to a diff that describes bytes nobody can read.
           if (data.binary) {
-            if (openNonceRef.current !== nonce) return
             setPreview((current) =>
               current && current.path === file.path
                 ? { ...current, path: data.path || current.path }
@@ -244,23 +269,12 @@ export function useFilePanel({
             return
           }
           setPreview((current) =>
-            current &&
-            current.path === file.path &&
-            current.content === undefined
-              ? {
-                  ...current,
-                  // The route answers with the path it actually read: an
-                  // answer that only said `Messages.tsx` gets the real one
-                  // back, and the header, the menu and "Copy path" all name
-                  // that file.
-                  path: data.path || current.path,
-                  content: data.content,
-                }
-              : current
+            current ? mergeDiskRead(current, file.path, data) : current
           )
+          setPreviewNotice(noticeFromDiskRead(data))
         })
         .catch(() => {
-          /* the panel degrades to the diff on its own */
+          /* the panel degrades to what the turn carried on its own */
         })
     },
     [activeIdRef, providerIdRef, sessionsRef]
@@ -280,10 +294,9 @@ export function useFilePanel({
           // showing the "not text" state and should keep it.
           if (data.binary) return
           setPreview((latest) =>
-            latest && latest.path === path
-              ? { ...latest, content: data.content }
-              : latest
+            latest ? mergeDiskRead(latest, path, data) : latest
           )
+          setPreviewNotice(noticeFromDiskRead(data))
         })
         .catch(() => {
           /* the panel keeps the diff */
@@ -565,6 +578,7 @@ export function useFilePanel({
     handleCopyPath,
     openPreview,
     previewBinary,
+    previewNotice,
     restoreTurn,
     confirmRestoreTurn,
     fileActions,

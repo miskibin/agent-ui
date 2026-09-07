@@ -62,7 +62,7 @@ does not ship them, so they have no upstream to match. They are listed in the ch
 `components/provider-picker.tsx`, `components/provider-logo.tsx`, `components/permission-picker.tsx`,
 `components/pending-question.tsx`, `components/theme-provider.tsx`,
 `components/chat-sidebar-panel.tsx`, `components/sidebar-sections.tsx`,
-`components/binary-file.tsx`, `components/diff-workers.tsx`,
+`components/binary-file.tsx`, `components/file-panel.tsx`, `components/diff-workers.tsx`,
 `components/chat-skeletons.tsx`, `components/chat-suggestions.tsx`, `components/live-time.tsx`,
 `components/import-dialog.tsx`, `components/quit-hold.tsx`, `components/desktop-updater.tsx`,
 `app/settings/model-providers-section.tsx`,
@@ -73,7 +73,8 @@ everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `l
 `lib/completion.ts`, `lib/model-pricing.ts`, `lib/file-actions.tsx`, `lib/drafts.ts`,
 `lib/slash-commands.ts`, `lib/app-shortcuts.ts`, `lib/notifications.ts`, `lib/attachments.ts`,
 `lib/local-media.ts`, `lib/chat-helpers.ts`, `lib/ask-tools.ts`, `lib/ui-cache.ts`,
-`lib/todo-plan.ts`, `lib/turn-requests.ts`, `lib/usage.ts`, `components/chat-usage.tsx`,
+`lib/todo-plan.ts`, `lib/turn-requests.ts`, `lib/usage.ts`, `lib/file-preview-source.ts`,
+`components/chat-usage.tsx`,
 `lib/message-search.ts`, `lib/search-ranking.ts`, `lib/skills.ts`, `lib/skills-scan.ts`,
 `lib/import/`, `lib/worktree.ts`, `lib/git-naming.ts`, `lib/git-commit.ts`, `lib/git-exec.ts`,
 `lib/checkpoints.ts`, `lib/dev-servers.ts`, `lib/shell-env.ts`, `instrumentation.ts`,
@@ -121,8 +122,9 @@ Each concern is one hook, and they are called in the order the data flows:
 Pure helpers stay in `lib/` and are exported so they can be unit tested: `lib/chat-helpers.ts`
 (time and label formatting, `pickProvider`, `omit`, `errorMessage`), `lib/ask-tools.ts`
 (`findPendingAsk`, `findPendingRequest`, `completeAsk`, `isInternalMessage`),
-`lib/ui-cache.ts` (every `agent-ui:*` snapshot key, in one place) and
-`lib/todo-plan.ts` (`latestTodos`).
+`lib/ui-cache.ts` (every `agent-ui:*` snapshot key, in one place),
+`lib/file-preview-source.ts` (`needsDiskRead`, `mergeDiskRead` — whether the file panel's body
+comes from the transcript or the disk) and `lib/todo-plan.ts` (`latestTodos`).
 
 ## What this app is
 
@@ -420,6 +422,27 @@ one interface:
   root is the chat's stored folder, else the provider's workspace, and it is resolved server-side
   from the session id — the client never names a root. Anything outside it, or inside the app's
   data directory, is a 403; the panel falls back to the diff alone on any failure.
+
+  **What the panel shows is what is on disk**, and `lib/file-preview-source.ts` is the one
+  place that decides it. The panel opens instantly from what the turn already carries, which
+  is why the decision is not obvious: a tool call sometimes carries the file and sometimes
+  carries only a *look* at one. A read tool's output is a **window** — `offset` and `limit`
+  are the point of that tool, and every harness caps tool output at 50k characters
+  (`MAX_FIELD`) on top of that — so it is a placeholder to paint while the real read lands,
+  never the body. `startLine` is what marks a body as a window, because it exists precisely
+  when the text does not start at line 1; it does not survive the merge (a start line left on
+  a whole file renumbers every row), and where the agent was reading becomes the panel's
+  `focusLine` instead. A mutation tool's **after-file** is the opposite case and stands: it is
+  the state that turn produced, which is exactly what the diff beside it describes, so
+  re-reading disk there would show a later file than the turn under review. Treating those two
+  as one is what once rendered a 900-line file as its first forty lines, with nothing saying
+  so — `tests/e2e/file-panel.test.mjs` is the net, and it asserts the *request*, not just the
+  pixels. The other half of the same honesty is `components/file-panel.tsx`: `GET /api/file`
+  stops at 1.5 MB, and a body that silently ends early is indistinguishable from a file that
+  ends there, so the route sends the real `bytes` back and the panel says which it is. That
+  banner is app-local rather than a prop on the vendored `FilePreview` for the same reason
+  `components/binary-file.tsx` is — a claim about how the *host* read the file is the host's
+  to make.
 
   A name an *answer* wrote is not a path, and that is what `lib/fs-search.ts` repairs. Cursor
   says `` `Messages.tsx` `` in a sentence and `frontend/app/globals.css` above a snippet;
