@@ -2,21 +2,39 @@ import "server-only"
 
 import { spawn, type ChildProcess } from "node:child_process"
 
-import type {
-  AgentStreamEvent,
-  AgentTokenUsage,
-} from "@/lib/cursor-agent-types"
-import { exitCodeFrom } from "@/lib/providers/exit-code"
+import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
+import {
+  ABORT_COMMAND,
+  buildPiArgs,
+  dialogOutcome,
+  dialogResponse,
+  parsePiLine,
+  PiTranslator,
+  promptCommand,
+  questionRow,
+  STATE_COMMAND,
+  truncate,
+  type PiDialog,
+  type PiImage,
+} from "@/lib/pi-protocol"
 import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
 import { LineBuffer } from "@/lib/stream-framing"
+import type { AskUser, UserRequestAnswer } from "@/lib/turn-requests"
 
 /**
- * Spawns the `pi` CLI in `--mode json` and translates its event stream into
- * the shared `AgentStreamEvent` protocol.
+ * Spawns the `pi` CLI in `--mode rpc` and translates its event stream into the
+ * shared `AgentStreamEvent` protocol.
  *
- * pi is a four-tool agent (read / write / edit / bash) whose whole loop runs
- * inside the subprocess, so one call here is one full agentic turn: the events
- * below interleave assistant text with the tool calls pi made along the way.
+ * pi is an agent whose whole loop runs inside the subprocess, so one call here
+ * is one full turn: the events below interleave assistant text with the tool
+ * calls pi made along the way. `lib/pi-protocol` owns what those events mean
+ * and what argv asks for them; this file owns the process — stdin, the JSONL
+ * framing, aborts, the wait while a dialog is open, and a binary that dies
+ * without ever saying why.
+ *
+ * One process per turn, as before. RPC only changes how it is talked to: the
+ * prompt goes over stdin instead of argv, so the run can also answer the
+ * extension dialogs json mode left hanging.
  */
 
 export type PiRunOptions = {
@@ -31,43 +49,22 @@ export type PiRunOptions = {
   /** `PI_CODING_AGENT_DIR` — keeps our models.json out of the user's ~/.pi. */
   configDir: string
   sessionDir: string
+  /** Our generated ask-user extension; absent means the model cannot ask. */
+  extensionPath?: string
+  images?: PiImage[]
+  /** Where a mid-turn question goes. Absent = every request is cancelled. */
+  askUser?: AskUser
   binPath?: string
   signal?: AbortSignal
 }
 
-const MAX_FIELD = 50_000
-
-type AssistantDelta = {
-  type?: string
-  delta?: string
-  id?: string
-  toolName?: string
-}
-
-type PiEvent = {
-  type?: string
-  id?: string
-  assistantMessageEvent?: AssistantDelta
-  toolCallId?: string
-  toolName?: string
-  args?: unknown
-  result?: unknown
-  isError?: boolean
-  error?: unknown
-  message?: PiMessage | unknown
-}
-
-type PiMessage = {
-  role?: string
-  stopReason?: string
-  errorMessage?: string
-  usage?: PiUsage
-}
-
-type PiUsage = {
-  input?: number
-  output?: number
-}
+/**
+ * How long a run that has ended without saying `agent_settled` is given to say
+ * it. Every pi that emits `agent_end` follows it within microseconds, so this
+ * only ever fires for a CLI that does not send the settle event at all — which
+ * would otherwise leave the turn hanging on a process that is finished.
+ */
+const SETTLE_GRACE_MS = 1_500
 
 export async function* runPiAgent(
   options: PiRunOptions
@@ -77,22 +74,14 @@ export async function* runPiAgent(
   const { cmd, args: prefix } = command
   const args = [
     ...prefix,
-    "--mode",
-    "json",
-    "--model",
-    options.model,
-    "--session-dir",
-    options.sessionDir,
-    // Extension UI dialogs would block forever waiting on a stdin answer that
-    // json mode never sends, and every extension is context the model pays
-    // for. The harness stays at pi's four built-in tools.
-    "--no-extensions",
-    "--no-themes",
+    ...buildPiArgs({
+      model: options.model,
+      sessionDir: options.sessionDir,
+      sessionId: options.sessionId,
+      thinking: options.thinking,
+      extensionPath: options.extensionPath,
+    }),
   ]
-
-  if (options.sessionId) args.push("--session-id", options.sessionId)
-  if (options.thinking) args.push("--thinking", options.thinking)
-  args.push("--", options.prompt)
 
   // Resolved from PATH / settings at runtime, so there is nothing for the
   // bundler to trace — same hint as `lib/cursor-agent.ts` uses.
@@ -105,7 +94,7 @@ export async function* runPiAgent(
       PI_OFFLINE: "1",
     },
     windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
   })
 
   // A process that never starts emits `error`, not `exit` — and an unhandled
@@ -135,26 +124,26 @@ export async function* runPiAgent(
     stderrChunks.push(chunk)
   })
 
-  const onAbort = () => killPi(child)
+  // A process that died before a command landed reports itself through `close`
+  // and `error`; a raw EPIPE here would take the whole route down instead.
+  child.stdin?.on("error", () => {
+    /* reported from the child's own events */
+  })
+  const send = (value: unknown) => {
+    if (child.stdin?.writable) child.stdin.write(`${JSON.stringify(value)}\n`)
+  }
+
+  const onAbort = () => {
+    // Best effort: pi tears its own tool subprocesses down on an abort, and
+    // gets the signal below either way.
+    send(ABORT_COMMAND)
+    killPi(child)
+  }
   options.signal?.addEventListener("abort", onAbort)
 
   let sawError = false
   let sawText = false
-  /**
-   * A model call that fails is reported *inside* pi's message — the process
-   * still exits 0 — so an unreported one ends the turn on `done` with an empty
-   * answer and nothing to explain it. It is held rather than yielded because
-   * pi auto-retries: a failed attempt that a later one recovers from must not
-   * surface as an error, so this is only used when the turn produced no text.
-   */
-  let lastMessageError: string | undefined
-  /**
-   * pi counts tokens per assistant message, and one call here is a whole agent
-   * loop. The last message is the one whose prompt carried everything the loop
-   * accumulated — the system prompt, the tool schemas, every file it read — so
-   * it, not the first, is what the next turn has to fit beside.
-   */
-  let lastUsage: AgentTokenUsage | undefined
+  const translator = new PiTranslator()
 
   try {
     if (!child.stdout) {
@@ -162,57 +151,133 @@ export async function* runPiAgent(
       return
     }
 
+    // RPC mode has no session header line — json mode's first record — so the
+    // id to resume with has to be asked for. Both commands are written up
+    // front: pi handles them in order and `prompt` returns before the run
+    // starts, so this costs no round trip.
+    send(STATE_COMMAND)
+    send(promptCommand(options.prompt, options.images))
+
+    const note = (event: AgentStreamEvent) => {
+      if (event.type === "error") sawError = true
+      if (event.type === "text" && event.text.trim()) sawText = true
+      return event
+    }
+
+    /**
+     * Publishes the wait, waits, answers pi, and closes the row.
+     *
+     * A generator rather than a list on purpose: the "running" row has to be
+     * on the wire *before* the wait, or the only thing the user ever sees is a
+     * question that was already answered.
+     */
+    const answer = async function* (dialog: PiDialog) {
+      yield questionRow(dialog)
+      if (!options.askUser) {
+        send(dialogResponse(dialog, { cancelled: true }))
+        yield questionRow(dialog, dialogOutcome(dialog, null, "no-channel"))
+        return
+      }
+      // Whichever settles first wins: the person, the clock pi told us it is
+      // running, an abort, or the process going away. Only an answer is worth
+      // writing back — pi has already moved on from the other three.
+      const races: Array<Promise<Settlement>> = [
+        options.askUser(dialog.request).then(
+          (value): Settlement => ({ kind: "answer", value }),
+          (): Settlement => ({ kind: "gone" })
+        ),
+        exited.then((): Settlement => ({ kind: "gone" })),
+      ]
+      if (dialog.timeout) {
+        races.push(delay(dialog.timeout).then((): Settlement => ({ kind: "timeout" })))
+      }
+      if (options.signal) {
+        races.push(aborted(options.signal).then((): Settlement => ({ kind: "gone" })))
+      }
+      const outcome = await Promise.race(races)
+      if (outcome.kind !== "answer") {
+        yield questionRow(dialog, dialogOutcome(dialog, null, outcome.kind))
+        return
+      }
+      send(dialogResponse(dialog, outcome.value))
+      yield questionRow(dialog, dialogOutcome(dialog, outcome.value))
+    }
+
+    // Two flags the translation sets and the loop reads: the run is over, and
+    // the run said so the older way and is owed a moment to say it properly.
+    const state: { settled: boolean; grace: Promise<GRACE> | null } = {
+      settled: false,
+      grace: null,
+    }
+
+    /**
+     * One record in, the events it means out — with the dialog wait folded in,
+     * because answering a dialog is the one translation that has to leave the
+     * process running and wait for a human.
+     */
+    const translate = async function* (line: string) {
+      const parsed = parsePiLine(line)
+      if (!parsed) return
+      const result = translator.translate(parsed)
+      for (const event of result.events) yield note(event)
+      if (result.settled) state.settled = true
+      // `agent_end` normally precedes `agent_settled` by microseconds. Arming
+      // the clock rather than stopping here keeps a retry or a queued
+      // continuation working on every pi that does send the settle event.
+      if (result.runEnded && !state.settled) {
+        state.grace ??= delay(SETTLE_GRACE_MS).then(() => GRACE)
+      }
+      if (result.dialog) {
+        for await (const event of answer(result.dialog)) yield note(event)
+      }
+    }
+
     // pi's JSONL framing is LF-only: a generic line reader (Node's `readline`
     // included) also splits on U+2028/U+2029, which are legal inside JSON
     // strings and would tear records apart.
     const lines = new LineBuffer()
-    let emittedSession = false
+    const iterator = child.stdout[Symbol.asyncIterator]() as AsyncIterator<string>
+    // A stream torn down by a failed spawn rejects; the `error` event carries
+    // the real reason, so an end-of-stream here lets the caller report that.
+    const read = () => iterator.next().catch(() => DONE)
+    let pending: Promise<IteratorResult<string>> | null = null
+    let ended = false
 
-    const mapLine = (line: string): AgentStreamEvent[] => {
-      const trimmed = line.replace(/\r$/, "").trim()
-      if (!trimmed.startsWith("{")) return []
-      let event: PiEvent
-      try {
-        event = JSON.parse(trimmed) as PiEvent
-      } catch {
-        return []
-      }
-      if (event.type === "session" && !emittedSession && event.id) {
-        emittedSession = true
-        return [{ type: "session", sessionId: event.id }]
-      }
-      // `message_start` and `turn_end` repeat the same `stopReason`, so the
-      // message's end is the one place this is read.
-      if (event.type === "message_end") {
-        const message = asMessage(event.message)
-        if (message?.stopReason === "error") {
-          lastMessageError = describeMessageError(message)
-        }
-        const usage = toUsage(message?.usage)
-        if (usage) lastUsage = usage
-        return []
-      }
-      return mapEvent(event)
-    }
+    while (!state.settled && !ended) {
+      pending ??= read()
+      // Only a run that has ended without settling races a clock; every other
+      // read waits for the next chunk for as long as it takes, which is what
+      // lets a dialog stay open until the person answers it.
+      const step = state.grace
+        ? await Promise.race([pending, state.grace])
+        : await pending
+      if (step === GRACE) break
+      pending = null
+      if (step.done || options.signal?.aborted) break
 
-    for await (const chunk of readStdout(child.stdout)) {
-      if (options.signal?.aborted) break
-      for (const line of lines.push(chunk)) {
-        for (const mapped of mapLine(line)) {
-          if (mapped.type === "error") sawError = true
-          if (mapped.type === "text" && mapped.text.trim()) sawText = true
-          yield mapped
+      for (const line of lines.push(step.value)) {
+        for await (const event of translate(line)) yield event
+        if (state.settled) {
+          ended = true
+          break
         }
       }
     }
-    const tail = lines.finish()
-    if (tail !== null) {
-      for (const mapped of mapLine(tail)) {
-        if (mapped.type === "error") sawError = true
-        if (mapped.type === "text" && mapped.text.trim()) sawText = true
-        yield mapped
+
+    // A line left in the buffer when stdout ended is still a record.
+    if (!state.settled && !options.signal?.aborted) {
+      const tail = lines.finish()
+      if (tail !== null) {
+        for await (const event of translate(tail)) yield event
       }
     }
+
+    // Closing stdin is how an RPC session is asked to shut down; without it pi
+    // waits for another command that is never coming. Whatever it writes on
+    // the way out is drained rather than read: an unread pipe would block the
+    // process we are waiting on.
+    child.stdin?.end()
+    child.stdout.resume()
 
     const exitCode = await exited
 
@@ -235,33 +300,47 @@ export async function* runPiAgent(
 
     if (sawError) return
 
-    if (lastMessageError && !sawText) {
-      yield { type: "error", message: lastMessageError }
+    if (translator.lastMessageError && !sawText) {
+      yield { type: "error", message: translator.lastMessageError }
       return
     }
 
     yield {
       type: "done",
       durationMs: Date.now() - startedAt,
-      ...(lastUsage ? { usage: lastUsage } : null),
+      ...(translator.lastUsage ? { usage: translator.lastUsage } : null),
     }
   } finally {
     options.signal?.removeEventListener("abort", onAbort)
+    child.stdin?.end()
     killPi(child)
   }
 }
 
-/**
- * A stream torn down by a failed spawn rejects; the `error` event carries the
- * real reason, so swallow the tear-down and let the caller report that.
- */
-async function* readStdout(stdout: NodeJS.ReadableStream): AsyncGenerator<string> {
-  try {
-    // Strings, not Buffers: the stream was given an encoding after the spawn.
-    yield* stdout as AsyncIterable<string>
-  } catch {
-    /* reported from the child's `error` event instead */
-  }
+type Settlement =
+  | { kind: "answer"; value: UserRequestAnswer }
+  | { kind: "timeout" }
+  | { kind: "gone" }
+
+/** The loser of the settle race, distinguishable from an iterator result. */
+const GRACE = Symbol("pi-settle-grace")
+type GRACE = typeof GRACE
+
+const DONE: IteratorResult<string> = { done: true, value: undefined }
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    // A pending timer would hold a serverless invocation open past the answer.
+    timer.unref?.()
+  })
+}
+
+function aborted(signal: AbortSignal): Promise<void> {
+  if (signal.aborted) return Promise.resolve()
+  return new Promise((resolve) => {
+    signal.addEventListener("abort", () => resolve(), { once: true })
+  })
 }
 
 /** Turns an errno into something the user can act on. */
@@ -281,143 +360,6 @@ function describeSpawnFailure(
     return `${target} is not executable. Check its permissions or set another path in ${settings}.`
   }
   return `Could not start pi (${err.code ?? "spawn failed"}): ${err.message} — tried ${target}`
-}
-
-/** One pi event in, zero or more stream events out. */
-function mapEvent(event: PiEvent): AgentStreamEvent[] {
-  if (event.type === "message_update") {
-    const delta = event.assistantMessageEvent
-    if (!delta) return []
-    if (delta.type === "text_delta" && delta.delta) {
-      return [{ type: "text", text: delta.delta }]
-    }
-    if (delta.type === "thinking_delta" && delta.delta) {
-      return [{ type: "thinking", text: delta.delta }]
-    }
-    // Announce the call as soon as the model names it; `tool_execution_start`
-    // fills the arguments in on the same id a moment later.
-    if (delta.type === "toolcall_start" && delta.id) {
-      return [
-        {
-          type: "tool",
-          id: delta.id,
-          name: delta.toolName ?? "tool",
-          status: "running",
-        },
-      ]
-    }
-    return []
-  }
-
-  if (event.type === "tool_execution_start" && event.toolCallId) {
-    return [
-      {
-        type: "tool",
-        id: event.toolCallId,
-        name: event.toolName ?? "tool",
-        status: "running",
-        input: stringify(event.args),
-      },
-    ]
-  }
-
-  if (event.type === "tool_execution_end" && event.toolCallId) {
-    // pi's tool results are free-form; a bash tool that publishes an exit code
-    // does so in there, and one that does not leaves the field absent.
-    const exitCode = exitCodeFrom(event.result)
-    return [
-      {
-        type: "tool",
-        id: event.toolCallId,
-        name: event.toolName ?? "tool",
-        status: event.isError ? "error" : "done",
-        output: toolOutput(event.result),
-        ...(exitCode === undefined ? null : { exitCode }),
-      },
-    ]
-  }
-
-  if (event.type === "extension_error") {
-    const message = stringify(event.error ?? event.message)
-    return message ? [{ type: "error", message }] : []
-  }
-
-  return []
-}
-
-/** Zeroes are pi's placeholder for "not counted yet", not a real count. */
-function toUsage(usage: PiUsage | undefined): AgentTokenUsage | undefined {
-  if (!usage) return undefined
-  const input = typeof usage.input === "number" ? usage.input : 0
-  const output = typeof usage.output === "number" ? usage.output : 0
-  if (input <= 0 && output <= 0) return undefined
-  return { input, output }
-}
-
-function asMessage(value: unknown): PiMessage | null {
-  return value && typeof value === "object" ? (value as PiMessage) : null
-}
-
-/**
- * pi passes the provider's failure through verbatim, and Ollama's OpenAI shim
- * nests the readable sentence two JSON envelopes deep behind an HTTP status.
- * Peel it down to that sentence, and keep the raw string if it is shaped some
- * other way.
- */
-function describeMessageError(message: PiMessage): string {
-  const raw = message.errorMessage?.trim()
-  if (!raw) return "pi: the model call failed"
-  const status = /^(\d{3}):\s*/.exec(raw)
-  let value: unknown = status ? raw.slice(status[0].length) : raw
-  for (let depth = 0; depth < 8; depth++) {
-    if (typeof value === "string") {
-      const trimmed = value.trim()
-      if (!trimmed.startsWith("{")) break
-      try {
-        value = JSON.parse(trimmed) as unknown
-      } catch {
-        break
-      }
-      continue
-    }
-    if (!value || typeof value !== "object") break
-    const next = (value as { error?: unknown }).error ?? (value as { message?: unknown }).message
-    if (next == null) break
-    value = next
-  }
-  const text = typeof value === "string" ? value.trim() : ""
-  const detail = text || truncate(raw)
-  return status ? `pi: ${status[1]} — ${detail}` : `pi: ${detail}`
-}
-
-/** Tool results are `{ content: [{ type: "text", text }] }` blocks. */
-function toolOutput(result: unknown): string | undefined {
-  if (!result || typeof result !== "object") return stringify(result)
-  const content = (result as { content?: unknown }).content
-  if (!Array.isArray(content)) return stringify(result)
-  const text = content
-    .map((part) =>
-      part && typeof part === "object" && typeof (part as { text?: unknown }).text === "string"
-        ? (part as { text: string }).text
-        : ""
-    )
-    .filter(Boolean)
-    .join("\n")
-  return text ? truncate(text) : undefined
-}
-
-function stringify(value: unknown): string | undefined {
-  if (value == null) return undefined
-  if (typeof value === "string") return truncate(value)
-  try {
-    return truncate(JSON.stringify(value, null, 2))
-  } catch {
-    return undefined
-  }
-}
-
-function truncate(value: string) {
-  return value.length > MAX_FIELD ? `${value.slice(0, MAX_FIELD)}…` : value
 }
 
 function killPi(child: ChildProcess) {

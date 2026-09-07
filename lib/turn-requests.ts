@@ -280,3 +280,6 @@ export function sanitizeUserRequestAnswer(input: unknown): UserRequestAnswer | n
     ...(cancelled ? { cancelled: true } : null),
   }
 }
+
+/** The tool name a non-permission request is published under. */
+export const USER_REQUEST_TOOL = userRequestToolName("select")
