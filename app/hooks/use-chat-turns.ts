@@ -30,6 +30,7 @@ import type {
   ProviderCapabilities,
   ProviderInfo,
 } from "@/lib/providers/types"
+import { dispatchSkillMentions, skillMentions } from "@/lib/skills"
 import { parseSlashCommand } from "@/lib/slash-commands"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
 
@@ -40,6 +41,20 @@ import type { RunPrompt } from "./use-turn-runner"
 
 /** What the Build button under a plan card says, in the user's own voice. */
 const BUILD_PROMPT = "Go ahead and implement the plan above."
+
+/** The harness's own command for shortening a conversation it is holding. */
+const COMPACT_PROMPT = "/compact"
+
+/**
+ * `lib/skills` names harnesses the way the CLIs and their transcripts do; this
+ * app keys providers by the settings key they are configured under. One map,
+ * in one place, so a dispatch can never be silently a no-op — the same
+ * translation `components/provider-picker` does for the brand marks.
+ */
+const SKILL_HARNESS: Record<string, string> = {
+  claudeCode: "claude-code",
+  cursorAgent: "cursor",
+}
 
 /**
  * Everything that starts, stops or rewrites a turn.
@@ -80,6 +95,7 @@ export function useChatTurns({
   startRename,
   openFolder,
   pushSettings,
+  knownSkillNamesRef,
 }: {
   refs: ChatRefs
   runPrompt: RunPrompt
@@ -114,6 +130,8 @@ export function useChatTurns({
   openFolder: (action: "editor" | "reveal" | "terminal") => void
   /** `/settings` — opens the settings panel, kept out of this hook. */
   pushSettings: () => void
+  /** The skills this machine offers, as `app/hooks/use-skills` last read them. */
+  knownSkillNamesRef: React.RefObject<ReadonlySet<string>>
 }) {
   const { abortsRef, activeIdRef, drainQueueRef, sessionsRef, threadsRef } = refs
 
@@ -207,8 +225,30 @@ export function useChatTurns({
         }
       }
 
+      /**
+       * `$review` is this app's spelling of a skill; the harness has its own,
+       * or none at all. Only the *prompt* is rewritten — `typedText` below
+       * stays exactly what the user typed, which is what the memory extractor
+       * is held to and what ArrowUp brings back.
+       */
+      const known = knownSkillNamesRef.current
+      const promptText = dispatchSkillMentions(
+        text,
+        SKILL_HARNESS[runProvider] ?? runProvider,
+        known
+      )
+      /**
+       * A skill that reached the harness as a real invocation is not named
+       * again in the prefix: that prefix exists for a backend with no
+       * invocation form of its own, where saying so in prose is all there is.
+       */
+      const invoked =
+        promptText === text
+          ? new Set<string>()
+          : new Set(skillMentions(text, known).map((mention) => mention.name))
+      const namedSkills = skills.filter((name) => !invoked.has(name))
       const skillPrefix =
-        skills.length > 0 ? `[skills: ${skills.join(", ")}] ` : ""
+        namedSkills.length > 0 ? `[skills: ${namedSkills.join(", ")}] ` : ""
 
       // Only images can travel as real attachments, and only to a provider
       // and model that can actually look at them — everything else falls
@@ -283,7 +323,7 @@ export function useChatTurns({
         namedOnly.length > 0
           ? `\n\nAttached: ${namedOnly.map((file) => file.name).join(", ")}`
           : ""
-      const content = `${skillPrefix}${text}${fenced}${fileNote}`
+      const content = `${skillPrefix}${promptText}${fenced}${fileNote}`
       // A screenshot on its own is a message; only nothing at all is nothing.
       if (!content.trim() && attachments.length === 0) return
 
@@ -331,8 +371,9 @@ export function useChatTurns({
       void runPrompt({
         sessionId,
         prompt: content,
-        // What the memory extractor is shown: the prompt carries the skills
-        // prefix, the fenced attachments and the file note as well.
+        // What the memory extractor is shown: the prompt carries the skill
+        // invocations, the prefix, the fenced attachments and the file note
+        // as well.
         typedText: text,
         prior,
         providerId: runProvider,
@@ -359,6 +400,7 @@ export function useChatTurns({
       chosenPermission,
       effort,
       handleNewChat,
+      knownSkillNamesRef,
       loadThread,
       model,
       openFolder,
@@ -539,6 +581,21 @@ export function useChatTurns({
     void send(BUILD_PROMPT, [], [], undefined, leaving)
   }, [choosePermission, effectivePermission, permissionModes, send])
 
+  /**
+   * "Compact context" — the composer's meter offering the harness's own
+   * `/compact`.
+   *
+   * Nothing special happens here on purpose: an unknown `/x` already reaches
+   * the backend exactly as typed, so this is one ordinary turn, visible in
+   * the transcript like any other. The toast is there because the turn that
+   * answers it says very little.
+   */
+  const handleCompact = React.useCallback(() => {
+    if (!activeIdRef.current) return
+    toast.message("Compacting the conversation…")
+    void send(COMPACT_PROMPT, [], [])
+  }, [activeIdRef, send])
+
   const handleDeleteMessage = React.useCallback(
     (messageId: string) => {
       const sessionId = activeId
@@ -556,6 +613,7 @@ export function useChatTurns({
     handleStop,
     handleAskAnswer,
     handlePlanBuild,
+    handleCompact,
     handleEditMessage,
     handleRegenerate,
     handleDeleteMessage,

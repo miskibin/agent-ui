@@ -79,6 +79,21 @@ function reportedContextWindow(messages: StoredMessage[]) {
   return undefined
 }
 
+/**
+ * When the newest answer settled. The offer to compact before resuming reads
+ * it, and it is the turn's own clock rather than the chat's `updatedAt` —
+ * which a rename, a pin or a folder change also moves.
+ */
+function lastTurnAt(messages: StoredMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index]
+    if (message.sender !== "assistant") continue
+    const finished = message.metadata?.finishedAt
+    if (finished) return finished
+  }
+  return undefined
+}
+
 export function withTurnFiles(message: StoredMessage): StoredMessage {
   const cached = turnFilesCache.get(message)
   if (cached) return cached
@@ -161,6 +176,11 @@ export function useThreadView({
     [deferredMessages]
   )
   const activeCost = usage?.cost ?? null
+  /** For the meter's "compact before resuming?" offer — see `context-usage`. */
+  const lastTurnFinishedAt = React.useMemo(
+    () => lastTurnAt(deferredMessages),
+    [deferredMessages]
+  )
 
   /**
    * The transcript as the list sees it: same objects, except where a turn's
@@ -238,6 +258,7 @@ export function useThreadView({
     contextTurn,
     contextTotal,
     activeCost,
+    lastTurnFinishedAt,
     usage,
     pendingAsk,
     waitingCount,

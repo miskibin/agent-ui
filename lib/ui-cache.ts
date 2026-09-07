@@ -22,6 +22,13 @@ export const CACHE_SECTIONS_KEY = "agent-ui:folder-sections"
  */
 export const CACHE_SIDEBAR_WIDTH_KEY = "agent-ui:sidebar-width"
 
+/**
+ * "Don't ask again" for the offer to compact a long conversation before
+ * resuming it. One flag for every chat: the answer is about the offer itself,
+ * not about the chat that happened to trigger it.
+ */
+export const CACHE_COMPACT_HINT_KEY = "agent-ui:compact-hint"
+
 /** Where the dragged file-panel width is remembered, as a percentage. */
 export const CACHE_SPLIT_KEY = "agent-ui:preview-size"
 /** The file panel's own preferences: split or unified diff, wrapped lines. */

@@ -202,8 +202,14 @@ test(
     })
 
     let logged: { response?: { error?: { code: number } } }[] = []
-    for (let attempt = 0; attempt < 40; attempt++) {
-      logged = JSON.parse(readFileSync(logPath, "utf8"))
+    for (let attempt = 0; attempt < 80; attempt++) {
+      // The fake agent rewrites the whole log on every entry, so a read can
+      // land on a half-written file; that is a retry, not a failure.
+      try {
+        logged = JSON.parse(readFileSync(logPath, "utf8"))
+      } catch {
+        logged = []
+      }
       if (logged.some((entry) => entry.response)) break
       await wait(25)
     }

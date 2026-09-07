@@ -30,12 +30,33 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   diffs beside the transcript, then open them in your editor or terminal. The
   header opens a tree of everything the chat changed, and a lazy browser for the
   rest of the folder; binary files say so instead of pretending to be text.
+- **A worktree per chat.** Start a chat in a git worktree of its own — its own
+  branch, in the app's own directory — so two agents work on one repository
+  without touching one file. Branches are named after the chat, and removing the
+  last chat that used one offers to remove the worktree with it.
+- **Commit, push, and see what is serving.** Stage what the chat changed and
+  commit it with a message written from the diff in the repository's own style,
+  push the branch (upstream set on the first push), and open the dev servers the
+  work left running on localhost.
 - **Per-turn checkpoints.** Every turn in a git folder is bracketed by a
   worktree snapshot, so one action puts the files back the way they were before
   it ran. Switchable in Settings → Chat.
 - **Composer that remembers.** ArrowUp walks back through the prompts already
   sent in the chat, drafts survive a chat switch, and answers render GitHub
   alerts and clickable `path.ts:42` chips.
+- **Skills and harness commands.** `$name` offers the skills installed on this
+  machine and sends each harness the invocation it actually understands; `/`
+  lists the CLI's own commands beside the app's. The context meter offers
+  "Compact context" where the harness has it, and suggests compacting before you
+  resume a long conversation you left hours ago.
+- **Search what was said.** ⌘K matches chats by title *and* by the words in
+  their messages, then opens the chat at the matching turn.
+- **Import your CLI history.** Bring the conversations Claude Code and Codex
+  have already had into the app — Claude Code chats stay resumable where they
+  left off.
+- **Hold to quit.** ⌘Q while a turn is running is held, not confirmed: nothing
+  is in the way when nothing is running, and a stray press cannot kill an agent
+  mid-edit.
 - **A sidebar you can size.** Drag its edge (or resize it from the keyboard),
   group chats by working folder, pin and delete from the row itself.
 - **Local persistence.** Chats, settings, provider sessions, and optional memory
@@ -107,6 +128,8 @@ another location.
 - `sessions/index.json` — sidebar and session metadata
 - `sessions/<id>.json` — rendered transcripts
 - `memory/*.md` — optional cross-chat memory; off by default
+- `imports.json` — which chats were imported, and from which CLI
+- `worktrees/` — git worktrees the app created for chats that asked for one
 - `pi/` and `dsh/` — isolated harness configuration and session data
 
 Treat that directory as sensitive. Agent backends can read files, edit files,

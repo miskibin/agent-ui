@@ -6,13 +6,18 @@ import * as React from "react"
 
 import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
 import { BinaryFilePanel } from "@/components/binary-file"
+import { PendingLineComments } from "@/components/line-comments"
 import { ChatChanges } from "@/components/chat-changes"
 import { ChatUsageSummary } from "@/components/chat-usage"
 import { ThreadLoading } from "@/components/chat-skeletons"
 import { ChatSidebarPanel } from "@/components/chat-sidebar-panel"
 import { CHAT_SUGGESTIONS } from "@/components/chat-suggestions"
 import { CommandPalette } from "@/components/command-palette"
-import { ContextUsage, useDraftStore } from "@/components/context-usage"
+import {
+  ContextUsage,
+  canCompactContext,
+  useDraftStore,
+} from "@/components/context-usage"
 import { DiffWorkers } from "@/components/diff-workers"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
@@ -34,7 +39,6 @@ import {
 } from "@/components/ui/resizable"
 import { TodoPanel } from "@/components/ui/todo-list"
 import { providerSessionHints } from "@/lib/handoff/types"
-import { APP_SLASH_COMMANDS } from "@/lib/slash-commands"
 import type { StoredMessage } from "@/lib/store/types"
 import { CACHE_ACTIVE_KEY, CACHE_INDEX_KEY, writeCache } from "@/lib/ui-cache"
 import { cn } from "@/lib/utils"
@@ -48,7 +52,7 @@ import { useChatNav } from "./hooks/use-chat-nav"
 import { useChatRefs, useMirrorRefs } from "./hooks/use-chat-refs"
 import { useChatShortcuts } from "./hooks/use-chat-shortcuts"
 import { useChatTurns } from "./hooks/use-chat-turns"
-import { useCommandPalette } from "./hooks/use-command-palette"
+import { useCommandPalette, useMessageJump } from "./hooks/use-command-palette"
 import { useComposerDrafts } from "./hooks/use-composer-drafts"
 import { useComposerHeight } from "./hooks/use-composer-height"
 import {
@@ -65,6 +69,7 @@ import { useMessageQueue } from "./hooks/use-message-queue"
 import { usePromptStash } from "./hooks/use-prompt-stash"
 import { useSessionIndex } from "./hooks/use-session-index"
 import { useSidebarItems } from "./hooks/use-sidebar-items"
+import { useSkills } from "./hooks/use-skills"
 import { useThreadView } from "./hooks/use-thread-view"
 import { useThreads } from "./hooks/use-threads"
 import { useTurnRunner } from "./hooks/use-turn-runner"
@@ -78,6 +83,16 @@ import * as api from "@/lib/api-client"
  */
 const SettingsView = dynamic(
   () => import("@/app/settings/settings-view").then((m) => m.SettingsView),
+  { ssr: false }
+)
+
+/**
+ * The same treatment for the import picker: it scans two CLIs' history
+ * directories and is opened once in a while, so nothing about it belongs on
+ * the path of the first paint.
+ */
+const ImportDialog = dynamic(
+  () => import("@/components/import-dialog").then((m) => m.ImportDialog),
   { ssr: false }
 )
 
@@ -103,6 +118,8 @@ export default function ChatPage() {
   const [settingsSection, setSettingsSection] =
     React.useState<SettingsSectionId | null>(null)
   const [dataDir, setDataDir] = React.useState("")
+  /** The import picker, opened from ⌘K. */
+  const [importOpen, setImportOpen] = React.useState(false)
   const refs = useChatRefs()
   const { composerRef, sessionsRef } = refs
 
@@ -197,6 +214,12 @@ export default function ChatPage() {
     activeSession?.cwd
   )
 
+  /**
+   * What this chat can run: the `$` menu's skills and the harness commands its
+   * `/` menu adds, scanned from the chat's own folder.
+   */
+  const skillCatalog = useSkills({ activeId, cwd: activeCwd, isGenerating })
+
   const panel = useFilePanel({
     refs,
     activeId,
@@ -269,6 +292,10 @@ export default function ChatPage() {
     removeSession,
     removeSessions,
     handleNewChat,
+    settleChat,
+    snoozeChat,
+    wakeChat,
+    markVisited,
   } = useChatActions({
     refs,
     sessions,
@@ -351,6 +378,21 @@ export default function ChatPage() {
     writeCache(CACHE_INDEX_KEY, [])
     writeCache(CACHE_ACTIVE_KEY, "")
   }, [setActiveId, setQueues, setSessions, setThreads])
+  /**
+   * The import dialog has just written chats into the store. Only the index
+   * has to be re-read: the transcripts it wrote are loaded the moment one of
+   * them is opened, like any other chat's.
+   */
+  const reloadSessions = React.useCallback(() => {
+    void api
+      .fetchSessions()
+      .then(setSessions)
+      .catch(() => {
+        /* the dialog already said what failed */
+      })
+  }, [setSessions])
+  const openImport = React.useCallback(() => setImportOpen(true), [])
+
   /** The sidebar, ⌘K and `/settings`, none of which name a section. */
   const pushSettings = React.useCallback(() => openSettings(), [openSettings])
   /** The void wrapper the sidebar, the palette and ⌘N all share. */
@@ -365,6 +407,7 @@ export default function ChatPage() {
     handleStop,
     handleAskAnswer,
     handlePlanBuild,
+    handleCompact,
     handleEditMessage,
     handleRegenerate,
     handleDeleteMessage,
@@ -398,6 +441,7 @@ export default function ChatPage() {
     startRename,
     openFolder,
     pushSettings,
+    knownSkillNamesRef: skillCatalog.knownSkillNamesRef,
   })
 
   const {
@@ -406,6 +450,7 @@ export default function ChatPage() {
     contextTurn,
     contextTotal,
     activeCost,
+    lastTurnFinishedAt,
     usage,
     pendingAsk,
     waitingCount,
@@ -432,11 +477,16 @@ export default function ChatPage() {
     folderGroups,
     sessionMenuActions,
     sessionRowActions,
+    snoozedShelf,
+    settledShelf,
+    showMoreOnShelf,
   } = useSidebarItems({
     refs,
     sessions,
     runs,
     failures,
+    threads,
+    closedSections,
     activeId,
     providerId,
     models,
@@ -444,6 +494,10 @@ export default function ChatPage() {
     regenerateTitle,
     onTogglePin: togglePin,
     onDelete: removeSession,
+    onSettle: settleChat,
+    onSnooze: snoozeChat,
+    onWake: wakeChat,
+    onMarkVisited: markVisited,
   })
 
   const { paletteActions, paletteSessions } = useCommandPalette({
@@ -453,6 +507,7 @@ export default function ChatPage() {
     providerName,
     regenerateTitle,
     openFolder,
+    openImport,
   })
 
   useChatBootstrap({
@@ -466,10 +521,15 @@ export default function ChatPage() {
 
   useAttention({
     waitingCount,
+    /* Turns in flight, for the hold-to-quit overlay in the root layout. */
+    runningCount: Object.keys(runs).length,
     activeTitle: activeSession?.title?.trim() ?? "",
   })
 
   useChatShortcuts({ refs, handleNewChat, toggleSidebar, openFolder })
+
+  /** Opening a chat *at* the message a palette search matched. */
+  const openMessage = useMessageJump({ refs, selectSession, loadThread })
 
   const { chatPaneRef, composerBoxRef } = useComposerHeight()
 
@@ -477,6 +537,10 @@ export default function ChatPage() {
   // Derived, so exactly one FilePreview is ever mounted.
   const dockedPreview = isDesktop ? preview : null
   const overlayPreview = isDesktop ? null : preview
+
+  /* Whether this chat's harness can shorten its own conversation — the meter's
+     "Compact context" and the offer to do it before resuming. */
+  const canCompact = canCompactContext(providerId, skillCatalog.commands)
 
   /**
    * The composer holds the draft the user is typing and has nothing to do with
@@ -499,7 +563,12 @@ export default function ChatPage() {
            memoized composer is not rebuilt for it on every token. */
         history={history}
         mentions={handleMentions}
-        slashCommands={APP_SLASH_COMMANDS}
+        /* `$name` offers what this machine has, and the `/` menu carries the
+           harness's own commands under the app's. Both only run at the head of
+           a message — a `/compact` mid-sentence is prose to every CLI. */
+        skills={skillCatalog.skills}
+        slashCommands={skillCatalog.slashCommands}
+        commandsMustStartMessage
         isGenerating={isGenerating}
         placeholder={
           isGenerating
@@ -550,6 +619,11 @@ export default function ChatPage() {
               output={contextTurn.output}
               total={contextTotal}
               cost={activeCost}
+              sessionId={activeId}
+              providerId={providerId}
+              lastTurnAt={lastTurnFinishedAt}
+              canCompact={canCompact}
+              onCompact={handleCompact}
             />
             <StashMenu
               entries={stash}
@@ -562,7 +636,9 @@ export default function ChatPage() {
     ),
     [
       activeCost,
+      activeId,
       activeProviderName,
+      canCompact,
       chooseModel,
       choosePermission,
       chooseProvider,
@@ -575,6 +651,7 @@ export default function ChatPage() {
       draftStore,
       effectivePermission,
       effort,
+      handleCompact,
       handleMentions,
       handleQueue,
       handleQueueEdit,
@@ -587,6 +664,7 @@ export default function ChatPage() {
       history,
       isEmptyChat,
       isGenerating,
+      lastTurnFinishedAt,
       model,
       models,
       permissionModes,
@@ -598,6 +676,8 @@ export default function ChatPage() {
       sessionHints,
       setEffort,
       showEfforts,
+      skillCatalog.skills,
+      skillCatalog.slashCommands,
       stash,
     ]
   )
@@ -625,6 +705,11 @@ export default function ChatPage() {
           sessionItems={sessionItems}
           pinnedItems={pinnedItems}
           folderGroups={folderGroups}
+          snoozedShelf={snoozedShelf}
+          settledShelf={settledShelf}
+          onShelfShowMore={showMoreOnShelf}
+          onSettle={settleChat}
+          onWake={wakeChat}
           activeId={activeId}
           sessionsLoaded={sessionsLoaded}
           sessionsRef={sessionsRef}
@@ -826,6 +911,9 @@ export default function ChatPage() {
                       <div className="mx-auto flex w-full max-w-3xl px-3 pb-2 sm:px-4">
                         <FolderPicker
                           variant="inline"
+                          /* Names the branch when the chat starts in a
+                             worktree of its own. */
+                          title={activeSession?.title}
                           cwd={activeSession?.cwd}
                           gitBranch={activeSession?.gitBranch}
                           onChange={setFolder}
@@ -848,6 +936,7 @@ export default function ChatPage() {
                         onAnswer={handleAskAnswer}
                       />
                     ) : null}
+                    <PendingLineComments />
                     {composer}
                     {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
                       <PromptSuggestions
@@ -887,6 +976,7 @@ export default function ChatPage() {
                         onClose={closePreview}
                         actions={fileActions}
                         onCopyPath={handleCopyPath}
+                        onLineComment={panel.handleLineComment}
                         diffLayout={previewPrefs.layout}
                         onDiffLayoutChange={setDiffLayout}
                         wrap={previewPrefs.wrap}
@@ -936,6 +1026,7 @@ export default function ChatPage() {
                     onClose={closePreview}
                     actions={fileActions}
                     onCopyPath={handleCopyPath}
+                    onLineComment={panel.handleLineComment}
                     diffLayout={previewPrefs.layout}
                     onDiffLayoutChange={setDiffLayout}
                     wrap={previewPrefs.wrap}
@@ -977,9 +1068,20 @@ export default function ChatPage() {
         onSelectSession={selectSession}
         onNewChat={startNewChat}
         onRenameSession={startRename}
+        onOpenMessage={openMessage}
         actions={paletteActions}
         onOpenSettings={openSettings}
       />
+
+      {/* Mounted only while open, so the scan behind it starts with the
+          dialog and nothing about it is on the first paint. */}
+      {importOpen ? (
+        <ImportDialog
+          open={importOpen}
+          onOpenChange={setImportOpen}
+          onImported={reloadSessions}
+        />
+      ) : null}
     </div>
   )
 }

@@ -64,6 +64,7 @@ does not ship them, so they have no upstream to match. They are listed in the ch
 `components/chat-sidebar-panel.tsx`, `components/sidebar-sections.tsx`,
 `components/binary-file.tsx`, `components/diff-workers.tsx`,
 `components/chat-skeletons.tsx`, `components/chat-suggestions.tsx`, `components/live-time.tsx`,
+`components/import-dialog.tsx`, `components/quit-hold.tsx`, `components/desktop-updater.tsx`,
 `app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
 `lib/theme/`, `lib/memory/`, `lib/handoff/`,
@@ -73,6 +74,9 @@ everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `l
 `lib/slash-commands.ts`, `lib/app-shortcuts.ts`, `lib/notifications.ts`, `lib/attachments.ts`,
 `lib/local-media.ts`, `lib/chat-helpers.ts`, `lib/ask-tools.ts`, `lib/ui-cache.ts`,
 `lib/todo-plan.ts`, `lib/usage.ts`, `components/chat-usage.tsx`,
+`lib/message-search.ts`, `lib/search-ranking.ts`, `lib/skills.ts`, `lib/skills-scan.ts`,
+`lib/import/`, `lib/worktree.ts`, `lib/git-naming.ts`, `lib/git-commit.ts`, `lib/git-exec.ts`,
+`lib/checkpoints.ts`, `lib/dev-servers.ts`, `lib/shell-env.ts`, `instrumentation.ts`,
 `app/settings/usage-section.tsx`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
@@ -104,7 +108,8 @@ Each concern is one hook, and they are called in the order the data flows:
 - `use-file-panel` — which file is open, the split, the diff prefs, and every way a file gets
   opened (tool row, change card, `path.ts:42` chip, the whole-chat list).
 - `use-memory-notices`, `use-prompt-stash`, `use-message-queue`, `use-composer-drafts` — the
-  memory marker and the composer's own conveniences.
+  memory marker and the composer's own conveniences; `use-skills` — the skills and harness
+  commands the open chat's folder offers, and the names `send` dispatches on.
 - `use-chat-actions` — the mutations that cross concerns: opening a chat re-points the pickers
   and closes the panel; deleting one drops its thread, queue, draft and run.
 - `use-turn-runner` — one streaming turn end to end; `use-chat-turns` — send (slash commands,
@@ -230,6 +235,18 @@ one interface:
   and `sessions/<id>.journal.json` (the handoff journal).
   Settings in `settings.json` via `lib/settings/` (`GET/PUT /api/settings`, deep-merged over
   defaults so old files keep loading).
+- History that happened before this app (`lib/import/**`, `GET /api/import/scan`,
+  `POST /api/import`, `components/import-dialog.tsx`): the folders Claude Code and Codex have
+  already run in on this machine, with a checkbox each and nothing decided on the user's
+  behalf. The distinction that runs through it is **resumable vs history** — a Claude Code
+  conversation arrives with its session id in `agentSessions`, so the next turn in that chat
+  resumes the CLI's own session, while Codex has no backend here and is imported *without*
+  one rather than pretending it can be continued. Importing is idempotent on the CLI's
+  conversation id, and which chat came from where lives in its own file
+  (`~/.agent-ui/imports.json`, `lib/import/ledger.ts`) rather than as a field on
+  `SessionMeta`: the index is read on every page load and is the app's hottest file. The
+  dialog is a `next/dynamic` import opened from ⌘K, and `onImported` re-reads the index alone
+  — the transcripts it wrote load when a chat is opened, like any other's.
 - User memory (`lib/memory/`, off by default): durable preferences in
   `memory/<category>.md`, one markdown file per category — a directory rather than a key in
   settings.json precisely so it can be read, edited, exported and shredded on its own.
@@ -329,6 +346,21 @@ one interface:
   only in the pinned group, because `order` is one global sequence with nothing per-folder to
   write back to. Closed sections are remembered under `agent-ui:folder-sections` — closed ones
   only, so a folder seen for the first time opens.
+- Several agents on one repository (`lib/worktree.ts`, `lib/git-naming.ts`, `/api/worktrees`):
+  a chat's `cwd` is the only thing that decides where its agent runs, so a second checkout of
+  the same repo, on its own branch, in its own folder *is* the whole feature — two chats then
+  edit one project without editing one file. Three things hold it up. The worktrees the app
+  makes live under its own data directory (`$AGENT_UI_DIR/worktrees/<repo>/<branch>`), never
+  beside the user's checkout, because it is the app's litter to clean up.
+  `branch.<name>.gh-merge-base` is recorded at creation, which is what makes "ahead/behind
+  what?" answerable for a branch with no upstream — the sidebar's counts and `gh pr create`
+  both read it. And removal is idempotent: a folder the user deleted by hand ends in "already
+  gone", which is a success. Branch names are *built* rather than escaped
+  (`sanitizeBranchFragment` reduces a title to an alphabet in which none of git's ref rules
+  can be broken), and `lib/git-naming` is pure and free of `node:` so the folder picker can
+  show the name a worktree *would* get before anything is created — which is why
+  `<FolderPicker>` is handed the chat's `title`. `SessionMeta.worktree` is the provenance
+  beside `cwd`: which repository, which branch, cut from what.
 - The file panel: every file a turn touched opens beside the conversation. The components are
   vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/hooks/use-file-panel.ts`
   owns the state — which file is open, the split width under `agent-ui:preview-size`, closing on
@@ -368,6 +400,50 @@ one interface:
   panel's split/unified and wrap choices persist under `agent-ui:preview-prefs`; the header's
   "N files changed in this chat" (`components/chat-changes.tsx`) is the union of every turn's
   card, for the whole-thread scope next to the per-turn one.
+- `GET /api/fs/tree` is the file panel's folder browser: one level per request, never a walk,
+  so a monorepo costs one `readdir` per folder the reader actually opens. Its root is read
+  back from the stored chat exactly the way `/api/file` does it, and containment is decided on
+  real paths, so a symlink under the folder is not a way out of it. Its neighbour
+  `/api/fs/list` answers a different question — browsing the machine for a folder to point a
+  chat *at*, absolute and directories only, before any chat exists.
+- Per-turn undo (`lib/checkpoints.ts`, `POST /api/checkpoints/capture|diff|restore`): every
+  turn in a git folder is bracketed by a checkpoint, and a checkpoint is a real commit
+  reachable from nothing — `add -A` into a **temporary index** (`GIT_INDEX_FILE`, deleted in
+  the `finally`), `write-tree`, a *parentless* `commit-tree`, and a ref under
+  `refs/agent-ui/checkpoints/`. Which means, in order of how much it matters: nothing the user
+  staged is touched, nothing appears in `git log` or on a branch, and untracked files are
+  included — which is why restore is `restore --worktree --staged` plus `clean -fd` plus a
+  `reset` rather than a checkout. The numstat between a turn's two refs is stored on the
+  assistant message and is the ground truth `lib/turn-files` prefers: what the turn changed on
+  *disk*, not what its tool calls claimed.
+- Committing what a chat produced (`lib/git-commit.ts`, `POST /api/git/commit`,
+  `POST /api/git/push`): staging and `git commit` are three lines and the *message* is the
+  work, so the evidence gathered is deliberately more than the diff — a `--name-status`
+  summary that survives a huge change and a capped `--patch --minimal` beside it, plus the
+  repository's own last twenty subjects and its `AGENTS.md` / `CLAUDE.md`, because a repo that
+  writes `fix(store): …` and one that writes `Fix the store` are both consistent and neither
+  is improved by having a house style imposed on it. The folder comes from the chat and every
+  path has to resolve inside it. Two answers are not failures and are typed as such:
+  committing on the repo's trunk asks first, and a push refused for want of credentials is a
+  different offer from one that lost a race.
+- Dev servers the work left running (`lib/dev-servers.ts`, `GET /api/dev-servers`): `lsof -F`
+  where there is one — the `-F` form is the only one worth parsing, since lsof's columns are
+  aligned rather than delimited — a curated port list where there is not, and in both cases a
+  bounded loopback GET decides. A listener is a dev server only when it answers with an HTML
+  document or redirects to one, which is what keeps Postgres, Redis and the app's own port out
+  of a list meant to be clicked. A `sessionId` narrows it to the chat's own folder where the
+  platform can attribute a listener to one.
+- One way to run git (`lib/git-exec.ts`): every `git` and `gh` call goes through it, so four
+  things are true of all of them rather than of the ones somebody remembered.
+  `--literal-pathspecs` comes first — a path in this app comes from a tool call, an answer or
+  a click, and to git a path argument is a *pathspec*: `git checkout -- '*.bak'` throws away
+  every backup file in the repo, and the flag is the fix because there is no escaping to do.
+  `--no-optional-locks`, so a read never takes the index lock out from under the user. Output
+  is bounded and flagged `truncated` rather than silently halved. And nothing can block on a
+  human — no credential prompt, no pager, `LC_ALL=C` so the messages stay readable. Failures
+  are classified, not collapsed: "not a git repository" is a fact about the folder while a
+  timeout or an index lock is a fact about this moment, and a sidebar that confuses the two
+  throws away a badge the user was reading.
 - Composer conveniences, all app-owned state over the vendored composer's handle
   (`ChatInputHandle`): messages typed mid-turn are queued per chat
   (`app/hooks/use-message-queue.ts`) and sent one at a time as turns end — a stopped turn keeps its queue; `@` lists files under
@@ -381,7 +457,53 @@ one interface:
   own `/` commands live in `lib/slash-commands.ts` and are handled in `send` before anything
   reaches a model; selecting text in an answer offers "Quote", which drops a blockquote at the
   caret. Global keys are one listener in `lib/app-shortcuts.ts` — ⌘N, ⌘B, ⌘⇧[ / ⌘⇧], ⌘1…9,
-  ⌘O, and type-to-focus — bound from an effect because the handlers read refs.
+  ⌘O, and type-to-focus — bound from an effect because the handlers read refs. The context
+  meter (`components/context-usage.tsx`) carries the one action that belongs to the *window*
+  rather than to the app: "Compact context" sends the harness's own `/compact` as an ordinary
+  turn, offered only where that command exists (`claude-code` always, anything else only when
+  the scan found it). A `claude-code` chat reopened after 70 minutes with more than 100k of
+  context also gets it as a one-time, non-blocking "Compact before resuming?" beside the
+  meter, whose "Don't ask again" is one flag under `agent-ui:compact-hint` — the heuristic is
+  ported from T3 Code's `shouldOfferResumeCompaction`, and the clock it measures against is
+  read once per chat opened rather than during a render.
+- Skills, and the harnesses' own commands (`lib/skills.ts`, `lib/skills-scan.ts`,
+  `GET /api/skills`): a skill is a folder on this machine — `.claude/skills/<name>/SKILL.md`
+  and its `.cursor` / `.agents` neighbours — that a harness knows how to run, and the scan
+  reads the same directories the CLIs do rather than waiting for a protocol to announce them:
+  Claude Code's init line names its commands but not where they live, and Cursor's catalog
+  only exists once a session is open, so a composer that waited for either would have an empty
+  menu until the user had already sent something. The route takes a *chat* and never a folder
+  — the rule `/api/file` and `/api/fs/search` follow — and every read is best-effort behind a
+  30s cache: a broken skill must not cost the user their menu. `app/hooks/use-skills.ts` asks
+  once per chat opened, once per folder change and once per turn that *ends* (an agent that
+  just wrote a skill is the whole reason for the last one), and hands the composer `skills`
+  for its `$` menu and `slashCommandsWith(commands)` for its `/` one, every discovered command
+  marked `mustStartMessage` because anywhere but offset 0 a CLI reads it as prose.
+
+  The dispatch rule is the load-bearing half. `send` rewrites the **prompt** only, through
+  `dispatchSkillMentions`, and `metadata.typedText` stays exactly what the user typed — the
+  same boundary the memory extractor is held to. `claude-code` expands one `/name` and only at
+  the head of a message, so the first mention is hoisted there and the rest are rewritten in
+  place for the model's own Skill tool; `cursor` invokes `/name` where it stands; every other
+  backend is handed the text as typed, and the `[skills: …]` prefix then names only what the
+  harness could not invoke — never a skill already dispatched. `lib/skills` speaks the CLIs'
+  own names (`claude-code`, `cursor`) while the app keys providers by their settings key
+  (`claudeCode`, `cursorAgent`), which one map in `use-chat-turns` translates; a `$HOME` in a
+  shell line stays prose, because a mention of something nobody discovered is not a command.
+- Searching what was *said* (`lib/message-search.ts`, `GET /api/search`): a title is generated,
+  which makes it the last thing a chat is remembered by, so ⌘K also walks the stored
+  transcripts and answers with the single best message per chat — a snippet plus the offsets
+  to mark inside it, so the browser never re-finds a match it was already given. What is
+  searched is deliberately narrow: the user's own `metadata.typedText` and the assistant's
+  answer text, never thinking, tool input or tool output — a grep over tool output finds every
+  chat that ever ran `ls`. `lib/message-search` is pure and free of `node:` (same shape as
+  `lib/usage`), so the route owns the reading and the caching: one searchable projection per
+  chat keyed by its `updatedAt`, size-aware because what it holds is message text, which makes
+  the key going stale *the* invalidation and one more character re-read nothing. The palette
+  debounces and aborts, keeps the last answer beside the query it answered, and selecting a
+  hit opens the chat *at* that message — `useMessageJump` awaits the transcript, waits for the
+  list to be showing that chat, then scrolls and flashes the row, all off refs so the memoized
+  rows never see a new callback.
 - Attention: `lib/notifications.ts` posts an OS notification when a turn ends, asks or fails
   while the window is not in front (the shell's `tauri-plugin-notification`, else the web
   `Notification` API, whose click reopens the chat), bounces the dock, and mirrors the count
@@ -423,6 +545,27 @@ one interface:
   the folder picker through `lib/api-client` (`recentFolders`). They all go through the one
   serialized chain in `lib/settings/client.ts` — without it a save in flight writes another
   writer's subtree back stale.
+- Quitting while something is running (`components/quit-hold.tsx`): a turn is not a document
+  with unsaved changes, it is a subprocess writing to the user's checkout — and ⌘Q is one key
+  from ⌘W. So the quit is *held* for 1.2s (or double-pressed) rather than confirmed: no
+  dialog, no setting, and nothing at all when nothing is running. The shell is asked to
+  intercept the close only while a turn is in flight (`setQuitHoldArmed`), which is what keeps
+  the failure mode benign — a page that never loads leaves the app quitting exactly as it
+  always did. macOS delivers ⌘Q only as the shell's `quit-requested` event (once per press and
+  per key *repeat*) and every other platform as the keystroke itself, so both paths feed one
+  state machine. How many chats are running reaches the overlay through a module store
+  (`setRunningChats`), written from `app/hooks/use-attention` in the same effect as the dock
+  badge: the overlay is mounted in the root layout, above the chat page and outside every
+  provider it owns.
+- The PATH the user actually has (`lib/shell-env.ts`, `instrumentation.ts`): every harness is
+  found by looking through `process.env.PATH`, and a GUI process on macOS is launched by
+  `launchd` with `/usr/bin:/bin:/usr/sbin:/sbin` — so every CLI the user has installed reads
+  as "not installed" for no reason anyone can see. `register()` asks the login shell once,
+  before the server takes its first request (it is awaited, and harness detection happens on a
+  request), and merges the answer — and `HOME`, which a service manager can start a process
+  without — into this process, keeping the inherited entries and preferring the shell's order.
+  It never fails a boot: every probe is wrapped, a hung shell is a warning on stderr, and
+  `AGENT_UI_SKIP_SHELL_ENV=1` turns it off for CI and tests.
 - Desktop shell: Tauri v2, frameless; the web app's `AppHeader` IS the window chrome.
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.
