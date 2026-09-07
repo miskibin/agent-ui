@@ -12,11 +12,14 @@ use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use tauri::path::BaseDirectory;
-use tauri::{AppHandle, Manager, RunEvent, Url, WebviewWindow, WindowEvent};
+use tauri::{
+    AppHandle, Emitter, Listener, Manager, RunEvent, Url, WebviewWindow, WindowEvent,
+};
 use tauri_plugin_shell::process::{CommandChild, CommandEvent};
 use tauri_plugin_shell::ShellExt;
 
@@ -50,6 +53,36 @@ const SPLASH_AFTER: Duration = Duration::from_millis(1200);
 
 /// Number of trailing sidecar log bytes kept for the failure screen.
 const LOG_TAIL_BYTES: usize = 4096;
+
+/// Events the quit hold is built out of (see `lib/desktop.ts` and
+/// `components/quit-hold.tsx`).
+///
+/// `QUIT_HOLD_EVENT` is the page arming the shell; `QUIT_REQUESTED_EVENT` is
+/// the shell handing the gesture back to the page instead of acting on it.
+const QUIT_HOLD_EVENT: &str = "agent-ui://quit-hold";
+const QUIT_REQUESTED_EVENT: &str = "agent-ui://quit-requested";
+
+/// Whether the page has asked for the next quit to be held.
+///
+/// The default is `false`, and that is the whole safety argument: an app whose
+/// shell always intercepted its own close would be unquittable the moment the
+/// page failed to load. The interception exists only while a turn is running,
+/// only because the page said so, and it disarms itself when the page goes
+/// away. Once the page decides the user meant it, it quits through the process
+/// plugin's `exit`, which arrives here as an `ExitRequested` carrying a code
+/// and is therefore never held.
+#[derive(Default)]
+struct QuitHold(AtomicBool);
+
+impl QuitHold {
+    fn armed(&self) -> bool {
+        self.0.load(Ordering::Relaxed)
+    }
+
+    fn set(&self, armed: bool) {
+        self.0.store(armed, Ordering::Relaxed);
+    }
+}
 
 /// Owns the Node child process. Managed state, so it is killed on app exit
 /// (explicitly on close/exit events, and via `Drop` as a backstop).
@@ -125,6 +158,28 @@ pub fn run() {
                 .get_webview_window("main")
                 .expect("`main` window is declared in tauri.conf.json");
 
+            app.manage(QuitHold::default());
+            // The page arms and disarms the hold; the payload is a bare JSON
+            // boolean, and anything unparseable disarms rather than sticks.
+            let handle = app.handle().clone();
+            app.listen(QUIT_HOLD_EVENT, move |event| {
+                let armed = serde_json::from_str::<bool>(event.payload()).unwrap_or(false);
+                handle.state::<QuitHold>().set(armed);
+            });
+
+            // Closing the window is quitting: there is one window and no tray.
+            // While the hold is armed the close is refused and forwarded to the
+            // page, which either asks for the gesture again or exits for real.
+            let handle = app.handle().clone();
+            window.on_window_event(move |event| {
+                if let WindowEvent::CloseRequested { api, .. } = event {
+                    if handle.state::<QuitHold>().armed() {
+                        api.prevent_close();
+                        let _ = handle.emit(QUIT_REQUESTED_EVENT, ());
+                    }
+                }
+            });
+
             if tauri::is_dev() {
                 // `beforeDevCommand` already started `next dev`. The window's
                 // configured `index.html` would 404 against the dev server,
@@ -148,13 +203,19 @@ pub fn run() {
         .expect("failed to start the Agent UI shell");
 
     app.run(|handle, event| match event {
-        RunEvent::ExitRequested { .. } | RunEvent::Exit => {
+        // macOS delivers ⌘Q and the application menu's Quit here rather than as
+        // a window close, so the hold has to be honoured on this path too. Only
+        // a user-initiated exit is held: `code` is `Some` exactly when the app
+        // asked to exit itself, which is what the page's own quit does.
+        RunEvent::ExitRequested { code, api, .. } => {
+            if code.is_none() && handle.state::<QuitHold>().armed() {
+                api.prevent_exit();
+                let _ = handle.emit(QUIT_REQUESTED_EVENT, ());
+                return;
+            }
             handle.state::<Sidecar>().kill();
         }
-        RunEvent::WindowEvent {
-            event: WindowEvent::CloseRequested { .. },
-            ..
-        } => {
+        RunEvent::Exit => {
             handle.state::<Sidecar>().kill();
         }
         _ => {}

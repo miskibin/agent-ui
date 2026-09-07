@@ -39,12 +39,21 @@ type TauriDownloadEvent =
   | { event: "Progress"; data: { chunkLength: number } }
   | { event: "Finished" }
 
+type TauriEvents = {
+  listen(
+    event: string,
+    handler: (event: { payload: unknown }) => void
+  ): Promise<() => void>
+  emit(event: string, payload?: unknown): Promise<void>
+}
+
 type TauriGlobal = {
   window?: { getCurrentWindow(): TauriWindow }
   os?: { platform(): string }
   dialog?: TauriDialog
   updater?: { check(): Promise<TauriUpdate | null> }
-  process?: { relaunch(): Promise<void> }
+  process?: { relaunch(): Promise<void>; exit(code?: number): Promise<void> }
+  event?: TauriEvents
 }
 
 function tauri(): TauriGlobal | null {
@@ -344,4 +353,67 @@ export async function openExternal(url: string): Promise<void> {
     }
   }
   if (typeof window !== "undefined") window.open(url, "_blank", "noopener")
+}
+
+/* -------------------------------------------------------------------------- */
+/* Quitting                                                                    */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Closing the window and quitting the app are the same gesture here — one
+ * window, no tray — and the app has turns running in it. So the shell asks
+ * before it goes: `src-tauri` intercepts the close (and, on macOS, ⌘Q from the
+ * application menu), keeps the window alive and emits this event instead;
+ * `components/quit-hold.tsx` decides what happens next.
+ *
+ * The interception is *armed by the page*, through {@link setQuitHoldArmed}.
+ * That direction matters: a shell that always prevented its own close would be
+ * a shell no one could quit if the page ever failed to load, so the shell's
+ * default is to let the window close and the page opts in for exactly as long
+ * as there is something worth interrupting.
+ */
+const QUIT_REQUESTED_EVENT = "agent-ui://quit-requested"
+const QUIT_HOLD_EVENT = "agent-ui://quit-hold"
+
+/**
+ * Subscribes to "the user asked to quit". Resolves to an unsubscribe, and to a
+ * no-op in a browser tab, where the close button is the browser's own.
+ */
+export async function onQuitRequested(cb: () => void): Promise<() => void> {
+  const events = tauri()?.event
+  if (!events) return () => {}
+  try {
+    return await events.listen(QUIT_REQUESTED_EVENT, () => cb())
+  } catch {
+    return () => {}
+  }
+}
+
+/**
+ * Tells the shell whether to intercept the next quit. `false` — the default,
+ * and what the page must go back to as soon as nothing is running — restores
+ * the plain "close means close" behaviour.
+ */
+export async function setQuitHoldArmed(armed: boolean): Promise<void> {
+  const events = tauri()?.event
+  if (!events) return
+  try {
+    await events.emit(QUIT_HOLD_EVENT, armed)
+  } catch {
+    /* the shell is not listening — closing will simply not be intercepted */
+  }
+}
+
+/**
+ * Quits for real. The shell's own exit path, so the bundled server is killed
+ * with it; a no-op in a browser tab, where a page may not close its own window.
+ */
+export async function quit(): Promise<void> {
+  const process = tauri()?.process
+  if (!process) return
+  try {
+    await process.exit(0)
+  } catch {
+    /* nothing left to do — the app is on its way out either way */
+  }
 }
