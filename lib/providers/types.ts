@@ -127,13 +127,6 @@ export type AgentRunOptions = {
    *  `capabilities.vision`. */
   images?: string[]
   /**
-   * Where a harness puts a question it needs answered *before* the turn can
-   * finish — see `lib/turn-requests.ts`. Absent means there is nobody to ask:
-   * a provider must then treat every request as cancelled rather than block,
-   * and say so in the `question` row it publishes for the wait.
-   */
-  askUser?: AskUser
-  /**
    * Absolute working folder for this run — the chat's own folder, chosen in
    * the header. Providers that spawn a CLI use it as the process cwd (and so
    * as the sandbox the agent reads and writes in); ones that do not, ignore it.
@@ -146,8 +139,10 @@ export type AgentRunOptions = {
    * event (`lib/turn-requests`), so the wire protocol grows nothing; the
    * answer arrives through `POST /api/chat/respond`.
    *
-   * Absent means there is no interactive channel this turn and a blocking
-   * backend must fall back to its configured policy.
+   * Absent means there is no interactive channel this turn: a backend with a
+   * configured policy falls back to it, and one that can only ask (pi's
+   * extension dialogs) treats the request as cancelled rather than block, and
+   * says so in the `question` row it publishes for the wait.
    */
   askUser?: AskUser
   signal: AbortSignal
