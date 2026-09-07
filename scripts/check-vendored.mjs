@@ -47,12 +47,21 @@ const LOCAL_SHADCN = new Set([
 const SHARED_FILES = [
   "hooks/use-click-outside.ts",
   "lib/agent-runtime.ts",
+  "lib/command-label.ts",
   "lib/cursor-agent-types.ts",
   "lib/cursor-agent.ts",
   "lib/cursor-stream.ts",
   "lib/cursor-transport-failure.ts",
   "lib/layout-transition.ts",
+  "lib/lru-cache.ts",
+  "lib/markdown-clipboard.ts",
+  "lib/markdown-file-paths.ts",
+  "lib/markdown-github-alerts.ts",
+  "lib/markdown-list-indentation.ts",
   "lib/mock-agent.ts",
+  "lib/prompt-history.ts",
+  "lib/syntax-highlighting.ts",
+  "lib/visible-animation.ts",
 ]
 
 const upstream = upstreamDir()
