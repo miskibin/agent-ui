@@ -12,6 +12,7 @@ import {
   listSourceModels,
   type ModelSource,
 } from "@/lib/model-providers/server"
+import { writePiExtension } from "@/lib/pi-extension"
 import { hasPiBinary } from "@/lib/pi-runtime"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import {
@@ -86,7 +87,7 @@ export function createPiProvider(
       const base: ProviderInfo = {
         id: PI_PROVIDER_ID,
         name: "pi",
-        description: `Agentic harness over ${sourceSummary(baseUrl, sources)} — read, write, edit, bash.`,
+        description: `Agentic harness over ${sourceSummary(baseUrl, sources)} — read, write, edit, bash, ask.`,
         capabilities: {
           tools: true,
           // pi keeps the transcript in its own session file on disk.
@@ -187,6 +188,7 @@ export function createPiProvider(
       }
       // pi resolves `--model` against its own catalog, so the config has to
       // know about the tag before the process starts.
+      let extensionPath: string | undefined
       try {
         // Listed together: one unreachable source must not add its whole
         // timeout to the wait before the first token.
@@ -204,6 +206,7 @@ export function createPiProvider(
           // pi unable to resolve the very model that was picked from it.
           withSelected(remote, selected)
         )
+        extensionPath = await writePiExtension(configDir)
       } catch (err) {
         yield { type: "error", message: ollamaReachErrorMessage(err, baseUrl) }
         return
@@ -225,6 +228,8 @@ export function createPiProvider(
         workspace: options.cwd?.trim() || workspace,
         configDir,
         sessionDir,
+        extensionPath,
+        askUser: options.askUser,
         binPath,
         signal: options.signal,
       })
