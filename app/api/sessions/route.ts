@@ -1,7 +1,13 @@
 import { NextResponse } from "next/server"
 
 import { crossOriginRefusal } from "@/lib/request-origin"
-import { clearSessions, createSession, listSessions } from "@/lib/store/sessions"
+import {
+  clearSessions,
+  createSession,
+  listSessions,
+  normalizeWorktree,
+  readLifecyclePatch,
+} from "@/lib/store/sessions"
 import type { CreateSessionInput } from "@/lib/store/types"
 
 export const runtime = "nodejs"
@@ -27,8 +33,12 @@ export async function POST(req: Request) {
     model: body.model,
     cwd: body.cwd,
     gitBranch: body.gitBranch,
+    // The picker mints this when it creates a worktree for the chat, so a
+    // chat that starts in one remembers the repository it belongs to.
+    worktree: normalizeWorktree(body.worktree),
     permissionMode:
       typeof body.permissionMode === "string" ? body.permissionMode : undefined,
+    ...readLifecyclePatch(body),
   })
   return NextResponse.json({ session }, { status: 201 })
 }

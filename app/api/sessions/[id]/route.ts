@@ -5,7 +5,9 @@ import { crossOriginRefusal } from "@/lib/request-origin"
 import {
   deleteSession,
   getSession,
+  normalizeWorktree,
   patchSession,
+  readLifecyclePatch,
   readMessages,
   writeMessages,
 } from "@/lib/store/sessions"
@@ -28,7 +30,9 @@ export async function GET(_req: Request, ctx: Ctx) {
 
 /**
  * Rename, pin, reorder and per-chat settings (working folder, branch, the
- * provider-side conversation id). `order` moves the row to that sidebar index.
+ * worktree it was started in, the provider-side conversation id) plus the
+ * chat's lifecycle — settled, snoozed, woken, visited. `order` moves the row
+ * to that sidebar index.
  */
 export async function PATCH(req: Request, ctx: Ctx) {
   const refused = crossOriginRefusal(req)
@@ -54,6 +58,11 @@ export async function PATCH(req: Request, ctx: Ctx) {
         : undefined,
     cwd: typeof body.cwd === "string" ? body.cwd : undefined,
     gitBranch: typeof body.gitBranch === "string" ? body.gitBranch : undefined,
+    // Set when a chat moves into a worktree the picker just made for it.
+    worktree: normalizeWorktree(body.worktree),
+    // Settle / snooze / wake / visit — see `lib/session-lifecycle`. A patch
+    // carrying only these leaves `updatedAt` where it was.
+    ...readLifecyclePatch(body),
     // "" clears it — the chat falls back to the harness's configured policy.
     permissionMode:
       typeof body.permissionMode === "string" ? body.permissionMode : undefined,

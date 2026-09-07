@@ -10,8 +10,11 @@ import { appendEvents, normalizeJournal } from "@/lib/handoff/journal"
 import type { JournalEvent, NewJournalEvent } from "@/lib/handoff/types"
 import type {
   CreateSessionInput,
+  SessionLifecyclePatch,
   SessionMeta,
   SessionPatch,
+  SessionSettledOverride,
+  SessionWorktree,
   StoredMessage,
 } from "@/lib/store/types"
 
@@ -102,6 +105,105 @@ function withStoreLock<T>(task: () => Promise<T>): Promise<T> {
   return run
 }
 
+/**
+ * The worktree record, validated field by field.
+ *
+ * It arrives from the client (the folder picker mints it) and from a file on
+ * disk, so it is read the same defensive way as every other field here: three
+ * strings, or nothing at all. Dropping a malformed one costs a section label;
+ * trusting it would put unchecked strings in front of the sidebar and the
+ * worktree cleanup offer.
+ */
+export function normalizeWorktree(raw: unknown): SessionWorktree | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = raw as Record<string, unknown>
+  const root = typeof value.root === "string" ? value.root.trim() : ""
+  const branch = typeof value.branch === "string" ? value.branch.trim() : ""
+  const repoRoot =
+    typeof value.repoRoot === "string" ? value.repoRoot.trim() : ""
+  if (!root || !branch || !repoRoot) return undefined
+  const baseBranch =
+    typeof value.baseBranch === "string" ? value.baseBranch.trim() : ""
+  return {
+    root,
+    branch,
+    repoRoot,
+    ...(baseBranch ? { baseBranch } : null),
+  }
+}
+
+/**
+ * The chat lifecycle fields of a request body, whitelisted the way every other
+ * field these routes accept is. Numbers only — `0` is the documented "clear
+ * this one", and `applyPatch` is what acts on it.
+ */
+export function readLifecyclePatch(raw: unknown): SessionLifecyclePatch {
+  const body = (raw && typeof raw === "object" ? raw : {}) as Record<
+    string,
+    unknown
+  >
+  const number = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) ? value : undefined
+  return {
+    settledAt: number(body.settledAt),
+    settledOverride:
+      body.settledOverride === "settled" ||
+      body.settledOverride === "active" ||
+      body.settledOverride === ""
+        ? body.settledOverride
+        : undefined,
+    snoozedUntil: number(body.snoozedUntil),
+    snoozedAt: number(body.snoozedAt),
+    wokeAt: number(body.wokeAt),
+    lastVisitedAt: number(body.lastVisitedAt),
+  }
+}
+
+/** A stored lifecycle timestamp: a positive number, or absent. */
+function timestamp(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+    ? value
+    : undefined
+}
+
+function settledOverride(value: unknown): SessionSettledOverride | undefined {
+  return value === "settled" || value === "active" ? value : undefined
+}
+
+/**
+ * The lifecycle fields, which are deliberately *not* activity: a chat that is
+ * settled, snoozed, woken or merely visited keeps the `updatedAt` its last
+ * turn gave it. Without this, settling a chat would move it to the top of the
+ * shelf it was just filed on, and opening one would reorder the sidebar under
+ * the pointer.
+ */
+const QUIET_FIELDS = [
+  "settledAt",
+  "settledOverride",
+  "snoozedUntil",
+  "snoozedAt",
+  "wokeAt",
+  "lastVisitedAt",
+] as const
+
+const CLEARABLE_FIELDS = [
+  "settledAt",
+  "snoozedUntil",
+  "snoozedAt",
+  "wokeAt",
+  "lastVisitedAt",
+] as const
+
+function isQuietPatch(patch: SessionPatch) {
+  const keys = Object.keys(patch).filter(
+    (key) => (patch as Record<string, unknown>)[key] !== undefined
+  )
+  return (
+    keys.length > 0 &&
+    keys.every((key) => (QUIET_FIELDS as readonly string[]).includes(key))
+  )
+}
+
 function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null {
   if (!raw || typeof raw !== "object") return null
   const value = raw as Record<string, unknown>
@@ -129,6 +231,13 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
     cwd: typeof value.cwd === "string" ? value.cwd : undefined,
     gitBranch:
       typeof value.gitBranch === "string" ? value.gitBranch : undefined,
+    worktree: normalizeWorktree(value.worktree),
+    settledAt: timestamp(value.settledAt),
+    settledOverride: settledOverride(value.settledOverride),
+    snoozedUntil: timestamp(value.snoozedUntil),
+    snoozedAt: timestamp(value.snoozedAt),
+    wokeAt: timestamp(value.wokeAt),
+    lastVisitedAt: timestamp(value.lastVisitedAt),
     permissionMode:
       typeof value.permissionMode === "string"
         ? value.permissionMode
@@ -146,7 +255,7 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
  * within the index, which only `patchSession` does.
  */
 function applyPatch(meta: SessionMeta, patch: SessionPatch): SessionMeta {
-  return {
+  const next: SessionMeta = {
     ...meta,
     ...(patch.title !== undefined ? { title: clampTitle(patch.title) } : null),
     ...(patch.pinned !== undefined ? { pinned: patch.pinned } : null),
@@ -164,11 +273,35 @@ function applyPatch(meta: SessionMeta, patch: SessionPatch): SessionMeta {
     ...(patch.gitBranch !== undefined
       ? { gitBranch: patch.gitBranch.trim() }
       : null),
+    ...(patch.worktree !== undefined
+      ? { worktree: normalizeWorktree(patch.worktree) }
+      : null),
     ...(patch.permissionMode !== undefined
       ? { permissionMode: patch.permissionMode.trim() }
       : null),
-    updatedAt: Date.now(),
+    ...(patch.settledAt !== undefined ? { settledAt: patch.settledAt } : null),
+    ...(patch.settledOverride !== undefined
+      ? { settledOverride: settledOverride(patch.settledOverride) }
+      : null),
+    ...(patch.snoozedUntil !== undefined
+      ? { snoozedUntil: patch.snoozedUntil }
+      : null),
+    ...(patch.snoozedAt !== undefined ? { snoozedAt: patch.snoozedAt } : null),
+    ...(patch.wokeAt !== undefined ? { wokeAt: patch.wokeAt } : null),
+    ...(patch.lastVisitedAt !== undefined
+      ? { lastVisitedAt: patch.lastVisitedAt }
+      : null),
+    // A lifecycle-only patch is not activity — see QUIET_FIELDS.
+    updatedAt: isQuietPatch(patch) ? meta.updatedAt : Date.now(),
   }
+  // `0` is how a caller *clears* one of these: unsettling drops `settledAt`,
+  // waking drops `snoozedUntil`. Absent and zero would otherwise be two
+  // spellings of the same state, and only one of them survives a reload.
+  for (const key of CLEARABLE_FIELDS) {
+    if (next[key] !== undefined && !(next[key]! > 0)) delete next[key]
+  }
+  if (next.settledOverride === undefined) delete next.settledOverride
+  return next
 }
 
 /** Renumbers `order` to the array position so it stays dense and sortable. */
@@ -218,8 +351,23 @@ export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
       model: input.model ?? "",
       ...(input.cwd?.trim() ? { cwd: input.cwd.trim() } : null),
       ...(input.gitBranch?.trim() ? { gitBranch: input.gitBranch.trim() } : null),
+      ...(normalizeWorktree(input.worktree)
+        ? { worktree: normalizeWorktree(input.worktree) }
+        : null),
       ...(input.permissionMode?.trim()
         ? { permissionMode: input.permissionMode.trim() }
+        : null),
+      ...(timestamp(input.settledAt) ? { settledAt: input.settledAt } : null),
+      ...(settledOverride(input.settledOverride)
+        ? { settledOverride: settledOverride(input.settledOverride) }
+        : null),
+      ...(timestamp(input.snoozedUntil)
+        ? { snoozedUntil: input.snoozedUntil }
+        : null),
+      ...(timestamp(input.snoozedAt) ? { snoozedAt: input.snoozedAt } : null),
+      ...(timestamp(input.wokeAt) ? { wokeAt: input.wokeAt } : null),
+      ...(timestamp(input.lastVisitedAt)
+        ? { lastVisitedAt: input.lastVisitedAt }
         : null),
       createdAt: now,
       updatedAt: now,

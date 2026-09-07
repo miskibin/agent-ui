@@ -123,6 +123,12 @@ export type SessionWorktree = {
   repoRoot: string
 }
 
+/**
+ * The user's own answer to "is this chat done?", which outranks the automatic
+ * rule in both directions.
+ */
+export type SessionSettledOverride = "settled" | "active"
+
 export type SessionMeta = {
   id: string
   title: string
@@ -168,6 +174,38 @@ export type SessionMeta = {
    */
   worktree?: SessionWorktree
   /**
+   * Chat lifecycle — see `lib/session-lifecycle`, which is the only place the
+   * four fields below are read together.
+   *
+   * A chat is *settled* when its work is done: it leaves the folder sections
+   * for the Settled shelf. `settledAt` is when that happened (and what orders
+   * the shelf); `settledOverride` is the user's own answer, which outranks the
+   * automatic rule in both directions — `"settled"` settles a chat the rule
+   * would have left alone, `"active"` keeps one the rule would have swept
+   * away.
+   */
+  settledAt?: number
+  settledOverride?: SessionSettledOverride
+  /**
+   * A chat the user put down until a moment they picked. `snoozedUntil` is
+   * that moment; once it passes the chat is simply active again, wearing a
+   * "Woke" pill until it is next visited. `snoozedAt` is when the snooze was
+   * set, kept so a wake can be told from the snooze that preceded it.
+   */
+  snoozedUntil?: number
+  snoozedAt?: number
+  /**
+   * When the chat came back early — a manual wake, a drag off the shelf. A
+   * timer wake needs no field: `snoozedUntil` in the past already says it.
+   */
+  wokeAt?: number
+  /**
+   * When the chat was last opened. It exists to clear the "Woke" pill, which
+   * is why it is deliberately *not* activity: it never moves `updatedAt`, and
+   * so never reorders the sidebar.
+   */
+  lastVisitedAt?: number
+  /**
    * Per-chat permission mode (`lib/providers/types`'s `PermissionMode`), for
    * harnesses that publish `capabilities.permissionModes`. Kept as a plain
    * string here so the store never has to be migrated when the vocabulary
@@ -177,6 +215,22 @@ export type SessionMeta = {
   createdAt: number
   updatedAt: number
   messageCount: number
+}
+
+/**
+ * The lifecycle timestamps a patch may also *clear*: `0` removes the field,
+ * which is how unsettling drops `settledAt` and waking drops `snoozedUntil`.
+ * A patch that touches nothing else leaves `updatedAt` alone — settling a
+ * chat, or visiting one, is not activity and must not reorder the sidebar.
+ */
+export type SessionLifecyclePatch = Partial<
+  Pick<
+    SessionMeta,
+    "settledAt" | "snoozedUntil" | "snoozedAt" | "wokeAt" | "lastVisitedAt"
+  >
+> & {
+  /** `""` hands the chat back to the automatic rule. */
+  settledOverride?: SessionSettledOverride | ""
 }
 
 export type SessionPatch = Partial<
@@ -194,7 +248,8 @@ export type SessionPatch = Partial<
     | "worktree"
     | "permissionMode"
   >
->
+> &
+  SessionLifecyclePatch
 
 export type CreateSessionInput = {
   title?: string
@@ -204,4 +259,4 @@ export type CreateSessionInput = {
   gitBranch?: string
   worktree?: SessionWorktree
   permissionMode?: string
-}
+} & SessionLifecyclePatch

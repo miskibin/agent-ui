@@ -3,12 +3,20 @@
 import * as React from "react"
 import { toast } from "sonner"
 
+import type { FolderSelection } from "@/components/folder-picker"
 import * as api from "@/lib/api-client"
+import { completeAsk, findPendingAsk } from "@/lib/ask-tools"
 import { errorMessage, omit } from "@/lib/chat-helpers"
 import { clearDraft } from "@/lib/drafts"
 import { folderName } from "@/lib/folder"
 import { runLayoutTransition } from "@/lib/layout-transition"
 import type { PermissionMode, ProviderInfo } from "@/lib/providers/types"
+import {
+  autoSettle,
+  autoSettleAfterDays,
+  wokeAt,
+} from "@/lib/session-lifecycle"
+import { snoozeWakeDescription } from "@/lib/snooze"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
 
 import type { QueuedMessage, SessionRun } from "./chat-types"
@@ -89,8 +97,15 @@ export function useChatActions({
     providersRef,
     selectSessionRef,
     sessionsRef,
+    settingsRef,
     threadsRef,
   } = refs
+
+  /**
+   * Set below. `selectSession` is defined first and marks the chat it opens
+   * as seen, which is the one call that has to reach forward.
+   */
+  const markVisitedRef = React.useRef<(id: string) => void>(() => {})
 
   const selectSession = React.useCallback(
     (id: string) => {
@@ -115,6 +130,9 @@ export function useChatActions({
           providerIdRef.current
         )
       }
+      // Opening a chat is the other way to say "seen" — it clears the wake
+      // notice the same way pressing the pill does.
+      markVisitedRef.current(id)
       const cached = threadsRef.current[id]
       if (cached !== undefined) {
         setThreads((prev) => cacheThread(prev, id, cached))
@@ -141,12 +159,17 @@ export function useChatActions({
   }, [selectSession, selectSessionRef])
 
   /**
-   * The chat's working folder. A chat that does not exist yet (the very first
-   * one, before anything is sent) is created with the folder already on it, so
-   * picking a folder is never lost.
+   * The chat's working folder — the whole `FolderSelection`, which is why the
+   * parameter is not just a path: a folder the picker created a worktree for
+   * arrives with its provenance (`SessionMeta.worktree`) attached, and that is
+   * what the sidebar's header and the delete path's cleanup offer read.
+   *
+   * A chat that does not exist yet (the very first one, before anything is
+   * sent) is created with the folder already on it, so picking one is never
+   * lost.
    */
   const setFolder = React.useCallback(
-    (next: { cwd: string; gitBranch: string }) => {
+    (next: FolderSelection) => {
       const sessionId = activeIdRef.current
       if (!sessionId) {
         void api
@@ -184,6 +207,201 @@ export function useChatActions({
       setThreads,
     ]
   )
+
+  /* ------------------------------------------------------------------ */
+  /* Lifecycle: settle, snooze, wake, visit                                */
+  /* ------------------------------------------------------------------ */
+
+  /**
+   * An unanswered question is dismissed when the chat is filed away.
+   *
+   * Settling says the work is done, and a question waiting for an answer in a
+   * chat nobody will look at again is a turn the model is still notionally
+   * blocked on. The same treatment `send` gives an ask the user typed past —
+   * marked skipped, in the transcript, where it stays visible.
+   */
+  const dismissAsk = React.useCallback(
+    (id: string) => {
+      const thread = threadsRef.current[id]
+      if (!thread) return
+      const pending = findPendingAsk(thread)
+      if (!pending) return
+      const next = completeAsk(thread, pending.messageId, pending.toolId, {
+        skipped: true,
+        answers: {},
+      })
+      setThreads((prev) => ({ ...prev, [id]: next }))
+      void api.putMessages(id, next).catch(() => {
+        /* cosmetic: the block is already closed in the open transcript */
+      })
+    },
+    [setThreads, threadsRef]
+  )
+
+  /**
+   * File a chat away, or take it back out.
+   *
+   * Both directions write `settledOverride`, because both are the user
+   * overruling the age rule — the second one has to *keep* overruling it, or
+   * the next sweep would file the chat straight back. `0` is how the wire
+   * clears a timestamp (see `lib/store/sessions`), while the local mirror
+   * simply drops the field.
+   */
+  const settleChat = React.useCallback(
+    (id: string, settled: boolean) => {
+      const now = Date.now()
+      patchLocal(
+        id,
+        settled
+          ? {
+              settledAt: now,
+              settledOverride: "settled",
+              // Settling outranks a snooze, and the chat is not coming back.
+              snoozedUntil: undefined,
+              snoozedAt: undefined,
+              wokeAt: undefined,
+            }
+          : { settledAt: undefined, settledOverride: "active" }
+      )
+      void api
+        .patchSession(
+          id,
+          settled
+            ? {
+                settledAt: now,
+                settledOverride: "settled",
+                snoozedUntil: 0,
+                snoozedAt: 0,
+                wokeAt: 0,
+              }
+            : { settledAt: 0, settledOverride: "active" }
+        )
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not update the chat"))
+        )
+      if (settled) dismissAsk(id)
+    },
+    [dismissAsk, patchLocal]
+  )
+
+  /** Bring a snoozed chat back now. The user did it, so there is no news to announce. */
+  const wakeChat = React.useCallback(
+    (id: string) => {
+      const now = Date.now()
+      patchLocal(id, {
+        snoozedUntil: undefined,
+        snoozedAt: undefined,
+        wokeAt: undefined,
+        lastVisitedAt: now,
+      })
+      void api
+        .patchSession(id, {
+          snoozedUntil: 0,
+          snoozedAt: 0,
+          wokeAt: 0,
+          lastVisitedAt: now,
+        })
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not wake the chat"))
+        )
+    },
+    [patchLocal]
+  )
+
+  /**
+   * Put a chat down until `until`. Nothing schedules the return — the wake
+   * time simply stops classifying as snoozed once it has passed, which is
+   * what makes a snooze survive a reload, a restart and a closed laptop.
+   */
+  const snoozeChat = React.useCallback(
+    (id: string, until: number) => {
+      const now = Date.now()
+      if (!Number.isFinite(until) || until <= now) return
+      patchLocal(id, { snoozedUntil: until, snoozedAt: now, wokeAt: undefined })
+      void api
+        .patchSession(id, { snoozedUntil: until, snoozedAt: now, wokeAt: 0 })
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not snooze the chat"))
+        )
+      toast.message(`Snoozed until ${snoozeWakeDescription(until, now)}`, {
+        action: { label: "Undo", onClick: () => wakeChat(id) },
+      })
+    },
+    [patchLocal, wakeChat]
+  )
+
+  /**
+   * "Seen" — pressing the Woke pill, or simply opening the chat.
+   *
+   * A no-op unless there is actually a wake notice to clear, because this
+   * runs on every chat you open and the index is the app's hottest file.
+   */
+  const markVisited = React.useCallback(
+    (id: string) => {
+      const session = sessionsRef.current.find((entry) => entry.id === id)
+      if (!session || wokeAt(session, Date.now()) === null) return
+      const now = Date.now()
+      patchLocal(id, { lastVisitedAt: now })
+      void api.patchSession(id, { lastVisitedAt: now }).catch(() => {
+        /* a wake notice that outlives one reload is not worth a toast */
+      })
+    },
+    [patchLocal, sessionsRef]
+  )
+  React.useEffect(() => {
+    markVisitedRef.current = markVisited
+  }, [markVisited])
+
+  /**
+   * The age rule, evaluated on read.
+   *
+   * There is no scheduler behind settling: a chat that has been silent long
+   * enough is settled the next time anyone looks, which is when the app opens
+   * and when the window comes back to the front. That is also why the sweep
+   * is cheap — it reads the index it already has, and writes only the rows
+   * that actually move.
+   */
+  const sweepSettled = React.useCallback(
+    (list: SessionMeta[]) => {
+      const chat = settingsRef.current?.chat as
+        | Record<string, unknown>
+        | undefined
+      const days = autoSettleAfterDays(chat?.autoSettleAfterDays)
+      // `null` is the user turning the rule off.
+      if (days === null) return
+      const now = Date.now()
+      for (const session of list) {
+        const stale = autoSettle(session, now, {
+          afterDays: days,
+          running: abortsRef.current.has(session.id),
+          awaiting:
+            findPendingAsk(threadsRef.current[session.id] ?? []) !== null,
+        })
+        if (!stale) continue
+        // No override: this is the rule's doing, and the user can still
+        // overrule it in either direction afterwards.
+        patchLocal(session.id, { settledAt: now })
+        void api.patchSession(session.id, { settledAt: now }).catch(() => {
+          /* the next sweep tries again */
+        })
+      }
+    },
+    [abortsRef, patchLocal, settingsRef, threadsRef]
+  )
+
+  const sweptRef = React.useRef(false)
+  React.useEffect(() => {
+    if (sweptRef.current || sessions.length === 0) return
+    sweptRef.current = true
+    // After paint: the settings mirror this reads is written by `useMirrorRefs`.
+    queueMicrotask(() => sweepSettled(sessions))
+  }, [sessions, sweepSettled])
+
+  React.useEffect(() => {
+    const onFocus = () => sweepSettled(sessionsRef.current)
+    window.addEventListener("focus", onFocus)
+    return () => window.removeEventListener("focus", onFocus)
+  }, [sessionsRef, sweepSettled])
 
   /**
    * The worktree a chat was working in, when it was working in one of its own.
@@ -463,6 +681,10 @@ export function useChatActions({
     selectSession,
     openFolder,
     setFolder,
+    settleChat,
+    snoozeChat,
+    wakeChat,
+    markVisited,
     removeSession,
     removeSessions,
     handleNewChat,
