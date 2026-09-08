@@ -7,6 +7,7 @@ import * as React from "react"
 import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
 import { FilePanel } from "@/components/file-panel"
 import { PendingLineComments } from "@/components/line-comments"
+import { ChangesPanel } from "@/components/changes-panel"
 import { ChatChanges } from "@/components/chat-changes"
 import { ChatUsageSummary } from "@/components/chat-usage"
 import { ThreadLoading } from "@/components/chat-skeletons"
@@ -55,6 +56,7 @@ import { useChatTurns } from "./hooks/use-chat-turns"
 import { useCommandPalette, useMessageJump } from "./hooks/use-command-palette"
 import { useComposerDrafts } from "./hooks/use-composer-drafts"
 import { useComposerHeight } from "./hooks/use-composer-height"
+import { useChangesPanel } from "./hooks/use-changes-panel"
 import { usePlanPanel } from "./hooks/use-plan-panel"
 import {
   CHAT_PANEL_ID,
@@ -544,7 +546,21 @@ export default function ChatPage() {
    * and closing it brings the plan back rather than losing it.
    */
   const { openPlan, closePlan, reopenPlan } = usePlanPanel({ activeId, plan })
-  const sidePanel = preview ? "file" : openPlan ? "plan" : null
+  const { changesOpen, toggle: toggleChanges, close: closeChanges } =
+    useChangesPanel(activeId)
+  /**
+   * One panel, three things that want it, in the order of how recently the
+   * user asked for each: a file they clicked, the review they opened from the
+   * header, then the plan the agent wrote. Closing the one on top uncovers the
+   * next rather than emptying the panel.
+   */
+  const sidePanel = preview
+    ? "file"
+    : changesOpen && activeCwd
+      ? "changes"
+      : openPlan
+        ? "plan"
+        : null
 
   // The panel is a resizable pane on desktop and an overlay below md.
   // Derived, so exactly one of each is ever mounted.
@@ -578,6 +594,12 @@ export default function ChatPage() {
       if (messageId === livePlanMessageId) reopenPlan()
     },
     [livePlanMessageId, reopenPlan]
+  )
+
+  /** A row in the changes map, opened as a file in the panel beside it. */
+  const handleChangesFileOpen = React.useCallback(
+    (path: string) => handleChatChangeClick({ path }),
+    [handleChatChangeClick]
   )
 
   const planMessageId = openPlan?.messageId
@@ -802,11 +824,8 @@ export default function ChatPage() {
           <AppHeaderActions>
             <ChatChanges
               files={chatChanges}
-              fileActions={fileActions}
-              onFileClick={handleChatChangeClick}
-              sessionId={activeId}
-              cwd={activeCwd}
-              selectedPath={preview?.path ?? null}
+              open={changesOpen}
+              onToggle={toggleChanges}
             />
             <ChatUsageSummary usage={usage} />
             <AppHeaderButton
@@ -1034,7 +1053,16 @@ export default function ChatPage() {
                     className="flex min-w-0 flex-col"
                     style={{ overflow: "hidden" }}
                   >
-                    {dockedPanel === "plan" && openPlan ? (
+                    {dockedPanel === "changes" && activeCwd ? (
+                      <ChangesPanel
+                        sessionId={activeId}
+                        cwd={activeCwd}
+                        onClose={closeChanges}
+                        onOpenFile={handleChangesFileOpen}
+                        fileActions={fileActions}
+                        className="min-h-0 flex-1 border-l"
+                      />
+                    ) : dockedPanel === "plan" && openPlan ? (
                       <PlanPanel
                         plan={openPlan.plan}
                         onBuild={handlePlanBuild}
@@ -1071,7 +1099,13 @@ export default function ChatPage() {
             */}
             <div
               aria-hidden={!overlayPanel}
-              onClick={overlayPanel === "plan" ? closePlan : closePreview}
+              onClick={
+                overlayPanel === "plan"
+                  ? closePlan
+                  : overlayPanel === "changes"
+                    ? closeChanges
+                    : closePreview
+              }
               className={cn(
                 "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
                 overlayPanel ? "opacity-100" : "pointer-events-none opacity-0"
@@ -1087,7 +1121,16 @@ export default function ChatPage() {
                 !overlayPanel && "translate-x-full"
               )}
             >
-              {overlayPanel === "plan" && openPlan ? (
+              {overlayPanel === "changes" && activeCwd ? (
+                <ChangesPanel
+                  sessionId={activeId}
+                  cwd={activeCwd}
+                  onClose={closeChanges}
+                  onOpenFile={handleChangesFileOpen}
+                  fileActions={fileActions}
+                  className="h-full border-l"
+                />
+              ) : overlayPanel === "plan" && openPlan ? (
                 <PlanPanel
                   plan={openPlan.plan}
                   onBuild={handlePlanBuild}
