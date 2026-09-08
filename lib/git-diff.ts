@@ -88,7 +88,11 @@ function unquote(path: string) {
 export async function changedFiles(cwd: string): Promise<ChangedFilePatch[]> {
   const options = { cwd, timeoutMs: DIFF_TIMEOUT_MS, maxBuffer: MAX_GIT_OUTPUT }
   const [statusRun, diffRun, numstatRun] = await Promise.all([
-    runGit(["status", "--porcelain"], options),
+    // `--untracked-files=all`, because the default collapses a new directory
+    // to one `?? sub/` entry. A folder is not a diff: it would take a row in
+    // the panel, have no patch behind it, and say nothing about the files the
+    // agent actually wrote inside it.
+    runGit(["status", "--porcelain", "--untracked-files=all"], options),
     runGit(["diff", "--no-ext-diff", "--no-color", "HEAD"], options),
     runGit(["diff", "--no-ext-diff", "--numstat", "HEAD"], options),
   ])
