@@ -490,7 +490,10 @@ one interface:
   machine (VS Code, Cursor, Zed, Windsurf, Sublime, the JetBrains IDEs; the terminals). The
   vendored components only show the menu (`FileActionItem[]`, threaded through `MessageList`,
   `ChangeSummary`, `FilePreview` and `MessageMarkdown`); `POST /api/open` does the opening,
-  server-side, as a fixed argv with the path as one argument — never `shell: true`; a Windows
+  server-side, as a fixed argv with the path as one argument — never `shell: true`;
+  `windowsHide` is set for the `cmd.exe` shim alone, because Node maps it onto libuv's GUI
+  hide flag too and `SW_HIDE` in the `STARTUPINFO` is what made "Reveal in File Explorer"
+  select the file and then open its window invisibly (`launchOptions`, `lib/open-target.ts`); a Windows
   `.cmd` shim or `start` goes through `cmd.exe` with every argument quoted by the app and
   paths carrying `"`, `%` or a newline refused — resolves a relative path against the chat's
   stored folder, normalizes the separators (a `C:\repo` joined with an answer's
@@ -502,7 +505,27 @@ one interface:
   toast action). A `file.ts:42` chip hands its line to `FilePreviewFile.focusLine`. The
   panel's split/unified and wrap choices persist under `agent-ui:preview-prefs`; the header's
   "N files changed in this chat" (`components/chat-changes.tsx`) is the union of every turn's
-  card, for the whole-thread scope next to the per-turn one.
+  card, for the whole-thread scope next to the per-turn one — and it opens the review below.
+- Reading a change rather than going to a file (`components/changes-panel.tsx`,
+  `app/hooks/use-changes-panel.ts`, `lib/git-diff.ts`, `GET /api/git/diff`): the header's file
+  count used to open a popover holding a file tree, which is the right shape for opening *one*
+  file and the wrong one for reading a change — the reader opened eight files in turn to see
+  what a turn had done and lost their place in each. It opens the panel instead: the diffs
+  themselves, the file list folded to a map above them whose rows *scroll* the stack rather
+  than replacing it, and the commit controls (`components/commit-control.tsx`, shared) at the
+  bottom. `git status` says which files; `lib/git-diff` says what changed in them, one patch
+  per file, with untracked files diffed against `/dev/null` because a file the agent just
+  wrote is exactly the state a chat's changes are usually in.
+
+  **One scroller for the whole review** is the load-bearing part, and it is why the diffs are
+  one vendored `DiffStack` rather than a column of `DiffView`s. `@pierre/diffs` hangs its
+  virtualizer off the viewer's own root — it reads `scrollTop` from it and listens for `scroll`
+  on it — so a column of viewers is a column of *scrollers*: the reader lands in one, scrolls
+  it to its end, and stops, with the rest of the review below a boundary the wheel refuses to
+  cross. `DiffStack` is one `CodeView` holding one item per file, virtualized together, which
+  is both the only way the wheel behaves and the reason a hundred-file review costs what one
+  screen costs. The same rule is what fixed the single-file panel: the viewer needs an
+  `overflow-y` of its own, and the library never sets it.
 - `GET /api/fs/tree` is the file panel's folder browser: one level per request, never a walk,
   so a monorepo costs one `readdir` per folder the reader actually opens. Its root is read
   back from the stored chat exactly the way `/api/file` does it, and containment is decided on

@@ -436,14 +436,33 @@ function spawnViaCmd(argv: string[], cwd?: string) {
   return spawn(
     /*turbopackIgnore: true*/ process.env.ComSpec ?? "cmd.exe",
     cmdShimArgs(argv),
-    {
-      cwd,
-      detached: true,
-      stdio: "ignore",
-      windowsHide: true,
-      windowsVerbatimArguments: true,
-    }
+    { cwd, ...launchOptions({ console: true }), windowsVerbatimArguments: true }
   )
+}
+
+/**
+ * How a child is spawned, and the one Windows flag that has to differ.
+ *
+ * `windowsHide` reads like "don't flash a console window", and for a console
+ * program that is what it does. But Node maps it onto *both* of libuv's hide
+ * flags, and the second one puts `STARTF_USESHOWWINDOW` with `SW_HIDE` in the
+ * `STARTUPINFO` — the show state a GUI program is asked to use for its first
+ * window. So `explorer.exe /select,<path>` ran, found the file, selected it,
+ * and opened the window hidden: the reveal did nothing, visibly, with no error
+ * anywhere. An editor or a terminal launched straight from its `.exe` had the
+ * same flag on it.
+ *
+ * So it is set for exactly one caller — the `cmd.exe` shim, where the window
+ * being suppressed is a console this app conjured and nobody asked to see —
+ * and never for a launch whose entire purpose is to put a window on screen.
+ */
+export function launchOptions(kind: { console: boolean }) {
+  return {
+    detached: true,
+    stdio: "ignore",
+    // See above: on a GUI launch this hides the window we are asking for.
+    windowsHide: kind.console,
+  } as const
 }
 
 /**
@@ -455,9 +474,7 @@ function spawnViaCmd(argv: string[], cwd?: string) {
  */
 function spawnVerbatim(command: string, args: string[]) {
   return spawn(/*turbopackIgnore: true*/ command, args, {
-    detached: true,
-    stdio: "ignore",
-    windowsHide: true,
+    ...launchOptions({ console: false }),
     windowsVerbatimArguments: true,
   })
 }
@@ -473,9 +490,7 @@ function launch(argv: string[], cwd?: string, verbatim = false) {
       ? spawnViaCmd(command.toLowerCase().startsWith("cmd") ? args : argv, cwd)
       : spawn(/*turbopackIgnore: true*/ command, args, {
           cwd,
-          detached: true,
-          stdio: "ignore",
-          windowsHide: true,
+          ...launchOptions({ console: false }),
         })
   child.on("error", () => {
     /* surfaced to the caller as a rejected promise below */

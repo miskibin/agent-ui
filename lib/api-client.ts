@@ -510,8 +510,9 @@ export function searchFiles(
   )
 }
 
+import type { ChangedFilePatch } from "@/lib/git-diff"
 import type { GitStatus } from "@/lib/git-status"
-export type { GitStatus }
+export type { ChangedFilePatch, GitStatus }
 
 /** The git state of a chat's folder, resolved server-side from the chat. */
 export function fetchGitStatus(sessionId: string): Promise<GitStatus> {
@@ -530,6 +531,19 @@ export function fetchFolderLogos(): Promise<FolderLogoMap> {
   return fetch("/api/folder-logos", { cache: "no-store" })
     .then(json<{ folders: FolderLogoMap }>)
     .then((data) => data.folders)
+}
+
+/**
+ * Every changed file in the chat's folder, with its own patch — what the
+ * changes panel draws. Resolved server-side from the chat, like every other
+ * file route.
+ */
+export function fetchChangedFiles(sessionId: string): Promise<ChangedFilePatch[]> {
+  return fetch(`/api/git/diff?session=${encodeURIComponent(sessionId)}`, {
+    cache: "no-store",
+  })
+    .then(json<{ files: ChangedFilePatch[] }>)
+    .then((data) => data.files)
 }
 
 /** `git checkout -- <path>` inside the chat's folder. */
