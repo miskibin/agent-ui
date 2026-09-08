@@ -29,6 +29,14 @@ export const CACHE_SIDEBAR_WIDTH_KEY = "agent-ui:sidebar-width"
  */
 export const CACHE_COMPACT_HINT_KEY = "agent-ui:compact-hint"
 
+/**
+ * The sidebar's folder logos, keyed by folder. Kept so the marks are on screen
+ * in the first paint beside the cached index: they are what the eye finds a
+ * section by, and a row of logos that appear a beat late is a row that moves
+ * under the pointer.
+ */
+export const CACHE_FOLDER_LOGOS_KEY = "agent-ui:folder-logos"
+
 /** Where the dragged file-panel width is remembered, as a percentage. */
 export const CACHE_SPLIT_KEY = "agent-ui:preview-size"
 /** The file panel's own preferences: split or unified diff, wrapped lines. */

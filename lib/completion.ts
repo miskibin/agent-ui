@@ -3,8 +3,12 @@ import "server-only"
 import { parseJsonObject } from "@/lib/json-rescue"
 import { splitModelId } from "@/lib/model-providers/ids"
 import { enabledModelSources } from "@/lib/model-providers/server"
-import { normalizeBaseUrl } from "@/lib/providers/ollama-api"
+import {
+  fetchOllamaModelContext,
+  normalizeBaseUrl,
+} from "@/lib/providers/ollama-api"
 import type { AppSettings } from "@/lib/settings/schema"
+import { estimateTokens, fitMessagesToContext } from "@/lib/token-estimate"
 
 /**
  * One short, non-streaming completion against any configured model source —
@@ -14,6 +18,66 @@ import type { AppSettings } from "@/lib/settings/schema"
  */
 
 const TIMEOUT_MS = 20_000
+
+/**
+ * What Ollama serves when nobody asks for a window.
+ *
+ * 4096, whatever the weights allow — the number is Ollama's, not the model's.
+ * So a commit message written from a 50k-character patch is refused with
+ * "request (17262 tokens) exceeds the available context size (4096 tokens)"
+ * by a model with 128k of context sitting unused. Every job in this file
+ * assembles more evidence than that on a good day, which made the whole
+ * feature look broken on exactly the setup it was meant for: a local model.
+ */
+const OLLAMA_DEFAULT_NUM_CTX = 4_096
+
+/** The estimate is an estimate; never fill the window to its last token. */
+const CONTEXT_HEADROOM_TOKENS = 256
+
+/** Windows are asked for in whole steps — a bigger one costs memory to serve. */
+const NUM_CTX_STEP = 1_024
+
+/**
+ * The window to ask for, and the messages that will fit in it.
+ *
+ * Three cases, in order. The prompt fits Ollama's default: ask for nothing and
+ * behave exactly as before. It fits the model but not the default: ask for a
+ * window big enough, rounded up a step. It fits neither: the evidence is
+ * trimmed to the model's ceiling rather than sent to be refused — a commit
+ * message written from half a patch is worth more than a 400.
+ *
+ * A server that will not say what the model can take is taken at its default,
+ * which is the safe direction: `num_ctx` above the architecture's own maximum
+ * is the one way to turn a working request into a failing one.
+ */
+async function fitToOllamaContext(
+  baseUrl: string,
+  model: string,
+  messages: CompletionMessage[],
+  maxTokens: number
+): Promise<{ messages: CompletionMessage[]; numCtx?: number }> {
+  const prompt = messages.reduce(
+    (sum, message) => sum + estimateTokens(message.content),
+    0
+  )
+  const needed = prompt + maxTokens + CONTEXT_HEADROOM_TOKENS
+  if (needed <= OLLAMA_DEFAULT_NUM_CTX) return { messages }
+
+  const ceiling =
+    (await fetchOllamaModelContext(baseUrl, model)) ?? OLLAMA_DEFAULT_NUM_CTX
+  const numCtx = Math.min(
+    ceiling,
+    Math.ceil(needed / NUM_CTX_STEP) * NUM_CTX_STEP
+  )
+  if (needed <= numCtx) return { messages, numCtx }
+  return {
+    messages: fitMessagesToContext(
+      messages,
+      numCtx - maxTokens - CONTEXT_HEADROOM_TOKENS
+    ),
+    numCtx,
+  }
+}
 
 export type CompletionMessage = { role: "system" | "user"; content: string }
 
@@ -59,15 +123,20 @@ export async function complete(
 
   if (source === "ollama") {
     const baseUrl = normalizeBaseUrl(settings.providers.ollama.baseUrl)
+    const fitted = await fitToOllamaContext(baseUrl, model, messages, maxTokens)
     const res = await fetch(`${baseUrl}/api/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         model,
-        messages,
+        messages: fitted.messages,
         stream: false,
         think: false,
-        options: { temperature: 0.2, num_predict: maxTokens },
+        options: {
+          temperature: 0.2,
+          num_predict: maxTokens,
+          ...(fitted.numCtx ? { num_ctx: fitted.numCtx } : null),
+        },
       }),
       cache: "no-store",
       signal,

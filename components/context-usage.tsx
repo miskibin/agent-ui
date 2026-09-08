@@ -2,6 +2,7 @@
 
 import * as React from "react"
 
+import { estimateTokens } from "@/lib/token-estimate"
 import { formatCost } from "@/lib/model-pricing"
 import type { DiscoveredCommand } from "@/lib/skills"
 import type { StoredMessage } from "@/lib/store/types"
@@ -30,12 +31,14 @@ export type DraftStore = {
   set: (text: string) => void
 }
 
-/** Four characters to a token: wrong in the third digit, right in the first. */
-const CHARS_PER_TOKEN = 4
-
-export function estimateTokens(text: string): number {
-  return Math.ceil(text.trim().length / CHARS_PER_TOKEN)
-}
+/**
+ * Four characters to a token: wrong in the third digit, right in the first.
+ * Re-exported rather than redefined — `lib/completion.ts` sizes the context
+ * window it asks a local model for with the same estimate, and a meter that
+ * disagreed with the request would be a meter that reads green on a prompt the
+ * server is about to have refused.
+ */
+export { estimateTokens }
 
 function createDraftStore(): DraftStore {
   const listeners = new Set<() => void>()

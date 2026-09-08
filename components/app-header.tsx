@@ -85,8 +85,18 @@ export function AppHeaderActions({
   )
 }
 
+/**
+ * A 28px square for an icon on its own — `min-w-7` plus the padding is exactly
+ * that around a 16px glyph — and a pill that grows for the ones that carry a
+ * number beside it (the changed-file count, the token total).
+ *
+ * `min-w`, not `w`: a fixed `size-7` around an icon *and* a label is a box
+ * whose content is wider than the box, and `justify-center` then spills it out
+ * of both ends, over the buttons on either side. The header looked broken for
+ * exactly that reason.
+ */
 const HEADER_BUTTON_CLASS =
-  "inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
+  "inline-flex h-7 min-w-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
 
 export type AppHeaderButtonProps = React.ComponentProps<"button"> & {
   /** Accessible name; also the native tooltip. */
@@ -115,11 +125,7 @@ export function AppHeaderButton({
       ) : null}
     </>
   )
-  const classes = cn(
-    HEADER_BUTTON_CLASS,
-    hint && "lg:w-auto lg:gap-1.5 lg:px-2",
-    className
-  )
+  const classes = cn(HEADER_BUTTON_CLASS, hint && "lg:px-2", className)
 
   if (href) {
     return (

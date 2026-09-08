@@ -14,12 +14,15 @@ import { cn } from "@/lib/utils"
 /**
  * The one answerable form, outside the transcript's scrolling surface.
  *
- * Two things land here and they are answered very differently. An AskQuestion
- * tool belongs to a turn that has *ended*: answering rewrites the transcript
- * and starts a new turn, so the form is disabled while one is generating.
- * A `UserRequest` belongs to a turn that is still running and blocked on the
- * answer (`lib/turn-requests`) — generating is precisely when it is needed, so
- * that one stays enabled.
+ * Two things land here and they reach the backend very differently, but both
+ * are answerable the moment they appear. A `UserRequest` belongs to a turn
+ * that is running and *blocked* on the answer (`lib/turn-requests`): the reply
+ * goes to the server and the same run carries on. An AskQuestion tool belongs
+ * to a harness that could not block on its own ask — it asked and kept going —
+ * so answering stops that turn and starts a new one carrying the answer
+ * (`handleAskAnswer`). Either way the question is a stop sign, and a form that
+ * waited for the turn to end would be a form the agent had already answered
+ * for itself.
  */
 
 /** The shell both forms sit in, so the two read as one surface. */
@@ -47,24 +50,36 @@ export const PendingQuestion = React.memo(function PendingQuestion({
   messageId,
   toolId,
   input,
-  disabled,
   onAnswer,
 }: {
   messageId: string
   toolId: string
   input?: string
-  disabled: boolean
   onAnswer: (messageId: string, toolId: string, result: AskQuestionResult) => void
 }) {
   const question = React.useMemo(() => parseAskQuestionInput(input), [input])
+  /**
+   * One answer per question. Answering stops the turn and starts another, and
+   * both are awaited, so the form would otherwise stay live long enough for a
+   * second click to send a second turn.
+   */
+  const [sent, setSent] = React.useState(false)
   const handleSubmit = React.useCallback(
-    (result: AskQuestionResult) => onAnswer(messageId, toolId, result),
+    (result: AskQuestionResult) => {
+      setSent(true)
+      onAnswer(messageId, toolId, result)
+    },
     [messageId, toolId, onAnswer]
   )
   if (!question) return null
   return (
     <PendingShell label="Question awaiting your answer">
-      <AskQuestion {...question} className="my-0 border-0" disabled={disabled} onSubmit={handleSubmit} />
+      <AskQuestion
+        {...question}
+        className="my-0 border-0"
+        disabled={sent}
+        onSubmit={handleSubmit}
+      />
     </PendingShell>
   )
 })

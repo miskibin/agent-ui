@@ -54,6 +54,7 @@ type TauriGlobal = {
   updater?: { check(): Promise<TauriUpdate | null> }
   process?: { relaunch(): Promise<void>; exit(code?: number): Promise<void> }
   event?: TauriEvents
+  shell?: { open(path: string): Promise<void> }
 }
 
 function tauri(): TauriGlobal | null {
@@ -342,8 +343,7 @@ export async function requestAttention(): Promise<void> {
  * into; a browser tab just opens a tab.
  */
 export async function openExternal(url: string): Promise<void> {
-  const shell = (tauri() as { shell?: { open(path: string): Promise<void> } } | null)
-    ?.shell
+  const shell = tauri()?.shell
   if (shell && typeof shell.open === "function") {
     try {
       await shell.open(url)

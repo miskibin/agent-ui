@@ -25,6 +25,7 @@ import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
 import { PendingQuestion, PendingUserRequest } from "@/components/pending-question"
+import { PlanPanel } from "@/components/plan-panel"
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
 import { ChatInput } from "@/components/ui/chat-input"
@@ -54,6 +55,7 @@ import { useChatTurns } from "./hooks/use-chat-turns"
 import { useCommandPalette, useMessageJump } from "./hooks/use-command-palette"
 import { useComposerDrafts } from "./hooks/use-composer-drafts"
 import { useComposerHeight } from "./hooks/use-composer-height"
+import { usePlanPanel } from "./hooks/use-plan-panel"
 import {
   CHAT_PANEL_ID,
   MAX_PREVIEW_SIZE,
@@ -448,6 +450,7 @@ export default function ChatPage() {
   const {
     listMessages,
     todos,
+    plan,
     contextTurn,
     contextTotal,
     activeCost,
@@ -534,10 +537,56 @@ export default function ChatPage() {
 
   const { chatPaneRef, composerBoxRef } = useComposerHeight()
 
-  // The file panel is a resizable pane on desktop and an overlay below md.
-  // Derived, so exactly one FilePanel is ever mounted.
-  const dockedPreview = isDesktop ? preview : null
-  const overlayPreview = isDesktop ? null : preview
+  /**
+   * The side panel holds one thing at a time: the file the user opened, or the
+   * plan the agent wrote. The file wins while it is open — a file is opened by
+   * a click and a plan by the agent, and the click is the more recent intent —
+   * and closing it brings the plan back rather than losing it.
+   */
+  const { openPlan, closePlan, reopenPlan } = usePlanPanel({ activeId, plan })
+  const sidePanel = preview ? "file" : openPlan ? "plan" : null
+
+  // The panel is a resizable pane on desktop and an overlay below md.
+  // Derived, so exactly one of each is ever mounted.
+  const dockedPanel = isDesktop ? sidePanel : null
+  const overlayPanel = isDesktop ? null : sidePanel
+  const dockedPreview = dockedPanel === "file" ? preview : null
+  const overlayPreview = overlayPanel === "file" ? preview : null
+
+  /**
+   * Build is offered in the panel header, so the transcript's own card stops
+   * offering it — one plan must not carry two buttons that start the same
+   * turn. The card stays as that turn's record, which is what every plan but
+   * the newest one already is.
+   */
+  const planBuild = openPlan ? undefined : handlePlanBuild
+
+  /**
+   * A path named inside the plan opens the same way one named in an answer
+   * does — `handleFileReferenceClick` resolves it against the turn that wrote
+   * it, so it needs the message the plan came from.
+   */
+  /**
+   * A transcript row asking for its plan back. Only the live one has a panel
+   * to go to; an older row still collapses (its plan is not this chat's
+   * proposal any more) but pressing it does nothing, which is why the handler
+   * checks rather than the row.
+   */
+  const livePlanMessageId = plan?.messageId
+  const handlePlanOpen = React.useCallback(
+    (messageId: string) => {
+      if (messageId === livePlanMessageId) reopenPlan()
+    },
+    [livePlanMessageId, reopenPlan]
+  )
+
+  const planMessageId = openPlan?.messageId
+  const handlePlanFileClick = React.useCallback(
+    (path: string, line?: number) => {
+      if (planMessageId) handleFileReferenceClick(planMessageId, path, line)
+    },
+    [handleFileReferenceClick, planMessageId]
+  )
 
   /* Whether this chat's harness can shorten its own conversation — the meter's
      "Compact context" and the offer to do it before resuming. */
@@ -826,9 +875,17 @@ export default function ChatPage() {
                   ) : (
                     <MessageList
                       /* Room for the island above, inside the scroller — so the
-                         last turn settles just clear of it and everything above
-                         still scrolls the whole height of the pane. */
-                      className="pb-[calc(var(--composer-height,7rem)+0.5rem)]"
+                         last turn settles clear of it and everything above
+                         still scrolls the whole height of the pane.
+
+                         The gap is 1.25rem rather than a hairline because the
+                         island is not just the composer: a plan, or a question
+                         waiting on an answer, sits on top of it and grows it
+                         mid-turn. At 0.5rem the tool row the agent had just
+                         written ended up tucked under the todo card's edge,
+                         which reads as the transcript running *behind* the
+                         island rather than stopping above it. */
+                      className="pb-[calc(var(--composer-height,7rem)+1.25rem)]"
                       messages={listMessages}
                       /* One mounted list shows every chat in turn: the key is
                          what resets the scroller's follow state on a switch. */
@@ -838,7 +895,11 @@ export default function ChatPage() {
                       generationLabel={activeRun?.status}
                       onEditMessage={handleEditMessage}
                       onAskAnswer={handleAskAnswer}
-                      onPlanBuild={handlePlanBuild}
+                      onPlanBuild={planBuild}
+                      /* The plan is read in the panel, so the transcript row
+                         collapses to its header and becomes the way back to
+                         it — one plan, one copy, one Build button. */
+                      onPlanOpen={handlePlanOpen}
                       onOpenFile={handleOpenFile}
                       onChangeFileClick={handleChangeFileClick}
                       onFileReferenceClick={handleFileReferenceClick}
@@ -930,12 +991,15 @@ export default function ChatPage() {
                       running={isGenerating}
                     />
                     {pendingRequest?.kind === "ask" ? (
+                      /* Answerable while the turn generates, which is when it
+                         matters most: a harness that cannot block on its own
+                         ask tool keeps going, so answering stops the turn
+                         rather than waiting for it (`handleAskAnswer`). */
                       <PendingQuestion
                         key={`${activeId}:${pendingRequest.messageId}:${pendingRequest.toolId}`}
                         messageId={pendingRequest.messageId}
                         toolId={pendingRequest.toolId}
                         input={pendingRequest.input}
-                        disabled={isGenerating}
                         onAnswer={handleAskAnswer}
                       />
                     ) : pendingRequest ? (
@@ -959,7 +1023,7 @@ export default function ChatPage() {
                 </div>
               </ResizablePanel>
 
-              {dockedPreview ? (
+              {dockedPanel ? (
                 <>
                   <ResizableHandle withHandle />
                   <ResizablePanel
@@ -970,6 +1034,17 @@ export default function ChatPage() {
                     className="flex min-w-0 flex-col"
                     style={{ overflow: "hidden" }}
                   >
+                    {dockedPanel === "plan" && openPlan ? (
+                      <PlanPanel
+                        plan={openPlan.plan}
+                        onBuild={handlePlanBuild}
+                        onClose={closePlan}
+                        busy={isGenerating}
+                        fileActions={fileActions}
+                        onFileClick={handlePlanFileClick}
+                        className="min-h-0 flex-1 border-l"
+                      />
+                    ) : dockedPreview ? (
                     <FilePanel
                       file={dockedPreview}
                       binary={previewBinary}
@@ -984,6 +1059,7 @@ export default function ChatPage() {
                       onWrapChange={setWrap}
                       className="border-l"
                     />
+                    ) : null}
                   </ResizablePanel>
                 </>
               ) : null}
@@ -994,24 +1070,34 @@ export default function ChatPage() {
               sidebar — but inside this wrapper, so it stops at the header.
             */}
             <div
-              aria-hidden={!preview}
-              onClick={closePreview}
+              aria-hidden={!overlayPanel}
+              onClick={overlayPanel === "plan" ? closePlan : closePreview}
               className={cn(
                 "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
-                preview ? "opacity-100" : "pointer-events-none opacity-0"
+                overlayPanel ? "opacity-100" : "pointer-events-none opacity-0"
               )}
             />
             <div
               data-slot="chat-file-panel"
               // Off-canvas when closed: keep it out of the tab order either way.
-              inert={!preview}
+              inert={!overlayPanel}
               className={cn(
                 "absolute inset-y-0 right-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
                 "transition-transform duration-300 ease-in-out motion-reduce:transition-none md:hidden",
-                !preview && "translate-x-full"
+                !overlayPanel && "translate-x-full"
               )}
             >
-              {overlayPreview ? (
+              {overlayPanel === "plan" && openPlan ? (
+                <PlanPanel
+                  plan={openPlan.plan}
+                  onBuild={handlePlanBuild}
+                  onClose={closePlan}
+                  busy={isGenerating}
+                  fileActions={fileActions}
+                  onFileClick={handlePlanFileClick}
+                  className="h-full border-l"
+                />
+              ) : overlayPreview ? (
                 <FilePanel
                   file={overlayPreview}
                   binary={previewBinary}

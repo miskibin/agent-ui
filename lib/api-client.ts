@@ -1,6 +1,7 @@
 import type { MessageAttachmentData } from "@/components/ui/message"
 import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker"
 import type { FolderInfo, FolderListing } from "@/lib/folder"
+import type { FolderLogoMap } from "@/lib/folder-logo"
 import type { TurnStateFrame } from "@/lib/handoff/types"
 import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
 import type { MessageSearchResult } from "@/lib/message-search"
@@ -517,6 +518,18 @@ export function fetchGitStatus(sessionId: string): Promise<GitStatus> {
   return fetch(`/api/git/status?session=${encodeURIComponent(sessionId)}`, {
     cache: "no-store",
   }).then(json<GitStatus>)
+}
+
+/**
+ * A logo for every working folder the chat index names, keyed by the folder's
+ * comparison form (`normalizeFolderForComparison`). Takes no arguments: the
+ * route answers for the folders it already knows about, never for a path a
+ * caller hands it.
+ */
+export function fetchFolderLogos(): Promise<FolderLogoMap> {
+  return fetch("/api/folder-logos", { cache: "no-store" })
+    .then(json<{ folders: FolderLogoMap }>)
+    .then((data) => data.folders)
 }
 
 /** `git checkout -- <path>` inside the chat's folder. */

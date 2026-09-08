@@ -333,6 +333,28 @@ function CommitControl({
   )
 }
 
+/** One tree row, and the header plus filter box above it. */
+const TREE_ROW_PX = 24
+const TREE_CHROME_PX = 36 + 38 + 12
+/** The commit message box and its two buttons. */
+const COMMIT_BLOCK_PX = 96
+/** A two-file chat should still look like a panel rather than a tooltip. */
+const PANEL_MIN_PX = 288
+/** …and a hundred-file one should not be taller than the window. */
+const PANEL_MAX_PX = 544
+
+/** Distinct parent directories among these paths — each is a row of its own. */
+function countDirectories(entries: { path: string }[]): number {
+  const dirs = new Set<string>()
+  for (const entry of entries) {
+    const parts = entry.path.split("/")
+    for (let depth = 1; depth < parts.length; depth += 1) {
+      dirs.add(parts.slice(0, depth).join("/"))
+    }
+  }
+  return dirs.size
+}
+
 const TOGGLE =
   "rounded-md px-2 py-0.5 text-[11.5px] outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 data-[active=true]:bg-background data-[active=true]:text-foreground data-[active=true]:shadow-xs"
 
@@ -375,7 +397,21 @@ export function ChatChanges({
             <span className="text-[11px] tabular-nums">{files.length}</span>
           </AppHeaderButton>
         </PopoverTrigger>
-        <PopoverContent align="end" className="w-96 p-0">
+        <PopoverContent
+          align="end"
+          /**
+           * Sized to hold a file tree rather than to be small.
+           *
+           * At `w-96 h-80` the panel gave the tree about four rows once the
+           * header, its filter box and the commit block had taken their share
+           * — a list of changed files in which the changed files were the one
+           * thing you could not see. Both axes are bounded by the viewport
+           * (and divided by `--ui-scale`, which is a zoom on the page rather
+           * than on the window) so it can be generous without ever being
+           * taller than the window it opens in.
+           */
+          className="w-[min(32rem,calc(100vw-1.5rem))] p-0"
+        >
           {/* Mounted only while the popover is open: the tree measures its own
               container to virtualize, and a hidden one measures zero. */}
           {open ? (
@@ -467,15 +503,64 @@ function ChatChangesTree({
     [sessionId]
   )
 
+  const count = browsing ? null : entries.length
+
+  /**
+   * Tall enough for the rows there are, and no taller.
+   *
+   * The tree virtualizes against its own container, so the panel needs a
+   * height rather than a `max-height` it could grow into. That makes the
+   * height this component's to work out: the rows it is about to draw, plus
+   * the chrome around them, clamped to a floor (a two-file chat should still
+   * look like a panel) and to the window. Browsing has no count to measure —
+   * the folder is loaded a level at a time — so it takes the ceiling.
+   */
+  const height = browsing
+    ? PANEL_MAX_PX
+    : Math.min(
+        PANEL_MAX_PX,
+        Math.max(
+          PANEL_MIN_PX,
+          // Every directory in the tree is a row of its own once expanded.
+          (entries.length + countDirectories(entries)) * TREE_ROW_PX +
+            TREE_CHROME_PX +
+            (cwd && status?.isGitRepo ? COMMIT_BLOCK_PX : 0)
+        )
+      )
+
   return (
-    <div className="flex h-80 flex-col">
-      <div className="flex h-9 shrink-0 items-center gap-1 border-b px-2">
+    <div
+      className="flex flex-col"
+      /* `min()` in the value rather than a class, because one of the two terms
+         is computed and the other is the window — see `height` above. */
+      style={{ height: `min(${height}px, calc(80dvh / var(--ui-scale, 1)))` }}
+    >
+      <div className="flex h-9 shrink-0 items-center gap-1.5 border-b px-2.5">
         {/* "Changed files", not "changed in this chat": the tree is the union
             of what the turns did and what the worktree still holds, and a
             file the user edited themselves belongs in it. */}
-        <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground">
+        <span className="shrink-0 text-[12px] font-medium text-foreground">
           Changed files
         </span>
+        {/* The same count the trigger carries, and the branch they are changed
+            on — the sidebar's folder headers say both, and a panel about a
+            worktree that did not name its branch is a panel you have to go
+            somewhere else to trust. */}
+        {count !== null ? (
+          <span className="shrink-0 text-[11.5px] tabular-nums text-muted-foreground">
+            {count}
+          </span>
+        ) : null}
+        {status?.branch ? (
+          <span
+            className="min-w-0 flex-1 truncate text-[11.5px] text-muted-foreground"
+            title={status.branch}
+          >
+            {status.branch}
+          </span>
+        ) : (
+          <span className="min-w-0 flex-1" />
+        )}
         {cwd ? (
           <div
             role="group"

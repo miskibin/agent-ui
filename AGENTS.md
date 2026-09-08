@@ -168,9 +168,21 @@ one interface:
   `done`/`error` with the outcome — `parseUserRequestInput` and `isOpenUserRequestTool` are the
   one definition of that shape, and the module imports nothing from `node:` so the page shares
   it. The page lifts it into `components/pending-question.tsx` above the composer and leaves it
-  **enabled while the turn generates**, which is the only time it exists; the AskQuestion form
-  beside it ends its turn and so stays disabled then, and the transcript row reads "Waiting for
-  your answer" rather than growing a second form. ACP is the first caller: its `ask` permission
+  **enabled while the turn generates**, which is the only time it exists, and the transcript row
+  reads "Waiting for your answer" rather than growing a second form.
+
+  The AskQuestion form beside it is enabled then too, for the opposite reason. It belongs to a
+  harness that could *not* block on its own ask — it asked and carried on — so a form that
+  waited for the turn to end would be a form the agent had already answered for itself, and by
+  then it had written a plan around the guess. **A question is a stop sign**: answering calls
+  `stopAndSettle` (`use-chat-turns`), then rewrites the transcript and sends the answer as a
+  fresh turn. The stop is *awaited*, and that is load-bearing — `use-turn-runner` folds stream
+  events into one queued frame and flushes whatever is left from its `finally`, so a transcript
+  rewritten between the abort and that last flush is one the dying turn writes over. The runner
+  drops its controller immediately after that flush, which is the signal `stopAndSettle` waits
+  on, capped at 1.5s so a wedged runner cannot hold the answer hostage.
+
+  ACP is the first caller: its `ask` permission
   mode puts every `session/request_permission` to the user instead of to a policy, and a chat's
   own permission mode then only narrows dsh's sandbox — it never turns `ask` back into an
   automatic approval. `fs/write_text_file` is served outside that dance, so under `ask` it
@@ -412,6 +424,25 @@ one interface:
   show the name a worktree *would* get before anything is created — which is why
   `<FolderPicker>` is handed the chat's `title`. `SessionMeta.worktree` is the provenance
   beside `cwd`: which repository, which branch, cut from what.
+- The side panel holds one thing at a time, and a plan is the other one
+  (`components/plan-panel.tsx`, `app/hooks/use-plan-panel.ts`, `livePlan` in
+  `lib/todo-plan.ts`). A plan is the one thing in a transcript that is a *proposal*
+  rather than a record — read, argued with, then acted on — and in the message column
+  it was a card at whatever width that column happened to be, wedged between the turn
+  that wrote it and the turn that follows. So it opens itself in the panel, at the
+  width of a document, with Build in the header rather than at the end of a body you
+  have to scroll to reach. The transcript row collapses to the vendored `PlanCard`'s
+  header (`compact` + `onOpen`, threaded through `MessageList` as `onPlanOpen`) and is
+  the way back to it: one plan, one copy, and **one** Build button — `app/page.tsx`
+  withholds `onPlanBuild` from the list while the panel holds the plan, because two
+  buttons that start the same turn is one button too many. Only the *newest* turn's
+  plan opens (`livePlan`), matching the rule the list already follows for offering
+  Build: a plan three turns back is history, and offering to implement it would start
+  a turn about something the chat has moved past. Dismissal is remembered against the
+  tool call that wrote it, so a stream re-rendering the same plan cannot reopen a
+  panel the user closed, while a *new* plan is a new question and opens again. The
+  file panel wins the space when both want it — a file is opened by a click and a plan
+  by the agent — and closing the file brings the plan back rather than losing it.
 - The file panel: every file a turn touched opens beside the conversation. The components are
   vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/hooks/use-file-panel.ts`
   owns the state — which file is open, the split width under `agent-ui:preview-size`, closing on
