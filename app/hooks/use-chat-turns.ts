@@ -41,6 +41,13 @@ import type { LoadThread } from "./use-threads"
 import type { RunPrompt } from "./use-turn-runner"
 
 /** What the Build button under a plan card says, in the user's own voice. */
+/**
+ * How long an answered question waits for the stopped turn to let go before
+ * rewriting the transcript anyway. Long enough for a fetch to unwind, short
+ * enough that a wedged runner cannot hold the answer hostage.
+ */
+const SETTLE_TIMEOUT_MS = 1_500
+
 const BUILD_PROMPT = "Go ahead and implement the plan above."
 
 /** The harness's own command for shortening a conversation it is holding. */
@@ -452,6 +459,40 @@ export function useChatTurns({
     setRuns((prev) => omit(prev, activeId))
   }, [abortsRef, activeId, setRuns])
 
+  /**
+   * Stops a chat's turn and resolves once the runner has actually let go of
+   * it, rather than the instant `abort()` returns.
+   *
+   * The difference matters to exactly one caller. `use-turn-runner` folds a
+   * burst of stream events into one queued frame and flushes whatever is left
+   * from its `finally` — deliberately, because Stop leaves the turn in place
+   * and the server has already persisted every event it produced. So a
+   * transcript rewritten between the abort and that last flush is a transcript
+   * the dying turn writes over. The runner drops its controller immediately
+   * after that flush, which makes the controller's absence the signal that the
+   * coast is clear.
+   *
+   * Capped, because a runner that never reaches its `finally` must not be able
+   * to swallow the user's answer: after that the rewrite goes ahead anyway.
+   */
+  const stopAndSettle = React.useCallback(
+    async (sessionId: string) => {
+      const controller = abortsRef.current.get(sessionId)
+      if (!controller) return
+      controller.abort()
+      setRuns((prev) => omit(prev, sessionId))
+      const deadline = Date.now() + SETTLE_TIMEOUT_MS
+      while (
+        abortsRef.current.get(sessionId) === controller &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 16))
+      }
+      abortsRef.current.delete(sessionId)
+    },
+    [abortsRef, setRuns]
+  )
+
   /** Rewrites the stored thread after an in-place edit / delete / ask answer. */
   const commitThread = React.useCallback(
     async (sessionId: string, next: StoredMessage[]) => {
@@ -466,16 +507,33 @@ export function useChatTurns({
     [patchLocal, setThreads]
   )
 
+  /**
+   * The user answers the question the agent asked.
+   *
+   * A question is a stop sign, and it is answerable the moment it appears —
+   * including while the turn that asked it is still generating. That case is
+   * the whole point: a harness that cannot block on its own ask tool carries
+   * on regardless, and by the time the turn ended it had already chosen for
+   * itself and written a plan around the guess. So answering *stops* the turn
+   * first, which is what "asking" was supposed to mean.
+   *
+   * Stopping is awaited rather than fired off, because the transcript is
+   * rewritten next and a turn still holding a queued frame would write over
+   * the answer — see `stopAndSettle`.
+   */
   const handleAskAnswer = React.useCallback(
     (messageId: string, toolId: string, result: AskQuestionResult) => {
       const sessionId = activeId
-      const next = completeAsk(
-        threadsRef.current[sessionId] ?? EMPTY_MESSAGES,
-        messageId,
-        toolId,
-        result
-      )
       void (async () => {
+        await stopAndSettle(sessionId)
+        // Read *after* the stop: the last flush belongs in the transcript this
+        // answer is recorded on.
+        const next = completeAsk(
+          threadsRef.current[sessionId] ?? EMPTY_MESSAGES,
+          messageId,
+          toolId,
+          result
+        )
         await commitThread(sessionId, next)
         await runPrompt({
           sessionId,
@@ -500,6 +558,7 @@ export function useChatTurns({
       model,
       providerId,
       runPrompt,
+      stopAndSettle,
       threadsRef,
     ]
   )

@@ -168,9 +168,21 @@ one interface:
   `done`/`error` with the outcome — `parseUserRequestInput` and `isOpenUserRequestTool` are the
   one definition of that shape, and the module imports nothing from `node:` so the page shares
   it. The page lifts it into `components/pending-question.tsx` above the composer and leaves it
-  **enabled while the turn generates**, which is the only time it exists; the AskQuestion form
-  beside it ends its turn and so stays disabled then, and the transcript row reads "Waiting for
-  your answer" rather than growing a second form. ACP is the first caller: its `ask` permission
+  **enabled while the turn generates**, which is the only time it exists, and the transcript row
+  reads "Waiting for your answer" rather than growing a second form.
+
+  The AskQuestion form beside it is enabled then too, for the opposite reason. It belongs to a
+  harness that could *not* block on its own ask — it asked and carried on — so a form that
+  waited for the turn to end would be a form the agent had already answered for itself, and by
+  then it had written a plan around the guess. **A question is a stop sign**: answering calls
+  `stopAndSettle` (`use-chat-turns`), then rewrites the transcript and sends the answer as a
+  fresh turn. The stop is *awaited*, and that is load-bearing — `use-turn-runner` folds stream
+  events into one queued frame and flushes whatever is left from its `finally`, so a transcript
+  rewritten between the abort and that last flush is one the dying turn writes over. The runner
+  drops its controller immediately after that flush, which is the signal `stopAndSettle` waits
+  on, capped at 1.5s so a wedged runner cannot hold the answer hostage.
+
+  ACP is the first caller: its `ask` permission
   mode puts every `session/request_permission` to the user instead of to a policy, and a chat's
   own permission mode then only narrows dsh's sandbox — it never turns `ask` back into an
   automatic approval. `fs/write_text_file` is served outside that dance, so under `ask` it

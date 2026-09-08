@@ -938,12 +938,15 @@ export default function ChatPage() {
                       running={isGenerating}
                     />
                     {pendingRequest?.kind === "ask" ? (
+                      /* Answerable while the turn generates, which is when it
+                         matters most: a harness that cannot block on its own
+                         ask tool keeps going, so answering stops the turn
+                         rather than waiting for it (`handleAskAnswer`). */
                       <PendingQuestion
                         key={`${activeId}:${pendingRequest.messageId}:${pendingRequest.toolId}`}
                         messageId={pendingRequest.messageId}
                         toolId={pendingRequest.toolId}
                         input={pendingRequest.input}
-                        disabled={isGenerating}
                         onAnswer={handleAskAnswer}
                       />
                     ) : pendingRequest ? (
