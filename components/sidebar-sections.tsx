@@ -3,6 +3,7 @@
 import { AlarmClock } from "lucide-react"
 import * as React from "react"
 
+import { FolderLogoMark } from "@/components/folder-logo"
 import { FolderStatus } from "@/components/folder-status"
 import {
   ChatSidebarItemList,
@@ -132,7 +133,18 @@ export const SidebarFolderSection = React.memo(function SidebarFolderSection({
       // The section's own dot while it is folded away. Owned by the component,
       // which stops animating it when the tab or the row goes out of sight.
       live={group.running}
-      title={<span title={group.cwd || undefined}>{group.label}</span>}
+      // The folder's own mark leads the header. A grouped sidebar is scanned
+      // by shape before it is read, and a column of identical glyphs throws
+      // that away — see `lib/folder-logo.ts` for what each folder gets.
+      title={
+        <span
+          className="flex min-w-0 items-center gap-1.5"
+          title={group.cwd || undefined}
+        >
+          {group.cwd ? <FolderLogoMark cwd={group.cwd} /> : null}
+          <span className="min-w-0 truncate">{group.label}</span>
+        </span>
+      }
       action={
         <span className="flex min-w-0 items-center gap-1.5 normal-case">
           {group.branch ? (

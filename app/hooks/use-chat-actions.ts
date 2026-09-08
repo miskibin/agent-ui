@@ -3,6 +3,7 @@
 import * as React from "react"
 import { toast } from "sonner"
 
+import { refreshFolderLogos } from "@/components/folder-logo"
 import type { FolderSelection } from "@/components/folder-picker"
 import * as api from "@/lib/api-client"
 import { completeAsk, findPendingAsk } from "@/lib/ask-tools"
@@ -183,6 +184,9 @@ export function useChatActions({
             setSessions((prev) => [created, ...prev])
             setThreads((prev) => ({ ...prev, [created.id]: [] }))
             setActiveId(created.id)
+            // The sidebar is about to grow a section for a folder the logo
+            // scan has never seen; ask for it now rather than next reload.
+            refreshFolderLogos()
           })
           .catch((err: unknown) =>
             toast.error(errorMessage(err, "Could not start a new chat"))
@@ -192,6 +196,7 @@ export function useChatActions({
       patchLocal(sessionId, next)
       void api
         .patchSession(sessionId, next)
+        .then(refreshFolderLogos)
         .catch((err: unknown) =>
           toast.error(errorMessage(err, "Could not set the folder"))
         )
