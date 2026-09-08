@@ -59,9 +59,20 @@ export function folderMonogram(name: string): string {
 }
 
 /**
- * A hue in [0, 360) for a path — the whole colour, since saturation and
- * lightness come from the theme so the mark stays legible in every preset and
- * in both modes.
+ * Twelve hues, 30° apart, starting off pure red.
+ *
+ * A palette rather than the hash's own 360 values, because "nearly the same
+ * colour" is the one answer that helps nobody: two sections at 349° and 358°
+ * are two pinks the eye reads as one, having been told they are different.
+ * Quantized, two folders either share a colour outright — which is honest, and
+ * their initials still tell them apart — or differ by a step nobody has to
+ * squint at.
+ */
+const HUES = Array.from({ length: 12 }, (_, step) => 15 + step * 30)
+
+/**
+ * The hue for a path — the whole colour, since saturation and lightness come
+ * from the theme so the mark stays legible in every preset and in both modes.
  *
  * FNV-1a over the path rather than the name: two `web` folders in two
  * checkouts are two projects and should not share a colour. 32-bit unsigned
@@ -74,5 +85,5 @@ export function folderHue(path: string): number {
     // `Math.imul` is the 32-bit multiply; `>>> 0` keeps it unsigned.
     hash = Math.imul(hash, 0x01000193) >>> 0
   }
-  return hash % 360
+  return HUES[hash % HUES.length]
 }

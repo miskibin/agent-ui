@@ -826,9 +826,17 @@ export default function ChatPage() {
                   ) : (
                     <MessageList
                       /* Room for the island above, inside the scroller — so the
-                         last turn settles just clear of it and everything above
-                         still scrolls the whole height of the pane. */
-                      className="pb-[calc(var(--composer-height,7rem)+0.5rem)]"
+                         last turn settles clear of it and everything above
+                         still scrolls the whole height of the pane.
+
+                         The gap is 1.25rem rather than a hairline because the
+                         island is not just the composer: a plan, or a question
+                         waiting on an answer, sits on top of it and grows it
+                         mid-turn. At 0.5rem the tool row the agent had just
+                         written ended up tucked under the todo card's edge,
+                         which reads as the transcript running *behind* the
+                         island rather than stopping above it. */
+                      className="pb-[calc(var(--composer-height,7rem)+1.25rem)]"
                       messages={listMessages}
                       /* One mounted list shows every chat in turn: the key is
                          what resets the scroller's follow state on a switch. */

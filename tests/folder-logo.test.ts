@@ -110,3 +110,23 @@ test("the colour is a stable function of the whole path", () => {
     assert.ok(Number.isInteger(hue) && hue >= 0 && hue < 360, path)
   }
 })
+
+test("two folders share a hue or differ by a whole step, never nearly", () => {
+  // The palette is what stops "349 and 358" — two pinks the eye reads as one.
+  const hues = new Set(
+    [
+      "/a",
+      "/b",
+      "/home/me/agent-ui",
+      "/home/me/chat-components",
+      "/srv/dashboard",
+      "/srv/api",
+      "/w/one",
+      "/w/two",
+    ].map(folderHue)
+  )
+  for (const hue of hues) {
+    assert.equal((hue - 15) % 30, 0, `${hue} is off the palette`)
+  }
+  assert.ok(hues.size > 1, "one palette entry for eight folders is not a palette")
+})
