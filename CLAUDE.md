@@ -424,6 +424,25 @@ one interface:
   show the name a worktree *would* get before anything is created — which is why
   `<FolderPicker>` is handed the chat's `title`. `SessionMeta.worktree` is the provenance
   beside `cwd`: which repository, which branch, cut from what.
+- The side panel holds one thing at a time, and a plan is the other one
+  (`components/plan-panel.tsx`, `app/hooks/use-plan-panel.ts`, `livePlan` in
+  `lib/todo-plan.ts`). A plan is the one thing in a transcript that is a *proposal*
+  rather than a record — read, argued with, then acted on — and in the message column
+  it was a card at whatever width that column happened to be, wedged between the turn
+  that wrote it and the turn that follows. So it opens itself in the panel, at the
+  width of a document, with Build in the header rather than at the end of a body you
+  have to scroll to reach. The transcript row collapses to the vendored `PlanCard`'s
+  header (`compact` + `onOpen`, threaded through `MessageList` as `onPlanOpen`) and is
+  the way back to it: one plan, one copy, and **one** Build button — `app/page.tsx`
+  withholds `onPlanBuild` from the list while the panel holds the plan, because two
+  buttons that start the same turn is one button too many. Only the *newest* turn's
+  plan opens (`livePlan`), matching the rule the list already follows for offering
+  Build: a plan three turns back is history, and offering to implement it would start
+  a turn about something the chat has moved past. Dismissal is remembered against the
+  tool call that wrote it, so a stream re-rendering the same plan cannot reopen a
+  panel the user closed, while a *new* plan is a new question and opens again. The
+  file panel wins the space when both want it — a file is opened by a click and a plan
+  by the agent — and closing the file brings the plan back rather than losing it.
 - The file panel: every file a turn touched opens beside the conversation. The components are
   vendored (`file-preview.tsx`, `file-icon.tsx`, `resizable.tsx`); `app/hooks/use-file-panel.ts`
   owns the state — which file is open, the split width under `agent-ui:preview-size`, closing on

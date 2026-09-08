@@ -7,7 +7,7 @@ import { contextTurnUsage } from "@/components/context-usage"
 import type { ModelOption } from "@/components/ui/model-picker"
 import { findPendingRequest, isInternalMessage } from "@/lib/ask-tools"
 import type { StoredMessage } from "@/lib/store/types"
-import { latestTodos } from "@/lib/todo-plan"
+import { latestTodos, livePlan } from "@/lib/todo-plan"
 import { chatUsage } from "@/lib/usage"
 import { turnFiles } from "@/lib/turn-files"
 
@@ -166,6 +166,13 @@ export function useThreadView({
   )
 
   /**
+   * The plan the chat is on, for the side panel. Same deferred copy as the
+   * todos above: a plan changes a handful of times per run and the transcript
+   * changes every frame.
+   */
+  const plan = React.useMemo(() => livePlan(deferredMessages), [deferredMessages])
+
+  /**
    * The composer's context ring. `base` is recomputed every render but only
    * *changes* when a turn reports its usage, so the memoized composer is not
    * rebuilt while one is streaming.
@@ -292,6 +299,7 @@ export function useThreadView({
     visibleMessages,
     listMessages,
     todos,
+    plan,
     contextTurn,
     contextTotal,
     activeCost,
