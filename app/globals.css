@@ -308,3 +308,29 @@
   font-weight: var(--shiki-dark-font-weight) !important;
   text-decoration: var(--shiki-dark-text-decoration) !important;
 }
+
+/* ---------------------------------------------------------------------------
+ * File type icons — the Material Icon Theme shapes, at this app's volume.
+ *
+ * The registry ships them with their upstream brand colors baked into the path
+ * fills, on purpose: they identify the technology rather than the host, and
+ * they are the same in every consumer. In a chat window they were the loudest
+ * thing on screen — a TypeScript file's #0288d1 is a saturated blue beside
+ * type that is muted grey, and a change list is dozens of them in a column.
+ *
+ * So the hue stays — a `.py` still reads as a `.py` at 16px, which is the whole
+ * reason the icons are colored — and the volume comes down. Toned in CSS rather
+ * than by editing 39 fills, because the fills are vendored and must not drift;
+ * a filter is also the only way to reach the ones drawn inside vendored
+ * components that expose no prop for it.
+ * ------------------------------------------------------------------------- */
+
+[data-slot="file-icon"] {
+  filter: saturate(0.6) opacity(0.88);
+}
+
+/* Dark mode needs the opposite nudge: the same brand colors sit on a dark
+   ground, where desaturating alone reads as dirty rather than quiet. */
+.dark [data-slot="file-icon"] {
+  filter: saturate(0.58) brightness(1.12) opacity(0.9);
+}

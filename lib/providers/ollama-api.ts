@@ -158,6 +158,22 @@ function architectureContextLength(
 }
 
 /**
+ * The largest context this model's weights allow, or undefined when the server
+ * will not say.
+ *
+ * A *ceiling*, not what the model is being served with: Ollama picks the
+ * window at load time and defaults to 4096 however large the architecture is,
+ * which is why a long request gets a 400 naming a context the model plainly
+ * has more of. `lib/completion.ts` reads this to ask for a bigger one.
+ */
+export async function fetchOllamaModelContext(
+  baseUrl: string,
+  model: string
+): Promise<number | undefined> {
+  return (await fetchModelDetails(baseUrl, model)).contextLength
+}
+
+/**
  * Which of these models take image input. `/api/show` is authoritative on
  * Ollama servers new enough to report `capabilities`; older servers fall
  * back to a family/name heuristic. Probed in parallel and best-effort — a
