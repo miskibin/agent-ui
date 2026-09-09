@@ -897,14 +897,16 @@ export default function ChatPage() {
                          last turn settles clear of it and everything above
                          still scrolls the whole height of the pane.
 
-                         The gap is 1.25rem rather than a hairline because the
-                         island is not just the composer: a plan, or a question
-                         waiting on an answer, sits on top of it and grows it
-                         mid-turn. At 0.5rem the tool row the agent had just
-                         written ended up tucked under the todo card's edge,
-                         which reads as the transcript running *behind* the
-                         island rather than stopping above it. */
-                      className="pb-[calc(var(--composer-height,7rem)+1.25rem)]"
+                         `pt-4` is explicit because `py-4` on the list does not
+                         always lose to an arbitrary `pb-[calc]` in the merge,
+                         and a 1rem bottom pad is exactly how a compact plan
+                         row ends up painted *through* the todo bar. The extra
+                         1.5rem is the air above the island: a plan card, a
+                         todo line, or a question on top of the composer all
+                         grow `--composer-height`, but their `shadow-lg` still
+                         paints outside the measured box. The island's own
+                         `pt-3` keeps that blur off the last turn. */
+                      className="scroll-pb-[calc(var(--composer-height,7rem)+1.5rem)] pt-4 pb-[calc(var(--composer-height,7rem)+1.5rem)]"
                       messages={listMessages}
                       /* One mounted list shows every chat in turn: the key is
                          what resets the scroller's follow state on a switch. */
@@ -983,7 +985,7 @@ export default function ChatPage() {
                       // but only its children take the pointer, which leaves the
                       // transcript scrollable right up to the window's edge.
                       !isEmptyChat &&
-                        "pointer-events-none absolute inset-x-0 bottom-0 z-20 [&>*]:pointer-events-auto"
+                        "pointer-events-none absolute inset-x-0 bottom-0 z-20 pt-3 before:pointer-events-none before:absolute before:inset-x-0 before:top-0 before:h-3 before:bg-gradient-to-b before:from-transparent before:to-background [&>*]:pointer-events-auto"
                     )}
                   >
                     {isEmptyChat ? (
