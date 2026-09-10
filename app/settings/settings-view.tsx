@@ -83,7 +83,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
         label: "Harnesses",
         icon: Bot,
         keywords:
-          "default provider mock ollama pi cursor acp dsh agent model harness backend",
+          "default provider mock ollama pi cursor claude codex acp dsh agent model harness backend",
       },
       {
         id: "models",

@@ -1,7 +1,7 @@
 # Agent UI
 
 A local-first desktop and web client for AI coding agents. Agent UI gives
-Cursor Agent, Claude Code, pi, Ollama, OpenAI-compatible models, and
+Cursor Agent, Claude Code, Codex, pi, Ollama, OpenAI-compatible models, and
 [Agent Client Protocol](https://agentclientprotocol.com/) servers one
 conversation interface built with Next.js, React, TypeScript, and Tauri.
 
@@ -52,8 +52,7 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 - **Search what was said.** ⌘K matches chats by title *and* by the words in
   their messages, then opens the chat at the matching turn.
 - **Import your CLI history.** Bring the conversations Claude Code and Codex
-  have already had into the app — Claude Code chats stay resumable where they
-  left off.
+  have already had into the app, preserving their original resumable sessions.
 - **Hold to quit.** ⌘Q while a turn is running is held, not confirmed: nothing
   is in the way when nothing is running, and a stray press cannot kill an agent
   mid-edit.
@@ -73,6 +72,7 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 | --- | --- | :-: | :-: |
 | Cursor Agent | local `agent` CLI | Yes | Yes |
 | Claude Code | local `claude` CLI | Yes | Yes |
+| Codex | local `codex app-server` over stdio | Yes | Yes |
 | pi | local `pi` CLI with Ollama or hosted models | Yes | Yes |
 | ACP agents | configured command over JSON-RPC; includes a DeepSeek Harness profile | Yes | Yes |
 | Ollama | native streaming chat API | No | Transcript replay |
@@ -81,6 +81,17 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 
 Provider availability is detected at runtime. Configure binaries, endpoints,
 API keys, models, workspaces, and supported permission modes in Settings.
+
+### Codex
+
+Install the Codex CLI and sign in with `codex login`, then choose Codex in
+Settings → Harnesses. Agent UI uses the CLI’s existing account and discovers
+its available models at runtime and supports reasoning effort selection. Set a binary path if
+`codex` is not on PATH. The default permission mode allows edits in the chat’s
+workspace; read-only and full-access modes are also available.
+
+See the [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
+for the protocol used by this integration.
 
 ## Quick start
 

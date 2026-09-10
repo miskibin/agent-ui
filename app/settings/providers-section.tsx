@@ -29,10 +29,11 @@ const BUILT_IN_PROVIDERS = [
   { id: "pi", label: "pi" },
   { id: "cursorAgent", label: "Cursor Agent" },
   { id: "claudeCode", label: "Claude Code" },
+  { id: "codex", label: "Codex" },
 ] as const
 
 /** Each label is what the CLI's flags actually enforce, not a suggestion. */
-const CLAUDE_CODE_MODES = [
+const HARNESS_PERMISSION_MODES = [
   { id: "read-only", label: "Read only" },
   { id: "edits", label: "Edit files" },
   { id: "full", label: "Full access" },
@@ -348,7 +349,7 @@ export function ProvidersSection({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {CLAUDE_CODE_MODES.map((mode) => (
+                {HARNESS_PERMISSION_MODES.map((mode) => (
                   <SelectItem key={mode.id} value={mode.id}>
                     {mode.label}
                   </SelectItem>
@@ -361,6 +362,93 @@ export function ProvidersSection({
             Read only genuinely blocks the editing and shell tools; the other
             two let Claude write files — and, on full access, run commands —
             without an approval prompt. A chat can pick its own mode.
+          </p>
+        </div>
+      </SettingsRow>
+
+      <SettingsRow
+        title="Codex"
+        htmlFor="provider-codex"
+        description="Agentic harness: the Codex CLI with its full tool set and project instructions."
+        control={
+          <>
+            <StatusBadge phase={phase} status={map[statusKey("codex")]} />
+            <Switch
+              id="provider-codex"
+              checked={providers.codex.enabled}
+              onCheckedChange={(enabled) =>
+                setProviders({ codex: { ...providers.codex, enabled } })
+              }
+            />
+          </>
+        }
+      >
+        <div className="grid gap-2">
+          <Input
+            aria-label="Codex binary path"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Leave empty to autodetect codex on PATH"
+            className="h-8 font-mono text-[12px]"
+            value={providers.codex.binPath}
+            onChange={(event) =>
+              setProviders({
+                codex: { ...providers.codex, binPath: event.target.value },
+              })
+            }
+          />
+          <Input
+            aria-label="Codex workspace"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Workspace directory — leave empty to use the app's cwd"
+            className="h-8 font-mono text-[12px]"
+            value={providers.codex.workspace}
+            onChange={(event) =>
+              setProviders({
+                codex: { ...providers.codex, workspace: event.target.value },
+              })
+            }
+          />
+          <div className="flex items-center justify-between gap-2">
+            <label
+              htmlFor="codex-permission"
+              className="text-[11.5px] text-muted-foreground"
+            >
+              Default permission for new chats
+            </label>
+            <Select
+              value={providers.codex.permissionMode}
+              onValueChange={(mode) =>
+                setProviders({
+                  codex: {
+                    ...providers.codex,
+                    permissionMode: mode as PermissionMode,
+                  },
+                })
+              }
+            >
+              <SelectTrigger
+                id="codex-permission"
+                size="sm"
+                className="w-36 shrink-0 text-[12.5px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {HARNESS_PERMISSION_MODES.map((mode) => (
+                  <SelectItem key={mode.id} value={mode.id}>
+                    {mode.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            Read only blocks edits and shell commands; the other modes let Codex
+            write files, and full access permits commands without an approval
+            prompt. A chat can pick its own mode.
           </p>
         </div>
       </SettingsRow>

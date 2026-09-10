@@ -87,6 +87,17 @@ export type ClaudeCodeSettings = {
   permissionMode: PermissionMode
 }
 
+/** Settings for the local Codex CLI harness. */
+export type CodexSettings = {
+  enabled: boolean
+  /** Absolute path to the `codex` binary; empty = autodetect on PATH. */
+  binPath: string
+  /** Directory the agent may read and write; empty = the app's cwd. */
+  workspace: string
+  /** Default permission mode for new chats. */
+  permissionMode: PermissionMode
+}
+
 export type MockSettings = {
   enabled: boolean
 }
@@ -151,6 +162,7 @@ export type ProviderSettings = {
   pi: PiSettings
   cursorAgent: CursorAgentSettings
   claudeCode: ClaudeCodeSettings
+  codex: CodexSettings
   mock: MockSettings
   acp: AcpSettings
 }
@@ -404,6 +416,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
       // middle one: files yes, arbitrary shell only when a chat asks for it.
       permissionMode: "edits",
     },
+    codex: {
+      enabled: true,
+      binPath: "",
+      workspace: "",
+      permissionMode: "edits",
+    },
     mock: { enabled: true },
     acp: { agents: { dsh: DEFAULT_DSH_AGENT } },
   },
@@ -517,6 +535,7 @@ function normalizeProviders(raw: unknown): ProviderSettings {
   const ollama = asObject(value.ollama)
   const pi = asObject(value.pi)
   const cursorAgent = asObject(value.cursorAgent)
+  const codex = asObject(value.codex)
   const mock = asObject(value.mock)
   return {
     active: asString(value.active) ?? fallback.active,
@@ -534,6 +553,7 @@ function normalizeProviders(raw: unknown): ProviderSettings {
       binPath: asString(cursorAgent.binPath) ?? fallback.cursorAgent.binPath,
     },
     claudeCode: normalizeClaudeCode(value.claudeCode),
+    codex: normalizeCodex(codex),
     mock: { enabled: asBoolean(mock.enabled, fallback.mock.enabled) },
     acp: { agents: normalizeAcpAgents(asObject(value.acp).agents) },
   }
@@ -640,6 +660,18 @@ function normalizeClaudeCode(raw: unknown): ClaudeCodeSettings {
     workspace: asString(value.workspace) ?? fallback.workspace,
     permissionMode: PERMISSION_MODES.has(value.permissionMode as PermissionMode)
       ? (value.permissionMode as PermissionMode)
+      : fallback.permissionMode,
+  }
+}
+
+function normalizeCodex(raw: Record<string, unknown>): CodexSettings {
+  const fallback = DEFAULT_SETTINGS.providers.codex
+  return {
+    enabled: asBoolean(raw.enabled, fallback.enabled),
+    binPath: asString(raw.binPath) ?? fallback.binPath,
+    workspace: asString(raw.workspace) ?? fallback.workspace,
+    permissionMode: PERMISSION_MODES.has(raw.permissionMode as PermissionMode)
+      ? (raw.permissionMode as PermissionMode)
       : fallback.permissionMode,
   }
 }

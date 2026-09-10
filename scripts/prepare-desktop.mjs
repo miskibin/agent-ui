@@ -33,6 +33,11 @@ import { Readable } from "node:stream"
 import { pipeline } from "node:stream/promises"
 import { fileURLToPath } from "node:url"
 
+import {
+  desktopBuildPaths,
+  desktopStaticDestination,
+} from "./desktop-build-paths.mjs"
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const TAURI_DIR = path.join(ROOT, "src-tauri")
 const APP_DIR = path.join(TAURI_DIR, "resources", "app")
@@ -235,10 +240,11 @@ async function prepareWebApp() {
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
   })
 
-  const standalone = path.join(ROOT, ".next", "standalone")
+  const build = desktopBuildPaths(ROOT)
+  const standalone = build.standalone
   if (!(await exists(path.join(standalone, "server.js")))) {
     throw new Error(
-      "`.next/standalone/server.js` is missing — is `output: \"standalone\"` still set in next.config.ts?"
+      `\`${path.relative(ROOT, path.join(standalone, "server.js"))}\` is missing — is \`output: "standalone"\` still set in next.config.ts?`
     )
   }
 
@@ -249,7 +255,7 @@ async function prepareWebApp() {
   // The standalone bundle carries server.js plus its pruned node_modules.
   await fs.cp(standalone, APP_DIR, { recursive: true })
   // Static assets and public files are deliberately left out of it.
-  await fs.cp(path.join(ROOT, ".next", "static"), path.join(APP_DIR, ".next", "static"), {
+  await fs.cp(build.static, desktopStaticDestination(APP_DIR, build.distDir), {
     recursive: true,
   })
   if (await exists(path.join(ROOT, "public"))) {

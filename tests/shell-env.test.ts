@@ -161,6 +161,25 @@ test("Windows adds the well-known install dirs, and only retries a profile when 
   assert.deepEqual(profiles.slice(1), [true, false])
 })
 
+test("Windows PATH repair can consume four bounded PowerShell probes", () => {
+  const calls: Array<{ shell: string; timeout: number }> = []
+  const execFile: ExecFileSyncLike = (shell, _args, options) => {
+    calls.push({ shell, timeout: options.timeout })
+    throw new Error("PowerShell did not start")
+  }
+  hydrateEnv(env({ PATH: "C:\\Windows" }), {
+    platform: "win32",
+    execFile,
+    warn: () => {},
+    isOnPath: () => false,
+  })
+  assert.deepEqual(
+    calls.map(({ shell }) => shell),
+    ["pwsh.exe", "powershell.exe", "pwsh.exe", "powershell.exe"]
+  )
+  assert.ok(calls.every(({ timeout }) => timeout === 5_000))
+})
+
 test("a command is looked for with the platform's extensions", () => {
   assert.equal(isCommandOnPath("node", env({ PATH: "" }), "linux"), false)
   assert.equal(

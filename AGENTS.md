@@ -234,6 +234,17 @@ one interface:
   `read-only` is `--permission-mode dontAsk` plus a `--disallowedTools` deny list, which outranks
   every allow rule and reaches subagents; `full` is `acceptEdits` plus an allow list rather than
   `bypassPermissions`, which skips the CLI's own guardrails and refuses to start under root).
+  `codex` uses the installed `codex app-server` over JSON-lines on stdio.
+  `lib/codex-runtime.ts` resolves executables and npm shims; `lib/codex-client.ts`
+  owns RPC, bounded startup requests, stderr draining and process cleanup;
+  `lib/codex-protocol.ts` adapts notifications into the shared stream. The provider
+  discovers models with `model/list`, uses the CLI’s existing
+  login, and resumes original thread ids with `thread/resume`. `read-only` and
+  `full` use their corresponding sandbox with approval policy `never`; `edits`
+  uses the workspace sandbox and forwards command/file approval requests through
+  `askUser`. Unknown server requests fail explicitly. Images are not advertised.
+  File updates become one `ApplyPatch` tool per path so file cards and handoff
+  journals use the existing component contracts.
   New backend = one file in `lib/providers/` + a `registry.ts` entry + settings schema wiring.
   Picking a model is a three-step choice — harness, then model provider, then model — and a
   provider that runs its own agent loop (`pi`) or streams tool-less chat directly
@@ -303,8 +314,8 @@ one interface:
   already run in on this machine, with a checkbox each and nothing decided on the user's
   behalf. The distinction that runs through it is **resumable vs history** — a Claude Code
   conversation arrives with its session id in `agentSessions`, so the next turn in that chat
-  resumes the CLI's own session, while Codex has no backend here and is imported *without*
-  one rather than pretending it can be continued. Importing is idempotent on the CLI's
+  resumes the CLI's own session. Codex imports likewise retain their original id
+  under `agentSessions.codex` for app-server resume. Importing is idempotent on the CLI's
   conversation id, and which chat came from where lives in its own file
   (`~/.agent-ui/imports.json`, `lib/import/ledger.ts`) rather than as a field on
   `SessionMeta`: the index is read on every page load and is the app's hottest file. The
@@ -699,10 +710,13 @@ one interface:
   `lib/desktop.ts` talks to the shell only through the injected `window.__TAURI__` global
   (`withGlobalTauri`) — keep it dependency-free and every call a no-op in a browser tab.
   Production spawns the Next standalone server as a Node sidecar on a free port and shows the
-  window only when it's ready. That port is chosen by binding `:0` and letting go again, so
+  window only when it's ready. The splash appears after 1.2s and the sidecar gets 60s: a cold
+  Windows launch can spend up to 20s repairing PATH before Next accepts its first request. That
+  port is chosen by binding `:0` and letting go again, so
   the shell mints a per-launch token, passes it to the sidecar as `AGENT_UI_LAUNCH_TOKEN`,
   and the health probe adopts a listener only when its `x-agent-ui-launch` header carries
-  that token (`GET /api/providers` echoes it), never a silent one. The webview's
+  that token (`GET /api/health` echoes it without touching provider discovery), never a silent
+  one. The webview's
   permissions follow the same line: `capabilities/default.json` names the dev server alone,
   and `grant_remote_origin` re-reads it at launch to grant the shell's commands to the one
   resolved `http://127.0.0.1:<port>` origin rather than to every loopback port.

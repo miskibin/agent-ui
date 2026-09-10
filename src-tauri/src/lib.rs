@@ -27,8 +27,10 @@ use tauri_plugin_shell::ShellExt;
 /// `bundle.resources` keeps the source-relative layout, hence the prefix.
 const SERVER_ENTRY: &str = "resources/app/server.js";
 
-/// Route that only answers once Next.js has finished booting its router.
-const HEALTH_PATH: &str = "/api/providers";
+/// Lightweight route that answers once Next.js has finished booting its router.
+/// It deliberately does not discover providers, which can probe or launch local
+/// services and must never delay the desktop startup gate.
+const HEALTH_PATH: &str = "/api/health";
 
 /// Env var the per-launch token reaches the sidecar through, and the response
 /// header the app server is expected to echo it back in. Together they are
@@ -42,7 +44,12 @@ const LAUNCH_HEADER: &str = "x-agent-ui-launch";
 const DEFAULT_CAPABILITY: &str = include_str!("../capabilities/default.json");
 
 /// Give up (and show a readable error) if the server is not up by then.
-const READY_TIMEOUT: Duration = Duration::from_secs(15);
+///
+/// A Windows cold start can synchronously repair PATH before Next accepts its
+/// first request. Its two PowerShell passes may each try `pwsh` and Windows
+/// PowerShell for five seconds, so the timeout must cover that work plus cold
+/// module loading rather than treating a healthy sidecar as failed at 15s.
+const READY_TIMEOUT: Duration = Duration::from_secs(60);
 
 /// Gap between health probes. Small enough that a warm start feels instant.
 const PROBE_INTERVAL: Duration = Duration::from_millis(40);
@@ -417,8 +424,9 @@ fn probe(port: u16, token: &str) -> bool {
         }
     }
 
-    // No header at all is not our server: the route behind HEALTH_PATH echoes
-    // the token on every answer, so a silent listener is whatever else took
+    // No header at all is not our server: the lightweight route behind
+    // HEALTH_PATH echoes the token on every answer, so a silent listener is
+    // whatever else took
     // the port between `free_port` and the sidecar binding it.
     false
 }

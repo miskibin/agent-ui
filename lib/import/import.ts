@@ -26,6 +26,7 @@ import type {
   ImportScanResult,
 } from "@/lib/import/types"
 import { CLAUDE_CODE_PROVIDER_ID } from "@/lib/providers/claude-code"
+import { CODEX_PROVIDER_ID } from "@/lib/providers/codex"
 import { createSession, listSessions, writeMessages } from "@/lib/store/sessions"
 import type { MessageMetadata, StoredMessage } from "@/lib/store/types"
 
@@ -36,14 +37,9 @@ import type { MessageMetadata, StoredMessage } from "@/lib/store/types"
  * write half, and the only place the two vocabularies meet — the wire's
  * `claude-code` / `codex` and the app's own provider ids.
  *
- * The distinction that runs through it is **resumable vs history**. A Claude
- * Code conversation is imported with its session id in
- * `agentSessions.claudeCode`, so the next turn in that chat is `claude
- * --resume <id>` and the CLI picks up where it left off. Codex has no backend
- * in this app at all, so its conversations are imported *without* a
- * `providerSessionId`: the text is there to read, search and hand to another
- * agent, but nothing pretends the original session can be continued. The day a
- * Codex provider exists here, `RESUMES_AS` is the line that changes.
+ * Both CLI providers keep their own conversation history. Import stores the
+ * original session id under the matching `agentSessions` key, so the next turn
+ * resumes through Claude Code or Codex instead of replaying a copied transcript.
  *
  * Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
  */
@@ -56,7 +52,7 @@ import type { MessageMetadata, StoredMessage } from "@/lib/store/types"
  */
 const RESUMES_AS: Record<ImportProvider, string | null> = {
   "claude-code": CLAUDE_CODE_PROVIDER_ID,
-  codex: null,
+  codex: CODEX_PROVIDER_ID,
 }
 
 /** Every folder either CLI has run in, newest first. */

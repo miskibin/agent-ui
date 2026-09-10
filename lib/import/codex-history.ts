@@ -34,11 +34,9 @@ import type {
  * once as the `response_item` that went to the model — so the parse below
  * de-duplicates within a turn rather than trusting either copy alone.
  *
- * Nothing in this app runs Codex, so what is imported is history: the
- * conversation is readable, searchable and continuable *by another agent*, but
- * the rollout's own session id is not written as a resumable
- * `providerSessionId`. The moment a Codex provider exists here, that is the
- * one line that changes (`lib/import/import.ts`, `RESUMABLE_PROVIDERS`).
+ * The imported session id is retained for the Codex provider to resume through
+ * app-server. Parsing itself only reads the rollout; importing never starts a
+ * Codex turn or changes the original conversation.
  *
  * Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
  */
@@ -97,7 +95,7 @@ export function codexProjects(scan: CodexScan): ImportProject[] {
       provider: "codex" as const,
       conversations: files.length,
       lastActiveAt: files.reduce((newest, file) => Math.max(newest, file.mtimeMs), 0),
-      resumable: false,
+      resumable: true,
     }))
     .sort((a, b) => b.lastActiveAt - a.lastActiveAt || a.cwd.localeCompare(b.cwd))
 }
