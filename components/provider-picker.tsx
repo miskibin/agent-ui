@@ -24,6 +24,7 @@ const ACP_PROVIDER_PREFIX = "acp:"
 /** Provider ids (or ACP agent keys) whose brand slug is not the id itself. */
 const LOGO_SLUGS: Record<string, string> = {
   cursorAgent: "cursor",
+  codex: "openai",
   dsh: "deepseek",
 }
 

@@ -1,4 +1,4 @@
-import type { Metadata } from "next"
+import type { Metadata, Viewport } from "next"
 import "./globals.css"
 import { DesktopUpdater } from "@/components/desktop-updater"
 import { ExternalLinks } from "@/components/external-links"
@@ -22,6 +22,13 @@ export const metadata: Metadata = {
   },
   description:
     "Local-first UI for coding agents: Cursor Agent, Claude Code, Ollama and more behind one provider interface.",
+}
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  interactiveWidget: "resizes-content",
 }
 
 export default function RootLayout({

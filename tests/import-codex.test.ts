@@ -9,9 +9,8 @@ import { test } from "node:test"
  *
  * Two things make this format different from Claude's, and both are what the
  * tests below are about: the conversation is a log of *events* rather than of
- * messages, so the same prompt can appear twice in it; and nothing in this app
- * runs Codex, so what comes back is history — no resumable session id is ever
- * written beside it.
+ * messages, so the same prompt can appear twice in it. The original session id
+ * is preserved for the Codex provider to resume after import.
  */
 
 const CODEX_HOME = mkdtempSync(join(tmpdir(), "agent-ui-codex-home-"))
@@ -78,7 +77,7 @@ test("the date-partitioned tree is walked and grouped by folder", async () => {
       provider: "codex",
       conversations: 1,
       lastActiveAt: Date.parse("2026-01-05T10:00:00.000Z"),
-      resumable: false,
+      resumable: true,
     },
   ])
 })

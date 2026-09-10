@@ -96,7 +96,7 @@ export function AppHeaderActions({
  * exactly that reason.
  */
 const HEADER_BUTTON_CLASS =
-  "inline-flex h-7 min-w-7 shrink-0 items-center justify-center gap-1.5 rounded-md px-1.5 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 [&_svg]:size-4 [&_svg]:shrink-0"
+  "inline-flex h-9 min-w-9 shrink-0 items-center justify-center gap-1.5 rounded-md px-2 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50 md:h-7 md:min-w-7 md:px-1.5 [&_svg]:size-4 [&_svg]:shrink-0"
 
 export type AppHeaderButtonProps = React.ComponentProps<"button"> & {
   /** Accessible name; also the native tooltip. */

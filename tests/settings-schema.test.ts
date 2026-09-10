@@ -31,6 +31,7 @@ test("a partial section keeps its siblings' defaults", () => {
     DEFAULT_SETTINGS.providers.ollama.enabled
   )
   assert.deepEqual(settings.providers.cursorAgent, DEFAULT_SETTINGS.providers.cursorAgent)
+  assert.deepEqual(settings.providers.codex, DEFAULT_SETTINGS.providers.codex)
   assert.deepEqual(settings.chat, DEFAULT_SETTINGS.chat)
 })
 
@@ -115,6 +116,7 @@ test("a provider field of the wrong type never reaches the routes", () => {
       pi: { binPath: [], workspace: null },
       cursorAgent: { enabled: 1 },
       claudeCode: { enabled: "no", binPath: 5, permissionMode: "sideways" },
+      codex: { enabled: "no", binPath: 5, workspace: null, permissionMode: "sideways" },
       mock: { enabled: "true" },
     },
     chat: { defaultModel: 3, autoTitle: "no", desktopNotifications: 0 },
@@ -129,6 +131,7 @@ test("a provider field of the wrong type never reaches the routes", () => {
     settings.providers.claudeCode,
     DEFAULT_SETTINGS.providers.claudeCode
   )
+  assert.deepEqual(settings.providers.codex, DEFAULT_SETTINGS.providers.codex)
   assert.deepEqual(settings.providers.mock, DEFAULT_SETTINGS.providers.mock)
   assert.equal(settings.providers.active, DEFAULT_SETTINGS.providers.active)
   assert.deepEqual(settings.chat, DEFAULT_SETTINGS.chat)

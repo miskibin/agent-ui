@@ -106,7 +106,7 @@ test("the scan lists one row per folder per CLI, newest first", async () => {
       ["claude-code", WORKSPACE, 2],
     ]
   )
-  assert.equal(projects[0].resumable, false, "nothing here runs Codex")
+  assert.equal(projects[0].resumable, true, "Codex can resume its imported history")
   assert.equal(projects[1].resumable, true)
 })
 
@@ -182,7 +182,7 @@ test("the ledger remembers what came from where", async () => {
   assert.equal((raw as { version: number }).version, 1)
 })
 
-test("a Codex conversation is imported as history, with nothing to resume", async () => {
+test("a Codex conversation retains its original resumable session", async () => {
   const result = await importConversations({ provider: "codex" })
   assert.deepEqual(result, { imported: 1, skipped: 0 })
 
@@ -190,9 +190,10 @@ test("a Codex conversation is imported as history, with nothing to resume", asyn
     (session) => session.title === "codex question"
   )
   assert.ok(chat)
-  assert.equal(chat.providerId, "", "no backend here can carry it on")
-  assert.equal(chat.providerSessionId, undefined)
-  assert.equal(chat.agentSessions, undefined)
+  assert.equal(chat.providerId, "codex")
+  assert.equal(chat.providerSessionId, CODEX_SESSION)
+  assert.equal(chat.agentSessions?.codex?.providerSessionId, CODEX_SESSION)
+  assert.equal(chat.agentSessions?.codex?.cwd, WORKSPACE)
   assert.equal(chat.cwd, WORKSPACE)
 
   const messages = await readMessages(chat.id)
@@ -201,7 +202,7 @@ test("a Codex conversation is imported as history, with nothing to resume", asyn
     ["codex question", "Done."]
   )
 
-  // Deduped through the ledger, since there is no session id in the index.
+  // Both the ledger and the resumable session index prevent duplicate imports.
   assert.deepEqual(await importConversations({ provider: "codex" }), {
     imported: 0,
     skipped: 1,

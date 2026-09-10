@@ -180,6 +180,7 @@ export default function ChatPage() {
     renameRequest,
     startRename,
     drawerOpen,
+    drawerRef,
     drawerTriggerRef,
     closeDrawer,
     closeNav,
@@ -755,7 +756,7 @@ export default function ChatPage() {
   )
 
   return (
-    <div className="relative flex h-full min-h-0 overflow-hidden bg-background">
+    <div className="relative flex h-full min-h-0 overflow-hidden bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
       {/* Below md the sidebar slides over the conversation instead of squeezing it. */}
       <div
         aria-hidden={!drawerOpen}
@@ -766,10 +767,15 @@ export default function ChatPage() {
         )}
       />
       <div
+        ref={drawerRef}
         // Off-canvas below md: keep the hidden drawer out of the tab order.
         inert={!isDesktop && !drawerOpen}
+        tabIndex={-1}
+        role={!isDesktop ? "dialog" : undefined}
+        aria-modal={!isDesktop && drawerOpen ? true : undefined}
+        aria-label={!isDesktop ? "Chats" : undefined}
         className={cn(
-          "z-50 h-full shrink-0 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:shadow-xl max-md:transition-transform max-md:duration-200 max-md:motion-reduce:transition-none md:relative",
+          "z-50 h-full shrink-0 max-md:absolute max-md:inset-y-0 max-md:left-0 max-md:pt-[env(safe-area-inset-top)] max-md:pb-[env(safe-area-inset-bottom)] max-md:pl-[env(safe-area-inset-left)] max-md:shadow-xl max-md:transition-transform max-md:duration-200 max-md:motion-reduce:transition-none md:relative",
           !drawerOpen && "max-md:-translate-x-full"
         )}
       >
@@ -808,7 +814,10 @@ export default function ChatPage() {
         />
       </div>
 
-      <div className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+      <div
+        inert={!isDesktop && drawerOpen}
+        className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
+      >
         <AppHeader>
           <button
             ref={drawerTriggerRef}
@@ -817,11 +826,11 @@ export default function ChatPage() {
             aria-expanded={drawerOpen}
             title="Open chats"
             onClick={openNav}
-            className="-ml-1 inline-grid size-8 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 md:hidden [&_svg]:size-4"
+            className="-ml-1 inline-grid size-9 shrink-0 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 md:hidden [&_svg]:size-4"
           >
             <PanelLeft />
           </button>
-          <AppHeaderActions>
+          <AppHeaderActions className="min-w-0">
             <ChatChanges
               files={chatChanges}
               open={changesOpen}
@@ -1130,7 +1139,7 @@ export default function ChatPage() {
                   onClose={closeChanges}
                   onOpenFile={handleChangesFileOpen}
                   fileActions={fileActions}
-                  className="h-full border-l"
+                  className="h-full border-l max-sm:[&_[data-slot=changes-panel-map]]:hidden"
                 />
               ) : overlayPanel === "plan" && openPlan ? (
                 <PlanPanel
@@ -1172,7 +1181,7 @@ export default function ChatPage() {
           role="dialog"
           aria-modal="true"
           aria-label="Settings"
-          className="fixed inset-0 z-50 bg-background"
+          className="fixed inset-0 z-50 bg-background pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
         >
           <SettingsView
             dataDir={dataDir}

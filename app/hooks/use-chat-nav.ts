@@ -59,6 +59,7 @@ export function useChatNav({
   })
 
   const drawerTriggerRef = React.useRef<HTMLButtonElement>(null)
+  const drawerRef = React.useRef<HTMLDivElement>(null)
   const drawerOpen = mobileNavOpen && !isDesktop
 
   // Same microtask trick as the sidebar seed: read the closed sections after
@@ -116,14 +117,45 @@ export function useChatNav({
   /** Closing the drawer hands focus back to the button that opened it. */
   const closeDrawer = React.useCallback(() => {
     setMobileNavOpen(false)
-    drawerTriggerRef.current?.focus()
+    requestAnimationFrame(() => drawerTriggerRef.current?.focus())
   }, [])
 
-  // Escape closes the mobile drawer.
+  // The mobile sidebar is a modal drawer: focus enters it, cycles inside it,
+  // and returns to the trigger when Escape or the backdrop closes it.
   React.useEffect(() => {
     if (!drawerOpen) return
+    const drawer = drawerRef.current
+    const focusable = () =>
+      drawer
+        ? [...drawer.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+          )].filter(
+            (element) =>
+              element.getClientRects().length > 0 && !element.closest('[inert]')
+          )
+        : []
+    focusable()[0]?.focus()
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeDrawer()
+      if (event.key === "Escape") {
+        closeDrawer()
+        return
+      }
+      if (event.key !== "Tab") return
+      const items = focusable()
+      if (items.length === 0) {
+        event.preventDefault()
+        drawer?.focus()
+        return
+      }
+      const first = items[0]
+      const last = items.at(-1)!
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault()
+        last.focus()
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault()
+        first.focus()
+      }
     }
     window.addEventListener("keydown", onKey)
     return () => window.removeEventListener("keydown", onKey)
@@ -167,6 +199,7 @@ export function useChatNav({
     renameRequest,
     startRename,
     drawerOpen,
+    drawerRef,
     drawerTriggerRef,
     closeDrawer,
     closeNav,

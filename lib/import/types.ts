@@ -16,8 +16,8 @@
 
 /**
  * The vocabulary the wire speaks. Deliberately *not* the app's provider ids:
- * `codex` has no backend here at all, and `claude-code` reads better in a URL
- * than the `claudeCode` key `settings.providers` uses. `lib/import/import.ts`
+ * `claude-code` reads better in a URL than the `claudeCode` settings key;
+ * Codex uses `codex` in both places. `lib/import/import.ts`
  * is the one place the two are mapped onto each other.
  */
 export type ImportProvider = "claude-code" | "codex"
