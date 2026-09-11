@@ -180,7 +180,7 @@ export const FolderStatus = React.memo(function FolderStatus({
   return (
     <span
       data-slot="folder-status"
-      className={cn("flex min-w-0 items-center gap-0.5", className)}
+      className={cn("flex min-w-0 flex-wrap items-center gap-0.5", className)}
     >
       {ahead > 0 || behind > 0 ? (
         <span

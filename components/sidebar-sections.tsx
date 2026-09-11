@@ -127,8 +127,8 @@ export const SidebarFolderSection = React.memo(function SidebarFolderSection({
       {...rest}
       id={group.id}
       open={open}
-      // One line per working folder: the label, a hairline, the branch and
-      // the chevron — rather than a stack of uppercase captions.
+      // Two lines per working folder: the mark and name above, the branch
+      // and git chips below. One row is how those used to overlap.
       rule
       // The section's own dot while it is folded away. Owned by the component,
       // which stops animating it when the tab or the row goes out of sight.
@@ -146,14 +146,14 @@ export const SidebarFolderSection = React.memo(function SidebarFolderSection({
         </span>
       }
       action={
-        <span className="flex min-w-0 items-center gap-1.5 normal-case">
+        <>
           {group.branch ? (
-            <SidebarItemBadge branch={group.branch} className="min-w-0" />
+            <SidebarItemBadge branch={group.branch} className="min-w-0 max-w-[9rem]" />
           ) : null}
           {group.cwd && group.items[0] ? (
             <FolderStatus cwd={group.cwd} sessionId={group.items[0].id} />
           ) : null}
-        </span>
+        </>
       }
       sessions={group.items}
     />

@@ -19,7 +19,7 @@ export const ThreadLoading = React.memo(function ThreadLoading() {
     <div
       aria-busy
       aria-label="Loading the chat"
-      className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-7 overflow-hidden px-3 py-6 sm:px-4"
+      className="mx-auto flex w-full max-w-3xl min-h-0 flex-1 flex-col gap-7 overflow-hidden px-3 pt-14 pb-6 sm:px-4"
     >
       {[0, 1].map((turn) => (
         <React.Fragment key={turn}>

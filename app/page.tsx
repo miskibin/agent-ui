@@ -818,7 +818,7 @@ export default function ChatPage() {
         inert={!isDesktop && drawerOpen}
         className="relative flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
       >
-        <AppHeader>
+        <AppHeader overlay>
           <button
             ref={drawerTriggerRef}
             type="button"
@@ -848,10 +848,12 @@ export default function ChatPage() {
         </AppHeader>
 
         {/*
-          Everything below the header — the header itself spans the full width
-          right of the sidebar, because it doubles as the desktop window's drag
-          chrome and must never be covered or squeezed by the file panel. The
-          `relative` here is what the below-md overlay anchors to.
+          The header overlays this pane (frost + fade) so the conversation
+          can scroll through it. It still spans the full width right of the
+          sidebar — it is the desktop window's drag chrome and must never be
+          covered or squeezed by the file panel. Side panels pad `pt-10` so
+          their own toolbars sit under the window controls. The `relative`
+          here is what the below-md overlay anchors to.
         */}
         <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
           {/*
@@ -906,16 +908,19 @@ export default function ChatPage() {
                          last turn settles clear of it and everything above
                          still scrolls the whole height of the pane.
 
-                         `pt-4` is explicit because `py-4` on the list does not
-                         always lose to an arbitrary `pb-[calc]` in the merge,
-                         and a 1rem bottom pad is exactly how a compact plan
-                         row ends up painted *through* the todo bar. The extra
-                         1.5rem is the air above the island: a plan card, a
-                         todo line, or a question on top of the composer all
-                         grow `--composer-height`, but their `shadow-lg` still
+                         `pt-14` clears the overlay header so the first turn
+                         is not sitting under the frost; `pt-4` used to be
+                         enough when the bar took a strip of its own.
+                         `py-4` on the list does not always lose to an
+                         arbitrary `pb-[calc]` in the merge, and a 1rem bottom
+                         pad is exactly how a compact plan row ends up painted
+                         *through* the todo bar. The extra 1.5rem is the air
+                         above the island: a plan card, a todo line, or a
+                         question on top of the composer all grow
+                         `--composer-height`, but their `shadow-lg` still
                          paints outside the measured box. The island's own
                          `pt-3` keeps that blur off the last turn. */
-                      className="scroll-pb-[calc(var(--composer-height,7rem)+1.5rem)] pt-4 pb-[calc(var(--composer-height,7rem)+1.5rem)]"
+                      className="scroll-pb-[calc(var(--composer-height,7rem)+1.5rem)] pt-14 pb-[calc(var(--composer-height,7rem)+1.5rem)]"
                       messages={listMessages}
                       /* One mounted list shows every chat in turn: the key is
                          what resets the scroller's follow state on a switch. */
@@ -1071,7 +1076,7 @@ export default function ChatPage() {
                         onClose={closeChanges}
                         onOpenFile={handleChangesFileOpen}
                         fileActions={fileActions}
-                        className="min-h-0 flex-1 border-l"
+                        className="min-h-0 flex-1 border-l pt-10"
                       />
                     ) : dockedPanel === "plan" && openPlan ? (
                       <PlanPanel
@@ -1081,7 +1086,7 @@ export default function ChatPage() {
                         busy={isGenerating}
                         fileActions={fileActions}
                         onFileClick={handlePlanFileClick}
-                        className="min-h-0 flex-1 border-l"
+                        className="min-h-0 flex-1 border-l pt-10"
                       />
                     ) : dockedPreview ? (
                     <FilePanel
@@ -1096,7 +1101,7 @@ export default function ChatPage() {
                       onDiffLayoutChange={setDiffLayout}
                       wrap={previewPrefs.wrap}
                       onWrapChange={setWrap}
-                      className="border-l"
+                      className="border-l pt-10"
                     />
                     ) : null}
                   </ResizablePanel>
@@ -1118,7 +1123,7 @@ export default function ChatPage() {
                     : closePreview
               }
               className={cn(
-                "absolute inset-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
+                "absolute inset-x-0 top-10 bottom-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
                 overlayPanel ? "opacity-100" : "pointer-events-none opacity-0"
               )}
             />
@@ -1127,7 +1132,7 @@ export default function ChatPage() {
               // Off-canvas when closed: keep it out of the tab order either way.
               inert={!overlayPanel}
               className={cn(
-                "absolute inset-y-0 right-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
+                "absolute top-10 right-0 bottom-0 z-50 w-[min(30rem,100%)] overflow-hidden bg-background shadow-xl",
                 "transition-transform duration-300 ease-in-out motion-reduce:transition-none md:hidden",
                 !overlayPanel && "translate-x-full"
               )}

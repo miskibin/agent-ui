@@ -24,6 +24,7 @@ import {
   ChatSidebar,
   ChatSidebarDnd,
   ChatSidebarItemGhost,
+  SideActionRow,
   SideIconBtn,
   SideRow,
   SidebarCollapsibleSection,
@@ -310,18 +311,14 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           </span>
         }
         nav={
-          <>
-            <SideRow icon={<Pencil className="size-4" />} onClick={onNewChat}>
-              New chat
-            </SideRow>
-            <SideRow
-              icon={<Search className="size-4" />}
-              hint="⌘K"
-              onClick={onOpenPalette}
-            >
-              Search chats
-            </SideRow>
-          </>
+          <SideActionRow>
+            <SideIconBtn label="New chat" onClick={onNewChat}>
+              <Pencil className="size-4" />
+            </SideIconBtn>
+            <SideIconBtn label="Search chats" onClick={onOpenPalette}>
+              <Search className="size-4" />
+            </SideIconBtn>
+          </SideActionRow>
         }
         rail={
           <>

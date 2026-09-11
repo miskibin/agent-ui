@@ -230,12 +230,20 @@ function WindowControlsReserve() {
   )
 }
 
-export type AppHeaderProps = React.ComponentProps<"header">
+export type AppHeaderProps = React.ComponentProps<"header"> & {
+  /**
+   * Sit over the pane instead of taking a strip: the conversation (and a
+   * side panel's top padding) scroll through a frost that fades to nothing.
+   * Off on Settings, where nothing should pass under the chrome.
+   */
+  overlay?: boolean
+}
 
 export function AppHeader({
   className,
   children,
   onDoubleClick,
+  overlay = false,
   ...props
 }: AppHeaderProps) {
   const hydrated = useHydrated()
@@ -265,7 +273,10 @@ export function AppHeader({
         // conversation, so a line here only draws a box around content that
         // is already obviously below it — and it is the first thing that
         // makes the window look busy.
-        "flex h-10 w-full shrink-0 items-center gap-2 bg-background px-3 sm:gap-3 sm:px-4",
+        "flex h-10 w-full shrink-0 items-center gap-2 px-3 sm:gap-3 sm:px-4",
+        overlay
+          ? "absolute inset-x-0 top-0 z-30"
+          : "relative bg-background",
         desktop && "select-none",
         // Clear the macOS traffic lights.
         native && "pl-[78px]",
@@ -273,6 +284,13 @@ export function AppHeader({
       )}
       {...props}
     >
+      {overlay ? (
+        <div
+          aria-hidden
+          data-slot="app-header-fade"
+          className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[4.25rem] bg-background/75 backdrop-blur-xl [mask-image:linear-gradient(to_bottom,black_0%,black_38%,transparent_100%)]"
+        />
+      ) : null}
       {children}
       {desktop && !native ? <WindowControls /> : null}
       {hydrated ? null : <WindowControlsReserve />}
