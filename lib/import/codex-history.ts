@@ -1,7 +1,8 @@
 import "server-only"
 
-import { homedir } from "node:os"
-import { basename, isAbsolute, join, resolve } from "node:path"
+import { basename, isAbsolute, join } from "node:path"
+
+import { codexHomeDir } from "@/lib/codex-runtime"
 
 import {
   cwdOf,
@@ -41,20 +42,7 @@ import type {
  * Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
  */
 
-/** `CODEX_HOME` is the CLI's own override, and is honoured for the same reason. */
-export function codexHomeDir(): string {
-  const configured = str(process.env.CODEX_HOME)
-  if (configured) {
-    const expanded =
-      configured === "~" ||
-      configured.startsWith("~/") ||
-      configured.startsWith("~\\")
-        ? `${homedir()}${configured.slice(1)}`
-        : configured
-    return resolve(expanded)
-  }
-  return join(homedir(), ".codex")
-}
+export { codexHomeDir }
 
 export function codexSessionsDir(): string {
   return join(codexHomeDir(), "sessions")

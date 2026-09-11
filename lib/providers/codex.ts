@@ -7,7 +7,7 @@ import {
   translateCodexNotification,
   usageFromNotification,
 } from "@/lib/codex-protocol"
-import { hasCodexBinary } from "@/lib/codex-runtime"
+import { hasCodexBinary, hasCodexCredentials } from "@/lib/codex-runtime"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import type {
   AgentProvider,
@@ -20,6 +20,12 @@ import { formatUserRequestInput, USER_REQUEST_WAITING } from "@/lib/turn-request
 
 export const CODEX_PROVIDER_ID = "codex"
 const MODES: PermissionMode[] = ["read-only", "edits", "full"]
+const MODELS_FRESH_MS = 5 * 60_000
+const MODELS_FAILED_MS = 30_000
+
+type ModelsCache = { at: number; models: ModelOption[]; ok: boolean }
+const modelsCache = new Map<string, ModelsCache>()
+const modelsInFlight = new Map<string, Promise<ModelOption[]>>()
 
 /** Emits a completed agent message only when no delta for that item arrived. */
 export function completedAgentMessageText(
@@ -40,6 +46,47 @@ export function completedAgentMessageText(
   return typeof item.text === "string" && item.text ? item.text : undefined
 }
 
+function listCodexModels(binPath: string, workspace: string): Promise<ModelOption[]> {
+  const key = `${binPath}\0${workspace}`
+  const cached = modelsCache.get(key)
+  if (cached && Date.now() - cached.at < (cached.ok ? MODELS_FRESH_MS : MODELS_FAILED_MS)) {
+    return Promise.resolve(cached.models)
+  }
+  const existing = modelsInFlight.get(key)
+  if (existing) return existing
+  const pending = fetchCodexModels(binPath, workspace)
+    .then((models) => {
+      modelsCache.set(key, { at: Date.now(), models, ok: true })
+      return models
+    }, (error: unknown) => {
+      modelsCache.set(key, { at: Date.now(), models: [], ok: false })
+      throw error
+    })
+    .finally(() => {
+      modelsInFlight.delete(key)
+    })
+  modelsInFlight.set(key, pending)
+  return pending
+}
+
+async function fetchCodexModels(binPath: string, workspace: string): Promise<ModelOption[]> {
+  const client = CodexClient.spawn(binPath, workspace)
+  try {
+    await client.initialize()
+    const models: ModelOption[] = []
+    let cursor: string | null = null
+    do {
+      const page = await client.request("model/list", { cursor, includeHidden: false }) as { data?: Array<{ id?: string; model?: string; displayName?: string; description?: string }>; nextCursor?: string | null }
+      for (const model of page.data ?? []) {
+        const id = model.model || model.id
+        if (id) models.push({ id, name: model.displayName || id, ...(model.description ? { description: model.description } : null) })
+      }
+      cursor = page.nextCursor ?? null
+    } while (cursor)
+    return models
+  } finally { client.close() }
+}
+
 export function createCodexProvider(settings: CodexSettings): AgentProvider {
   const binPath = settings.binPath.trim()
   const workspace = settings.workspace.trim() || process.cwd()
@@ -47,19 +94,11 @@ export function createCodexProvider(settings: CodexSettings): AgentProvider {
 
   return {
     async info() {
-      let signedOut = false
-      if (detected()) {
-        const client = CodexClient.spawn(binPath, workspace)
-        try {
-          await client.initialize()
-          const account = await client.request("account/read", { refreshToken: false }) as { account?: unknown; requiresOpenaiAuth?: boolean }
-          signedOut = account.requiresOpenaiAuth === true && account.account == null
-        } catch {
-          // A filesystem-detected CLI remains selectable; the run reports its
-          // actionable startup error instead of a provider-list timeout hiding it.
-        } finally { client.close() }
-      }
-      const available = detected() && !signedOut
+      // Never spawn app-server here. `/api/providers` runs on every boot, and
+      // `account/read` is what logs Windows Codex users out in a loop.
+      const present = detected()
+      const signedOut = present && !hasCodexCredentials()
+      const available = present && !signedOut
       return {
         id: CODEX_PROVIDER_ID,
         name: "Codex",
@@ -79,22 +118,8 @@ export function createCodexProvider(settings: CodexSettings): AgentProvider {
     },
 
     async listModels(): Promise<ModelOption[]> {
-      if (!detected()) return []
-      const client = CodexClient.spawn(binPath, workspace)
-      try {
-        await client.initialize()
-        const models: ModelOption[] = []
-        let cursor: string | null = null
-        do {
-          const page = await client.request("model/list", { cursor, includeHidden: false }) as { data?: Array<{ id?: string; model?: string; displayName?: string; description?: string }>; nextCursor?: string | null }
-          for (const model of page.data ?? []) {
-            const id = model.model || model.id
-            if (id) models.push({ id, name: model.displayName || id, ...(model.description ? { description: model.description } : null) })
-          }
-          cursor = page.nextCursor ?? null
-        } while (cursor)
-        return models
-      } finally { client.close() }
+      if (!detected() || !hasCodexCredentials()) return []
+      return listCodexModels(binPath, workspace)
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {

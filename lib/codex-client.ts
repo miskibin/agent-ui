@@ -4,6 +4,11 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
 import { createInterface } from "node:readline"
 
 import { resolveCodexCommand } from "@/lib/codex-runtime"
+import {
+  detachedSpawnOptions,
+  killProcessTree,
+  trackChildProcess,
+} from "@/lib/process-tree"
 
 type RpcMessage = { id?: number | string; method?: string; params?: unknown; result?: unknown; error?: { message?: string } }
 
@@ -47,7 +52,15 @@ export class CodexClient {
 
   static spawn(binPath: string, cwd: string) {
     const command = resolveCodexCommand(binPath)
-    return new CodexClient(spawn(command.cmd, [...command.args, "app-server"], { cwd, env: process.env, windowsHide: true, stdio: ["pipe", "pipe", "pipe"] }))
+    const child = spawn(command.cmd, [...command.args, "app-server"], {
+      cwd,
+      env: process.env,
+      windowsHide: true,
+      stdio: ["pipe", "pipe", "pipe"],
+      ...detachedSpawnOptions,
+    })
+    trackChildProcess(child)
+    return new CodexClient(child)
   }
 
   async initialize() {
@@ -83,7 +96,10 @@ export class CodexClient {
     if (this.closed) return null
     return new Promise((resolve) => this.waiters.push(resolve))
   }
-  close() { if (this.child.exitCode == null) this.child.kill("SIGTERM") }
+  close() {
+    if (this.child.pid != null) killProcessTree(this.child)
+    else if (this.child.exitCode == null) this.child.kill("SIGTERM")
+  }
   private send(message: RpcMessage) { this.child.stdin.write(`${JSON.stringify(message)}\n`) }
   private finish(error: Error) {
     if (this.closed) return

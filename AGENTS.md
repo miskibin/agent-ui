@@ -239,7 +239,12 @@ one interface:
   owns RPC, bounded startup requests, stderr draining and process cleanup;
   `lib/codex-protocol.ts` adapts notifications into the shared stream. The provider
   discovers models with `model/list`, uses the CLI’s existing
-  login, and resumes original thread ids with `thread/resume`. `read-only` and
+  login, and resumes original thread ids with `thread/resume`. `info()` must not
+  spawn the server or call `account/read` — on Windows that 401s ChatGPT's
+  account-settings endpoint, wipes `~/.codex/auth.json`, and the Desktop/CLI
+  login loop follows. Availability is the binary plus credentials on disk
+  (`hasCodexCredentials`); `listModels` / `run` are the only spawns, they share
+  one in-flight listing, and `CodexClient.close` kills the process tree. `read-only` and
   `full` use their corresponding sandbox with approval policy `never`; `edits`
   uses the workspace sandbox and forwards command/file approval requests through
   `askUser`. Unknown server requests fail explicitly. Images are not advertised.
