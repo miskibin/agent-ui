@@ -115,11 +115,40 @@ test("the whole review is one scroller, and it scrolls", async () => {
   // The tree paints and the stack measures itself over a few frames.
   await page.waitForTimeout(4_000)
 
-  // The file map indexes the review rather than replacing it.
-  assert.equal(
-    await page.locator('[data-slot="changes-panel-map-row"]').count(),
-    3,
-    "every changed file has a row in the map"
+  // The file map sits beside the review rather than above it.
+  const map = page.locator('[data-slot="changes-panel-map"]')
+  await map.waitFor({ timeout: UI_TIMEOUT })
+  const layout = await page.evaluate(() => {
+    const tree = document.querySelector('[data-slot="changes-panel-map"]')
+    const stack = document.querySelector('[data-slot="diff-stack-surface"]')
+    if (!tree || !stack) return null
+    const a = tree.getBoundingClientRect()
+    const b = stack.getBoundingClientRect()
+    return { treeRight: a.right, stackLeft: b.left, treeTop: a.top, stackTop: b.top }
+  })
+  assert.ok(layout, "the file map and the review are both on screen")
+  assert.ok(
+    layout.treeRight <= layout.stackLeft + 2,
+    "the file tree sits beside the diffs, not above them"
+  )
+  assert.ok(
+    Math.abs(layout.treeTop - layout.stackTop) < 40,
+    "the file tree and the diffs share a row"
+  )
+  assert.ok(
+    await page.evaluate(() => {
+      const root = document.querySelector('[data-slot="changes-panel-map"]')
+      if (!root) return false
+      const parts = []
+      const visit = (node) => {
+        if (node.nodeType === Node.TEXT_NODE) parts.push(node.textContent || "")
+        if (node.shadowRoot) visit(node.shadowRoot)
+        for (const child of node.childNodes ?? []) visit(child)
+      }
+      visit(root)
+      return parts.join(" ").includes("store.py")
+    }),
+    "changed files are listed in the tree"
   )
 
   const scrollers = await page.evaluate(() => {

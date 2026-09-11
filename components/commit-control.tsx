@@ -6,6 +6,7 @@ import { toast } from "sonner"
 
 import { refreshFolderStatus } from "@/components/folder-status"
 import * as api from "@/lib/api-client"
+import { cn } from "@/lib/utils"
 
 /**
  * Committing what the chat produced, wherever the changes are being looked at.
@@ -175,50 +176,75 @@ export function CommitControl({
   return (
     <div
       data-slot="chat-changes-commit"
-      className="flex shrink-0 flex-col gap-1.5 border-t p-2"
+      className="shrink-0 border-t px-2 py-2"
     >
-      <textarea
-        value={message}
-        onChange={(event) => setMessage(event.target.value)}
-        rows={2}
-        placeholder="Commit message — empty writes one from the diff"
-        aria-label="Commit message"
-        className="w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-[12px] outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-      />
-      <div className="flex items-center gap-1.5">
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void commit()}
-          className="inline-flex h-7 flex-1 items-center justify-center gap-1 rounded-md bg-primary px-2 text-[12px] font-medium text-primary-foreground outline-none transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
-        >
-          {busy === "commit" ? (
-            <>
-              <Loader2 className="size-3.5 animate-spin" />
-              {message.trim() ? "Committing" : "Writing a message"}
-            </>
-          ) : (
-            <>
-              <GitCommitVertical className="size-3.5" />
-              Commit
-            </>
-          )}
-        </button>
-        <button
-          type="button"
-          disabled={busy !== null}
-          onClick={() => void push()}
-          title="Push this branch to its remote"
-          className="inline-flex h-7 items-center justify-center gap-1 rounded-md border px-2 text-[12px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-60"
-        >
-          {busy === "push" ? (
-            <Loader2 className="size-3.5 animate-spin" />
-          ) : (
-            <Upload className="size-3.5" />
-          )}
-          Push
-        </button>
+      <div
+        data-slot="chat-changes-commit-surface"
+        className="rounded-lg border bg-muted/40 px-2 pt-1.5 pb-1.5 has-[textarea:focus]:border-ring dark:bg-muted/25"
+      >
+        <textarea
+          value={message}
+          onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+              event.preventDefault()
+              void commit()
+            }
+          }}
+          rows={2}
+          placeholder="Message — empty writes one from the diff"
+          aria-label="Commit message"
+          className="w-full resize-none bg-transparent px-0.5 py-0.5 text-[12.5px] leading-relaxed text-foreground outline-none placeholder:text-muted-foreground"
+        />
+        <div className="mt-1 flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate text-[11px] text-muted-foreground">
+            {paths.length
+              ? `${paths.length} ${paths.length === 1 ? "file" : "files"}`
+              : "Nothing to commit"}
+          </span>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void push()}
+              title="Push this branch to its remote"
+              className={cn(COMMIT_BTN, "text-muted-foreground hover:bg-background hover:text-foreground")}
+            >
+              {busy === "push" ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <Upload className="size-3.5" />
+              )}
+              Push
+            </button>
+            <button
+              type="button"
+              disabled={busy !== null}
+              onClick={() => void commit()}
+              title="Commit (Ctrl+Enter)"
+              className={cn(
+                COMMIT_BTN,
+                "bg-primary text-primary-foreground hover:bg-primary/90 disabled:bg-primary/15 disabled:text-primary/70 disabled:opacity-100"
+              )}
+            >
+              {busy === "commit" ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  {message.trim() ? "Committing" : "Writing"}
+                </>
+              ) : (
+                <>
+                  <GitCommitVertical className="size-3.5" />
+                  Commit
+                </>
+              )}
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   )
 }
+
+const COMMIT_BTN =
+  "inline-flex h-7 items-center justify-center gap-1 rounded-md px-2 text-[12px] font-medium outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-60"
