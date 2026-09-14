@@ -3,6 +3,7 @@ import "server-only"
 import { parseJsonObject } from "@/lib/json-rescue"
 import { splitModelId } from "@/lib/model-providers/ids"
 import { enabledModelSources } from "@/lib/model-providers/server"
+import { OLLAMA_DEFAULT_NUM_CTX } from "@/lib/ollama-context"
 import {
   fetchOllamaModelContext,
   normalizeBaseUrl,
@@ -20,16 +21,13 @@ import { estimateTokens, fitMessagesToContext } from "@/lib/token-estimate"
 const TIMEOUT_MS = 20_000
 
 /**
- * What Ollama serves when nobody asks for a window.
- *
- * 4096, whatever the weights allow — the number is Ollama's, not the model's.
- * So a commit message written from a 50k-character patch is refused with
- * "request (17262 tokens) exceeds the available context size (4096 tokens)"
- * by a model with 128k of context sitting unused. Every job in this file
- * assembles more evidence than that on a good day, which made the whole
- * feature look broken on exactly the setup it was meant for: a local model.
+ * Ollama's default window is 4096 whatever the weights allow — see
+ * `OLLAMA_DEFAULT_NUM_CTX`. A commit message written from a 50k-character
+ * patch is refused with that number by a model that has 128k sitting unused,
+ * which is why this file asks for a bigger `num_ctx` when the native API
+ * can take one. The composer's meter must not show the unused 128k; it reads
+ * the served window from `lib/ollama-context.ts`.
  */
-const OLLAMA_DEFAULT_NUM_CTX = 4_096
 
 /** The estimate is an estimate; never fill the window to its last token. */
 const CONTEXT_HEADROOM_TOKENS = 256

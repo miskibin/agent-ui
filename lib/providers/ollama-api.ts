@@ -2,6 +2,11 @@ import "server-only"
 
 import type { ModelOption } from "@/components/ui/model-picker"
 import { loopbackConnectUrls } from "@/lib/host-classification"
+import {
+  architectureContextLength,
+  configuredOllamaNumCtx,
+  servedOllamaContext,
+} from "@/lib/ollama-context"
 
 /**
  * The bits of the Ollama HTTP API shared by the two providers that talk to it:
@@ -51,12 +56,17 @@ type ShowResponse = {
   capabilities?: unknown
   /** Architecture-prefixed metadata, e.g. `qwen35.context_length`. */
   model_info?: Record<string, unknown>
+  /** Modelfile `PARAMETER`s — text on older servers, an object on newer ones. */
+  parameters?: unknown
+  modelfile?: string
 }
 
 type ModelDetails = {
   capabilities: string[] | null
   /** The architecture's maximum, which is not what the runtime serves. */
   contextLength?: number
+  /** `num_ctx` from the Modelfile, when it set one. */
+  configuredContext?: number
 }
 
 /** Family/name substrings for servers too old to report `/api/show` capabilities. */
@@ -135,6 +145,7 @@ async function fetchModelDetails(
           ? data.capabilities.filter((c): c is string => typeof c === "string")
           : null,
         contextLength: architectureContextLength(data.model_info),
+        configuredContext: configuredOllamaNumCtx(data),
       }
     }
   } catch {
@@ -142,21 +153,6 @@ async function fetchModelDetails(
   }
   showCache.set(key, { at: Date.now(), details })
   return details
-}
-
-/**
- * `model_info` keys are prefixed with the architecture (`qwen35.context_length`,
- * `llama.context_length`), which is not a name we can know ahead of time.
- */
-function architectureContextLength(
-  info: Record<string, unknown> | undefined
-): number | undefined {
-  if (!info) return undefined
-  for (const [key, value] of Object.entries(info)) {
-    if (!key.endsWith(".context_length")) continue
-    if (typeof value === "number" && value > 0) return value
-  }
-  return undefined
 }
 
 /**
@@ -203,11 +199,10 @@ export async function fetchVisionCapableModelIds(
  *
  * Three numbers disagree here, and only one of them predicts the 400 a long
  * request gets back. `/api/ps` reports the window a *loaded* model is running
- * with — the real one, and often far below what the weights allow, because
- * Ollama picks it at load time. Only models that are not loaded fall back to
- * the architecture's maximum from `/api/show`, which is a ceiling rather than
- * a promise. Best-effort throughout: a model we cannot answer for is left out,
- * and the meter simply does not render for it.
+ * with — the real one. An unloaded model falls back to `num_ctx` from its
+ * Modelfile, then to Ollama's 4096 default. The architecture's maximum from
+ * `/api/show` (`qwen35.context_length` = 256k) is a ceiling, not a promise,
+ * and must not reach the composer's meter.
  */
 export async function fetchOllamaContextLengths(
   baseUrl: string,
@@ -218,11 +213,14 @@ export async function fetchOllamaContextLengths(
     models.map(async (model) => {
       const running = loaded[model.id]
       if (running) return [model.id, running] as const
-      const { contextLength } = await fetchModelDetails(baseUrl, model.id)
-      return contextLength ? ([model.id, contextLength] as const) : null
+      const { configuredContext } = await fetchModelDetails(baseUrl, model.id)
+      return [
+        model.id,
+        servedOllamaContext({ configured: configuredContext }),
+      ] as const
     })
   )
-  return Object.fromEntries(entries.filter((entry) => entry !== null))
+  return Object.fromEntries(entries)
 }
 
 /** Trailing slashes make every joined path double up — strip them once here. */
@@ -299,13 +297,15 @@ export async function fetchLoadedOllamaModels(
 async function fetchLoadedOllamaContexts(
   baseUrl: string
 ): Promise<Record<string, number>> {
-  const entries = (await fetchRunning(baseUrl))
-    .map((entry) => [entry.model || entry.name, entry.context_length] as const)
-    .filter(
-      (pair): pair is readonly [string, number] =>
-        !!pair[0] && typeof pair[1] === "number" && pair[1] > 0
-    )
-  return Object.fromEntries(entries)
+  const loaded: Record<string, number> = {}
+  for (const entry of await fetchRunning(baseUrl)) {
+    const window = entry.context_length
+    if (typeof window !== "number" || window <= 0) continue
+    // `/api/tags` and `/api/ps` disagree on `name` vs `model` for some tags.
+    if (entry.model) loaded[entry.model] = window
+    if (entry.name) loaded[entry.name] = window
+  }
+  return loaded
 }
 
 async function fetchRunning(

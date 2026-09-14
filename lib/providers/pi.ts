@@ -13,6 +13,7 @@ import {
   type ModelSource,
 } from "@/lib/model-providers/server"
 import { sniffImageMimeType } from "@/lib/attachments"
+import { ollamaOutputBudget } from "@/lib/ollama-context"
 import { writePiExtension } from "@/lib/pi-extension"
 import { hasPiBinary } from "@/lib/pi-runtime"
 import { withPromptContext } from "@/lib/providers/system-prefix"
@@ -135,18 +136,15 @@ export function createPiProvider(
         collectLocalModels(baseUrl),
         collectSourceModels(sources),
       ])
-      await writeModelsConfig(
-        configDir,
-        baseUrl,
-        models,
-        remote,
-        await localVisionIds(baseUrl, models)
-      )
+      const [vision, contexts] = await Promise.all([
+        localVisionIds(baseUrl, models),
+        models.length
+          ? fetchOllamaContextLengths(baseUrl, models)
+          : Promise.resolve<Record<string, number>>({}),
+      ])
+      await writeModelsConfig(configDir, baseUrl, models, remote, vision, contexts)
       // Only the local ones: a hosted source does not tell us its window, and
       // guessing one would put a confidently wrong number under the composer.
-      const contexts = models.length
-        ? await fetchOllamaContextLengths(baseUrl, models)
-        : {}
       return [
         ...models.map((model) => ({
           ...toModelOption(model, contexts[model.id]),
@@ -235,6 +233,12 @@ export function createPiProvider(
           collectSourceModels(sources),
         ])
         const local = withSelectedLocal(models, selected)
+        const [vision, contexts] = await Promise.all([
+          localVisionIds(baseUrl, local),
+          local.length
+            ? fetchOllamaContextLengths(baseUrl, local)
+            : Promise.resolve<Record<string, number>>({}),
+        ])
         await writeModelsConfig(
           configDir,
           baseUrl,
@@ -244,7 +248,8 @@ export function createPiProvider(
           // A source whose catalog could not be listed would otherwise leave
           // pi unable to resolve the very model that was picked from it.
           withSelected(remote, selected),
-          await localVisionIds(baseUrl, local)
+          vision,
+          contexts
         )
         extensionPath = await writePiExtension(configDir)
       } catch (err) {
@@ -293,7 +298,13 @@ type ModelsConfig = {
       api: string
       apiKey: string
       compat: Record<string, boolean>
-      models: Array<{ id: string; name: string; input?: string[] }>
+      models: Array<{
+        id: string
+        name: string
+        input?: string[]
+        contextWindow?: number
+        maxTokens?: number
+      }>
     }
   >
 }
@@ -410,13 +421,18 @@ function withSelected(
  * not see. It is the same judgement `visionModels()` publishes to the
  * composer, so a model that offers the attachment button is a model whose
  * catalog entry will carry the picture.
+ *
+ * `contextWindow` is the window Ollama will actually serve, not the
+ * architecture's 256k. pi defaults to 128000 when the field is missing, which
+ * is how an 18k prompt reached a 4k instance and came back as a 400.
  */
 async function writeModelsConfig(
   configDir: string,
   baseUrl: string,
   models: OllamaModel[],
   sources: SourceModels[],
-  localVision: Set<string>
+  localVision: Set<string>,
+  contexts: Record<string, number>
 ) {
   const config: ModelsConfig = {
     providers: {
@@ -430,11 +446,20 @@ async function writeModelsConfig(
                 supportsDeveloperRole: false,
                 supportsReasoningEffort: false,
               },
-              models: models.map((model) => ({
-                id: model.id,
-                name: model.name,
-                input: localVision.has(model.id) ? TEXT_AND_IMAGE : TEXT_ONLY,
-              })),
+              models: models.map((model) => {
+                const contextWindow = contexts[model.id]
+                return {
+                  id: model.id,
+                  name: model.name,
+                  input: localVision.has(model.id) ? TEXT_AND_IMAGE : TEXT_ONLY,
+                  ...(contextWindow
+                    ? {
+                        contextWindow,
+                        maxTokens: ollamaOutputBudget(contextWindow),
+                      }
+                    : null),
+                }
+              }),
             },
           }
         : null),
