@@ -64,3 +64,45 @@ export function isLocalLoopbackHost(host: string): boolean {
   const address = parseIpv4(normalized) ?? parseIpv4MappedIpv6(normalized)
   return address?.[0] === 127
 }
+
+/**
+ * URLs to actually open a socket to, when `raw` names this machine as
+ * `localhost`.
+ *
+ * Node 17+ resolves that name to `::1` first. Ollama — and most other
+ * loopback servers on Windows — bind `127.0.0.1` only, so a fetch to
+ * `http://localhost:11434` hangs until TCP gives up instead of succeeding
+ * against the server that is already there. Each miss looks like "Ollama is
+ * down", and `ensureOllama` answers by spawning `ollama serve`, which on
+ * Windows is a new console window every time.
+ *
+ * Literal `127.0.0.1` and `[::1]` are left alone. `localhost` becomes those
+ * two, IPv4 first, never the ambiguous name.
+ */
+export function loopbackConnectUrls(raw: string): string[] {
+  const trimmed = raw.trim()
+  let url: URL
+  try {
+    url = new URL(trimmed)
+  } catch {
+    return trimmed ? [trimmed.replace(/\/+$/, "")] : []
+  }
+  if (normalizeHostname(url.hostname) !== "localhost") {
+    return [stripBaseUrl(url)]
+  }
+  // Do not assign `url.hostname = "::1"`: on some Windows/Node builds the
+  // setter silently keeps `localhost`, which is the name we are trying to
+  // stop fetching.
+  return [replaceLoopbackHost(url, "127.0.0.1"), replaceLoopbackHost(url, "[::1]")]
+}
+
+function replaceLoopbackHost(url: URL, host: string) {
+  const port = url.port ? `:${url.port}` : ""
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "")
+  return `${url.protocol}//${host}${port}${path}${url.search}${url.hash}`
+}
+
+function stripBaseUrl(url: URL) {
+  const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/, "")
+  return `${url.origin}${path}${url.search}${url.hash}`
+}

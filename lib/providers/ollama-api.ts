@@ -1,6 +1,7 @@
 import "server-only"
 
 import type { ModelOption } from "@/components/ui/model-picker"
+import { loopbackConnectUrls } from "@/lib/host-classification"
 
 /**
  * The bits of the Ollama HTTP API shared by the two providers that talk to it:
@@ -114,12 +115,13 @@ async function fetchModelDetails(
   baseUrl: string,
   model: string
 ): Promise<ModelDetails> {
-  const key = `${baseUrl}|${model}`
+  const root = normalizeBaseUrl(baseUrl)
+  const key = `${root}|${model}`
   const cached = showCache.get(key)
   if (cached && Date.now() - cached.at < SHOW_CACHE_MS) return cached.details
   let details = NO_DETAILS
   try {
-    const res = await fetch(`${baseUrl}/api/show`, {
+    const res = await fetch(`${root}/api/show`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model }),
@@ -225,7 +227,7 @@ export async function fetchOllamaContextLengths(
 
 /** Trailing slashes make every joined path double up — strip them once here. */
 export function normalizeBaseUrl(raw: string) {
-  return raw.trim().replace(/\/+$/, "")
+  return loopbackConnectUrls(raw)[0] ?? raw.trim().replace(/\/+$/, "")
 }
 
 /** Never throws — an unreachable server is a UI state, not an error. */
@@ -233,14 +235,19 @@ export async function probeOllama(baseUrl: string) {
   const cached = probeCache.get(baseUrl)
   if (cached && Date.now() - cached.at < PROBE_CACHE_MS) return cached.ok
   let ok = false
-  try {
-    const res = await fetch(`${baseUrl}/api/tags`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(PROBE_MS),
-    })
-    ok = res.ok
-  } catch {
-    ok = false
+  for (const candidate of loopbackConnectUrls(baseUrl)) {
+    try {
+      const res = await fetch(`${candidate}/api/tags`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(PROBE_MS),
+      })
+      if (res.ok) {
+        ok = true
+        break
+      }
+    } catch {
+      /* try the next loopback spelling */
+    }
   }
   probeCache.set(baseUrl, { at: Date.now(), ok })
   return ok
@@ -249,7 +256,8 @@ export async function probeOllama(baseUrl: string) {
 export async function fetchOllamaModels(
   baseUrl: string
 ): Promise<OllamaModel[]> {
-  const res = await fetch(`${baseUrl}/api/tags`, {
+  const root = normalizeBaseUrl(baseUrl)
+  const res = await fetch(`${root}/api/tags`, {
     cache: "no-store",
     signal: AbortSignal.timeout(5_000),
   })
@@ -304,7 +312,7 @@ async function fetchRunning(
   baseUrl: string
 ): Promise<NonNullable<PsResponse["models"]>> {
   try {
-    const res = await fetch(`${baseUrl}/api/ps`, {
+    const res = await fetch(`${normalizeBaseUrl(baseUrl)}/api/ps`, {
       cache: "no-store",
       signal: AbortSignal.timeout(PROBE_MS),
     })

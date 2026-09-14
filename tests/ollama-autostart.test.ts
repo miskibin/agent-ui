@@ -4,7 +4,12 @@ import test from "node:test"
 import {
   ensureOllama,
   isLoopbackOllamaUrl,
+  resetOllamaAutostart,
 } from "@/lib/providers/ollama-autostart"
+
+test.beforeEach(() => {
+  resetOllamaAutostart()
+})
 
 test("only accepts loopback HTTP Ollama URLs", () => {
   assert.equal(isLoopbackOllamaUrl("http://localhost:11434"), true)
@@ -22,8 +27,13 @@ test("starts Ollama once and waits until its health endpoint answers", async () 
     if (probes < 3) throw new Error("ECONNREFUSED")
     return new Response("{}", { status: 200 })
   }
-  const spawnImpl = (_command: string, _args: string[], options: { windowsHide?: boolean }) => {
+  const spawnImpl = (
+    _command: string,
+    _args: string[],
+    options: { detached: boolean; windowsHide?: boolean }
+  ) => {
     launches++
+    assert.equal(options.detached, false)
     assert.equal(options.windowsHide, true)
     return { once() {}, unref() {} }
   }
@@ -75,36 +85,92 @@ test("does not spawn when the configured port is already ready", async () => {
   assert.equal(launches, 0)
 })
 
-test("handles an asynchronous spawn error without an unhandled rejection", async () => {
-  let errorListener: (() => void) | undefined
+test("does not spawn when 127.0.0.1 answers for a localhost URL", async () => {
   let launches = 0
-  const result = await ensureOllama("http://localhost:22335", {
-    fetchImpl: async () => {
-      throw new Error("ECONNREFUSED")
+  const probed: string[] = []
+  const result = await ensureOllama("http://localhost:22336", {
+    fetchImpl: async (url) => {
+      probed.push(String(url))
+      if (String(url).includes("127.0.0.1")) {
+        return new Response("{}", { status: 200 })
+      }
+      throw new Error("IPv6 hang")
     },
     spawnImpl: () => {
       launches++
-      return {
-        once(_event: "error", listener: () => void) {
-          errorListener = listener
-          queueMicrotask(() => errorListener?.())
-        },
-        unref() {},
-      }
+      return { once() {}, unref() {} }
     },
+  })
+  assert.equal(result, true)
+  assert.equal(launches, 0)
+  assert.ok(probed.some((url) => url.includes("127.0.0.1")))
+  assert.equal(
+    probed.some((url) => /localhost/i.test(url)),
+    false
+  )
+})
+
+test("a failed start is not retried, even across localhost and 127.0.0.1", async () => {
+  let errorListener: (() => void) | undefined
+  let launches = 0
+  const down = async () => {
+    throw new Error("ECONNREFUSED")
+  }
+  const spawnOnce = () => {
+    launches++
+    return {
+      once(_event: "error", listener: () => void) {
+        errorListener = listener
+        queueMicrotask(() => errorListener?.())
+      },
+      unref() {},
+    }
+  }
+
+  const result = await ensureOllama("http://localhost:22335", {
+    fetchImpl: down,
+    spawnImpl: spawnOnce,
+    platform: "win32",
   })
   assert.equal(result, false)
   assert.equal(
     await ensureOllama("http://localhost:22335", {
-      fetchImpl: async () => {
-        throw new Error("ECONNREFUSED")
-      },
-      spawnImpl: () => {
-        launches++
-        return { once() {}, unref() {} }
-      },
+      fetchImpl: down,
+      spawnImpl: spawnOnce,
+      platform: "win32",
+    }),
+    false
+  )
+  assert.equal(
+    await ensureOllama("http://127.0.0.1:22335", {
+      fetchImpl: down,
+      spawnImpl: spawnOnce,
+      platform: "win32",
     }),
     false
   )
   assert.equal(launches, 1)
+})
+
+test("POSIX still detaches ollama serve so it outlives the server process", async () => {
+  let detached: boolean | undefined
+  let host: string | undefined
+  await ensureOllama("http://localhost:22337", {
+    fetchImpl: async () => {
+      throw new Error("down")
+    },
+    spawnImpl: (_command, _args, options) => {
+      detached = options.detached
+      host = options.env.OLLAMA_HOST
+      return {
+        once(_event: "error", listener: () => void) {
+          queueMicrotask(listener)
+        },
+        unref() {},
+      }
+    },
+    platform: "linux",
+  })
+  assert.equal(detached, true)
+  assert.equal(host, "127.0.0.1:22337")
 })

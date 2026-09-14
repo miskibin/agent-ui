@@ -162,9 +162,13 @@ test("Windows adds the well-known install dirs, and only retries a profile when 
 })
 
 test("Windows PATH repair can consume four bounded PowerShell probes", () => {
-  const calls: Array<{ shell: string; timeout: number }> = []
+  const calls: Array<{ shell: string; timeout: number; windowsHide?: boolean }> = []
   const execFile: ExecFileSyncLike = (shell, _args, options) => {
-    calls.push({ shell, timeout: options.timeout })
+    calls.push({
+      shell,
+      timeout: options.timeout,
+      windowsHide: options.windowsHide,
+    })
     throw new Error("PowerShell did not start")
   }
   hydrateEnv(env({ PATH: "C:\\Windows" }), {
@@ -178,6 +182,7 @@ test("Windows PATH repair can consume four bounded PowerShell probes", () => {
     ["pwsh.exe", "powershell.exe", "pwsh.exe", "powershell.exe"]
   )
   assert.ok(calls.every(({ timeout }) => timeout === 5_000))
+  assert.ok(calls.every(({ windowsHide }) => windowsHide === true))
 })
 
 test("a command is looked for with the platform's extensions", () => {

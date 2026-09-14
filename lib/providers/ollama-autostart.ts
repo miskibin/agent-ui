@@ -4,12 +4,20 @@ import { spawn } from "node:child_process"
 import { existsSync } from "node:fs"
 import path from "node:path"
 
-import { isLocalLoopbackHost } from "@/lib/host-classification"
+import {
+  isLocalLoopbackHost,
+  loopbackConnectUrls,
+} from "@/lib/host-classification"
 
 const READY_TIMEOUT_MS = 5_000
 const PROBE_TIMEOUT_MS = 750
 const RETRY_MS = 250
-const FAILURE_COOLDOWN_MS = 10_000
+/**
+ * One spawn per URL per process. `info()` runs on every provider list, and a
+ * cooldown would still retry forever — that is the console-window storm on
+ * Windows. A later probe can still succeed if the user starts Ollama themselves.
+ */
+const MAX_SPAWN_ATTEMPTS = 1
 
 type SpawnLike = (
   command: string,
@@ -30,7 +38,15 @@ export type OllamaAutostartDependencies = {
 }
 
 const starts = new Map<string, Promise<boolean>>()
-const failures = new Map<string, number>()
+const spawnAttempts = new Map<string, number>()
+
+/**
+ * `localhost` and `127.0.0.1` are the same server. One key so a hung
+ * localhost probe cannot spend a second spawn budget on the IPv4 spelling.
+ */
+function autostartKey(raw: string) {
+  return loopbackConnectUrls(raw)[0] ?? raw.trim().replace(/\/+$/, "")
+}
 
 /**
  * Only an http URL that names this machine is ever spawned for. Fail-closed:
@@ -53,8 +69,9 @@ export function isLoopbackOllamaUrl(raw: string) {
 
 /**
  * Starts the user's local Ollama service only after a request proves it is
- * absent. A shared promise prevents concurrent model requests from spawning
- * several Ollama processes.
+ * absent. A shared promise prevents concurrent callers from spawning several
+ * processes; a per-URL attempt cap prevents the next provider list from
+ * spawning another after the first one failed to become reachable.
  */
 export function ensureOllama(
   baseUrl: string,
@@ -62,43 +79,40 @@ export function ensureOllama(
 ) {
   const normalized = baseUrl.trim().replace(/\/+$/, "")
   if (!isLoopbackOllamaUrl(normalized)) return Promise.resolve(false)
-  const failedAt = failures.get(normalized)
-  if (failedAt && Date.now() - failedAt < FAILURE_COOLDOWN_MS) {
-    return Promise.resolve(false)
-  }
-  const existing = starts.get(normalized)
+  const key = autostartKey(normalized)
+  const existing = starts.get(key)
   if (existing) return existing
-  const pending = startAndWait(normalized, deps)
-    .then((ok) => {
-      if (ok) failures.delete(normalized)
-      else failures.set(normalized, Date.now())
-      return ok
-    })
-    .finally(() => starts.delete(normalized))
-  starts.set(normalized, pending)
+  const pending = startAndWait(normalized, key, deps).finally(() => {
+    starts.delete(key)
+  })
+  starts.set(key, pending)
   return pending
 }
 
 async function startAndWait(
   baseUrl: string,
+  key: string,
   deps: OllamaAutostartDependencies
 ) {
   const fetchImpl = deps.fetchImpl ?? fetch
   if (await reachable(baseUrl, fetchImpl)) return true
+  if ((spawnAttempts.get(key) ?? 0) >= MAX_SPAWN_ATTEMPTS) return false
 
+  spawnAttempts.set(key, (spawnAttempts.get(key) ?? 0) + 1)
   const spawnImpl = deps.spawnImpl ?? spawn
+  const platform = deps.platform ?? process.platform
   let launchFailed = false
   try {
-    const child = spawnImpl(/*turbopackIgnore: true*/ ollamaCommand(deps.platform), ["serve"], {
-      detached: true,
+    const child = spawnImpl(/*turbopackIgnore: true*/ ollamaCommand(platform), ["serve"], {
+      // `DETACHED_PROCESS` on Windows makes `CREATE_NO_WINDOW` a no-op, so a
+      // detached `ollama serve` always gets its own console.
+      detached: platform !== "win32",
       stdio: "ignore",
       env: {
         ...process.env,
         OLLAMA_HOST: ollamaHost(baseUrl),
       },
-      ...(deps.platform === "win32" || process.platform === "win32"
-        ? { windowsHide: true }
-        : {}),
+      ...(platform === "win32" ? { windowsHide: true } : {}),
     })
     child.once("error", () => {
       launchFailed = true
@@ -129,7 +143,7 @@ function ollamaCommand(platform = process.platform) {
 }
 
 function ollamaHost(baseUrl: string) {
-  const url = new URL(baseUrl)
+  const url = new URL(loopbackConnectUrls(baseUrl)[0] ?? baseUrl)
   const host = url.hostname === "::1" || url.hostname === "[::1]"
     ? "[::1]"
     : url.hostname
@@ -137,13 +151,22 @@ function ollamaHost(baseUrl: string) {
 }
 
 async function reachable(baseUrl: string, fetchImpl: FetchLike) {
-  try {
-    const response = await fetchImpl(`${baseUrl}/api/tags`, {
-      cache: "no-store",
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
-    })
-    return response.ok
-  } catch {
-    return false
+  for (const candidate of loopbackConnectUrls(baseUrl)) {
+    try {
+      const response = await fetchImpl(`${candidate}/api/tags`, {
+        cache: "no-store",
+        signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+      })
+      if (response.ok) return true
+    } catch {
+      /* try the next loopback spelling */
+    }
   }
+  return false
+}
+
+/** Testing seam: forgets in-flight starts and the per-URL spawn budget. */
+export function resetOllamaAutostart() {
+  starts.clear()
+  spawnAttempts.clear()
 }

@@ -266,10 +266,11 @@ one interface:
   OpenRouter) still round-trips; the vendored model picker groups options by that source.
 
   A local Ollama is started rather than reported down: `lib/providers/ollama-autostart.ts`
-  (`ensureOllama`) probes `/api/tags` and spawns a detached `ollama serve` only when the
-  configured URL is loopback http — from `/api/chat`, `/api/models` and the `ollama`, `pi` and
-  dsh `info()` paths, deduped across concurrent callers and cooled down for 10s after a failed
-  start; a remote URL is never spawned for, only probed. `lib/providers/acp-availability.ts`
+  (`ensureOllama`) probes `/api/tags` on `127.0.0.1` then `::1` (never the `localhost` name,
+  which hangs on IPv6-first Windows) and spawns `ollama serve` at most once per URL per
+  process — from `/api/chat`, `/api/models` and the `ollama`, `pi` and dsh `info()` paths,
+  detached on POSIX, hidden and attached on Windows so it cannot open a console; a remote URL
+  is never spawned for, only probed. `lib/providers/acp-availability.ts`
   (`hasDeepSeekCredentials`) is the matching fallback on the other side: dsh — and only dsh,
   never a generic ACP agent — stays available on its hosted DeepSeek route when that optional
   local overlay is down.

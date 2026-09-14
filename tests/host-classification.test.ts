@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { isLocalLoopbackHost, normalizeHostname } from "@/lib/host-classification"
+import {
+  isLocalLoopbackHost,
+  loopbackConnectUrls,
+  normalizeHostname,
+} from "@/lib/host-classification"
 import { isLoopbackOllamaUrl } from "@/lib/providers/ollama-autostart"
 
 /**
@@ -49,6 +53,22 @@ test("anything that is not this machine is not loopback", () => {
   ]) {
     assert.equal(isLocalLoopbackHost(host), false, host)
   }
+})
+
+test("localhost is probed as IPv4 then IPv6, never as the name that hangs", () => {
+  assert.deepEqual(loopbackConnectUrls("http://localhost:11434"), [
+    "http://127.0.0.1:11434",
+    "http://[::1]:11434",
+  ])
+  assert.deepEqual(loopbackConnectUrls("http://localhost:11434/"), [
+    "http://127.0.0.1:11434",
+    "http://[::1]:11434",
+  ])
+  assert.deepEqual(loopbackConnectUrls("http://127.0.0.1:11434/"), [
+    "http://127.0.0.1:11434",
+  ])
+  assert.deepEqual(loopbackConnectUrls("http://[::1]:11434"), ["http://[::1]:11434"])
+  assert.deepEqual(loopbackConnectUrls("not a url"), ["not a url"])
 })
 
 test("only an http URL naming this machine is ever spawned for", () => {

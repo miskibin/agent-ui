@@ -3,6 +3,7 @@
 import "server-only"
 
 import { execFileSync } from "node:child_process"
+import { setDefaultResultOrder } from "node:dns"
 import { existsSync } from "node:fs"
 import { userInfo } from "node:os"
 import path from "node:path"
@@ -47,7 +48,7 @@ const ENV_NAME_PATTERN = /^[A-Z0-9_]+$/
 export type ExecFileSyncLike = (
   file: string,
   args: readonly string[],
-  options: { encoding: "utf8"; timeout: number }
+  options: { encoding: "utf8"; timeout: number; windowsHide?: boolean }
 ) => string
 
 export type HydrateDependencies = {
@@ -206,6 +207,7 @@ export function readPathFromLoginShell(
   const output = execFile(shell, ["-ilc", buildEnvCaptureCommand(["PATH"])], {
     encoding: "utf8",
     timeout: SHELL_TIMEOUT_MS,
+    windowsHide: true,
   })
   return extractEnvValue(output, "PATH")
 }
@@ -219,6 +221,7 @@ export function readPathFromLaunchctl(
       execFile("/bin/launchctl", ["getenv", "PATH"], {
         encoding: "utf8",
         timeout: LAUNCHCTL_TIMEOUT_MS,
+        windowsHide: true,
       })
     )
   } catch {
@@ -262,6 +265,7 @@ export function readWindowsEnv(
       const output = execFile(shell, args, {
         encoding: "utf8",
         timeout: SHELL_TIMEOUT_MS,
+        windowsHide: true,
       })
       const found: Record<string, string> = {}
       for (const name of names) {
@@ -443,6 +447,10 @@ export function hydrateProcessEnv(deps: HydrateDependencies = {}): boolean {
   if (hydrated) return false
   hydrated = true
   if (trimNonEmpty(process.env.AGENT_UI_SKIP_SHELL_ENV)) return false
+  // Node 17+ resolves `localhost` to ::1 first. Local servers on this
+  // machine (Ollama especially) almost always bind 127.0.0.1 only, so a
+  // fetch to localhost hangs and looks like a missing daemon.
+  setDefaultResultOrder("ipv4first")
   hydrateEnv(process.env, deps)
   return true
 }
