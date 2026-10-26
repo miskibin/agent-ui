@@ -10,7 +10,7 @@ Everything in `components/ui/**`, `hooks/use-click-outside.ts`, and these lib fi
 `lib/agent-runtime.ts`, `lib/mock-agent.ts`, `lib/layout-transition.ts`,
 `lib/command-label.ts`, `lib/lru-cache.ts`, `lib/markdown-clipboard.ts`,
 `lib/markdown-file-paths.ts`, `lib/markdown-github-alerts.ts`, `lib/markdown-list-indentation.ts`,
-`lib/prompt-history.ts`, `lib/syntax-highlighting.ts`, `lib/visible-animation.ts`
+`lib/prompt-history.ts`, `lib/stream-pacing.ts`, `lib/syntax-highlighting.ts`, `lib/visible-animation.ts`
 comes from **[miskibin/chat-components](https://github.com/miskibin/chat-components)** — the shadcn/ui registry this app is built to showcase. These files must stay byte-identical to upstream.
 
 **Do NOT patch, fork, or extend them here.** If a component needs a fix, a new prop, or a new

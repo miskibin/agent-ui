@@ -60,6 +60,7 @@ const SHARED_FILES = [
   "lib/markdown-list-indentation.ts",
   "lib/mock-agent.ts",
   "lib/prompt-history.ts",
+  "lib/stream-pacing.ts",
   "lib/syntax-highlighting.ts",
   "lib/visible-animation.ts",
 ]
