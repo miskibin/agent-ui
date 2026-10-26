@@ -23,7 +23,7 @@ const MODES: PermissionMode[] = ["read-only", "edits", "full"]
 const MODELS_FRESH_MS = 5 * 60_000
 const MODELS_FAILED_MS = 30_000
 
-type ModelsCache = { at: number; models: ModelOption[]; ok: boolean }
+type ModelsCache = { at: number; models: ModelOption[]; error?: unknown }
 const modelsCache = new Map<string, ModelsCache>()
 const modelsInFlight = new Map<string, Promise<ModelOption[]>>()
 
@@ -49,17 +49,22 @@ export function completedAgentMessageText(
 function listCodexModels(binPath: string, workspace: string): Promise<ModelOption[]> {
   const key = `${binPath}\0${workspace}`
   const cached = modelsCache.get(key)
-  if (cached && Date.now() - cached.at < (cached.ok ? MODELS_FRESH_MS : MODELS_FAILED_MS)) {
-    return Promise.resolve(cached.models)
+  if (cached && Date.now() - cached.at < (cached.error === undefined ? MODELS_FRESH_MS : MODELS_FAILED_MS)) {
+    // A failure is remembered so the next picker open does not start another
+    // app-server, but it is repeated rather than turned into an empty list:
+    // "no models" with no reason is what made a broken install look idle.
+    return cached.error === undefined
+      ? Promise.resolve(cached.models)
+      : Promise.reject(cached.error)
   }
   const existing = modelsInFlight.get(key)
   if (existing) return existing
   const pending = fetchCodexModels(binPath, workspace)
     .then((models) => {
-      modelsCache.set(key, { at: Date.now(), models, ok: true })
+      modelsCache.set(key, { at: Date.now(), models })
       return models
     }, (error: unknown) => {
-      modelsCache.set(key, { at: Date.now(), models: [], ok: false })
+      modelsCache.set(key, { at: Date.now(), models: [], error })
       throw error
     })
     .finally(() => {

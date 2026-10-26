@@ -928,6 +928,11 @@ export default function ChatPage() {
                       isGenerating={isGenerating}
                       generationStage={activeRun?.stage ?? "idle"}
                       generationLabel={activeRun?.status}
+                      // A backend status line carries its own clock (Ollama's
+                      // "Loading … · 24s"); the indicator's runs otherwise.
+                      generationStartedAt={
+                        activeRun?.status ? undefined : activeRun?.startedAt
+                      }
                       onEditMessage={handleEditMessage}
                       onAskAnswer={handleAskAnswer}
                       onPlanBuild={planBuild}

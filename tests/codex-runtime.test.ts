@@ -61,3 +61,21 @@ test("an API key in auth.json or the environment counts as a login", () => {
     assert.equal(hasCodexCredentials(), true)
   })
 })
+
+test("an npm install resolves past its launcher to the native Windows binary", async () => {
+  const { mkdirSync } = await import("node:fs")
+  const { nativeCodexBinary } = await import("@/lib/codex-runtime")
+  const prefix = mkdtempSync(join(tmpdir(), "codex-npm-"))
+  const launcher = join(prefix, "node_modules", "@openai", "codex")
+  mkdirSync(launcher, { recursive: true })
+  assert.equal(nativeCodexBinary(prefix, "x64"), null)
+
+  const bin = join(launcher, "node_modules", "@openai", "codex-win32-x64", "vendor", "x86_64-pc-windows-msvc", "bin")
+  mkdirSync(bin, { recursive: true })
+  writeFileSync(join(bin, "codex.exe"), "")
+  const command = nativeCodexBinary(prefix, "x64")
+  assert.equal(command?.cmd, join(bin, "codex.exe"))
+  assert.deepEqual(command?.args, [])
+  assert.equal(command?.env?.CODEX_MANAGED_PACKAGE_ROOT, launcher)
+  assert.equal(nativeCodexBinary(prefix, "ia32"), null)
+})
