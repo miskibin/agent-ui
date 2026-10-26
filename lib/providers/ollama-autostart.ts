@@ -37,8 +37,19 @@ export type OllamaAutostartDependencies = {
   platform?: NodeJS.Platform
 }
 
-const starts = new Map<string, Promise<boolean>>()
-const spawnAttempts = new Map<string, number>()
+/**
+ * Kept on `globalThis` rather than in module scope: a dev-server recompile
+ * re-evaluates this module, and a budget that resets with it is a budget that
+ * spawns again after every save.
+ */
+const state = ((globalThis as { __agentUiOllamaAutostart?: {
+  starts: Map<string, Promise<boolean>>
+  spawnAttempts: Map<string, number>
+} }).__agentUiOllamaAutostart ??= {
+  starts: new Map(),
+  spawnAttempts: new Map(),
+})
+const { starts, spawnAttempts } = state
 
 /**
  * `localhost` and `127.0.0.1` are the same server. One key so a hung

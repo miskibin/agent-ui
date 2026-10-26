@@ -6,7 +6,12 @@ import path from "node:path"
 
 const PACKAGE = "@openai/codex"
 
-export type CodexCommand = { cmd: string; args: string[] }
+export type CodexCommand = {
+  cmd: string
+  args: string[]
+  /** Variables the npm launcher would have set for the native binary. */
+  env?: Record<string, string>
+}
 
 /**
  * `CODEX_HOME` is the CLI's own override, and is honoured for the same reason
@@ -79,8 +84,8 @@ export function resolveCodexCommand(binPath?: string): CodexCommand {
     const exe = path.join(dir, "codex.exe")
     if (existsSync(exe)) return { cmd: exe, args: [] }
     if (existsSync(path.join(dir, "codex.cmd"))) {
-      const entry = packageEntry(dir)
-      if (entry) return { cmd: process.execPath, args: [entry] }
+      const command = npmCommand(dir)
+      if (command) return command
     }
   }
   return { cmd: "codex.exe", args: [] }
@@ -102,12 +107,62 @@ export function hasCodexBinary(binPath?: string): boolean {
 
 function commandFor(target: string): CodexCommand {
   if (/\.(?:cmd|bat)$/i.test(target)) {
-    const entry = packageEntry(path.dirname(target))
-    if (entry) return { cmd: process.execPath, args: [entry] }
+    const command = npmCommand(path.dirname(target))
+    if (command) return command
   }
   return /\.[cm]?js$/i.test(target)
     ? { cmd: process.execPath, args: [target] }
     : { cmd: target, args: [] }
+}
+
+/**
+ * The npm install, resolved past its launcher where possible.
+ *
+ * `bin/codex.js` re-spawns the native binary with `stdio: "inherit"` and no
+ * `windowsHide`, so under a console-less parent (the desktop sidecar) every
+ * app-server we start opens a console window of its own — one per model
+ * listing and one per turn. Starting the binary it would have started, with
+ * the variables it would have set, is the same process without the window.
+ * Any layout this does not recognise falls back to the launcher.
+ */
+function npmCommand(dir: string): CodexCommand | null {
+  const native = nativeCodexBinary(dir)
+  if (native) return native
+  const entry = packageEntry(dir)
+  return entry ? { cmd: process.execPath, args: [entry] } : null
+}
+
+const WINDOWS_TARGETS: Record<string, { triple: string; pkg: string }> = {
+  x64: { triple: "x86_64-pc-windows-msvc", pkg: "codex-win32-x64" },
+  arm64: { triple: "aarch64-pc-windows-msvc", pkg: "codex-win32-arm64" },
+}
+
+export function nativeCodexBinary(
+  dir: string,
+  arch: string = process.arch
+): CodexCommand | null {
+  const target = WINDOWS_TARGETS[arch]
+  if (!target) return null
+  const packageDir = path.join(dir, "node_modules", ...PACKAGE.split("/"))
+  if (!existsSync(packageDir)) return null
+  // Nested under the launcher (a global npm install), hoisted beside it, or
+  // the older single-package layout that shipped `vendor/` itself.
+  const vendorRoots = [
+    path.join(packageDir, "node_modules", "@openai", target.pkg, "vendor"),
+    path.join(dir, "node_modules", "@openai", target.pkg, "vendor"),
+    path.join(packageDir, "vendor"),
+  ]
+  for (const root of vendorRoots) {
+    const exe = path.join(root, target.triple, "bin", "codex.exe")
+    if (existsSync(exe)) {
+      return {
+        cmd: exe,
+        args: [],
+        env: { CODEX_MANAGED_PACKAGE_ROOT: packageDir, CODEX_MANAGED_BY_NPM: "1" },
+      }
+    }
+  }
+  return null
 }
 
 function packageEntry(dir: string): string | null {

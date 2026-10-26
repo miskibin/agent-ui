@@ -54,7 +54,7 @@ export class CodexClient {
     const command = resolveCodexCommand(binPath)
     const child = spawn(command.cmd, [...command.args, "app-server"], {
       cwd,
-      env: process.env,
+      env: command.env ? { ...process.env, ...command.env } : process.env,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
       ...detachedSpawnOptions,
