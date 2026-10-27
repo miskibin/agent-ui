@@ -58,6 +58,11 @@
       "icons/icon.ico"
     ],
     "externalBin": ["binaries/node"],
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/installer-hooks.nsh"
+      }
+    },
     "resources": ["resources/app"],
     "linux": {
       "deb": {

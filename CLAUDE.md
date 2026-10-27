@@ -797,6 +797,14 @@ one interface:
   permissions follow the same line: `capabilities/default.json` names the dev server alone,
   and `grant_remote_origin` re-reads it at launch to grant the shell's commands to the one
   resolved `http://127.0.0.1:<port>` origin rather than to every loopback port.
+  On Windows the sidecar is also put in a kill-on-close job object (`kill_on_close` in
+  `src-tauri/src/lib.rs`, `SILENT_BREAKAWAY_OK` so only Node itself is in it): the installer and
+  the updater end the shell with `TerminateProcess`, which runs no exit handler, and an orphaned
+  `node.exe` used to hold its own file open so the next install failed with "Error opening file
+  for writing". `src-tauri/windows/installer-hooks.nsh` handles installs over a build that
+  predates the job: it *renames* a locked `node.exe` aside (Windows allows that for a running
+  image) and deletes it at reboot — deliberately no process killing, which antivirus heuristics
+  flag an installer for.
   Auto-update rides the same bridge: `tauri-plugin-updater` +
   `tauri-plugin-process` are registered in `src-tauri`, `lib/desktop.ts` wraps
   `check / downloadAndInstall / relaunch`, and `components/desktop-updater.tsx` (mounted in
