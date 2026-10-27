@@ -132,9 +132,22 @@ export function ChangesPanel({
     [files]
   )
 
-  const reveal = React.useCallback((path: string) => {
-    setFocus((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }))
-  }, [])
+  /**
+   * A row with a diff scrolls the stack to it. A row without one — a PNG the
+   * agent wrote, any other binary file — has nothing in the stack to scroll
+   * to, so it opens in the file panel instead, which shows the picture.
+   */
+  const reveal = React.useCallback(
+    (path: string) => {
+      const file = files?.find((entry) => entry.path === path)
+      if (file && (file.binary || !file.patch) && onOpenFile) {
+        onOpenFile(path)
+        return
+      }
+      setFocus((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }))
+    },
+    [files, onOpenFile]
+  )
 
   const loadChildren = React.useCallback(
     async (dir: string) => {
@@ -294,7 +307,7 @@ export function ChangesPanel({
                 files === null
                   ? "Reading the worktree…"
                   : files.length
-                    ? "Every change here is binary or too large to show."
+                    ? "Every change here is binary or too large to show — pick one in the list to open it."
                     : "Nothing has changed in this folder yet."
               }
               className="h-full"

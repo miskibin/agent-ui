@@ -15,6 +15,8 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { DEFAULT_DSH_AGENT } from "@/lib/settings/schema"
 import type {
+  AcpAgentKind,
+  AcpRuntime,
   AcpAgentSettings,
   AcpPermissionMode,
   AcpSettings,
@@ -22,6 +24,9 @@ import type {
 } from "@/lib/settings/schema"
 
 import { SettingsRow } from "./section"
+
+/** Agents that ship configured: listed first, never removable. */
+const BUILT_IN_AGENTS = ["dsh", "tinyagent"]
 import { StatusBadge, statusKey, type StatusPhase, type ProviderStatus } from "./provider-status"
 
 /**
@@ -66,8 +71,10 @@ export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps)
   const keys = React.useMemo(() => {
     const all = Object.keys(acp.agents)
     return [
-      ...all.filter((key) => key === "dsh"),
-      ...all.filter((key) => key !== "dsh").sort((a, b) => a.localeCompare(b)),
+      ...BUILT_IN_AGENTS.filter((key) => all.includes(key)),
+      ...all
+        .filter((key) => !BUILT_IN_AGENTS.includes(key))
+        .sort((a, b) => a.localeCompare(b)),
     ]
   }, [acp.agents])
 
@@ -115,7 +122,7 @@ export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps)
           phase={phase}
           status={statuses[statusKey(`acp:${key}`)]}
           onPatch={patch}
-          onRemove={key === "dsh" ? undefined : remove}
+          onRemove={BUILT_IN_AGENTS.includes(key) ? undefined : remove}
         />
       ))}
       <SettingsRow
@@ -172,6 +179,8 @@ function AcpAgentRow({
     setArgsDraft(null)
   }, [argsDraft, patch])
   const isDsh = agent.kind === "dsh"
+  const isTiny = agent.kind === "tinyagent"
+  const isWsl = agent.runtime === "wsl"
   const inputId = `provider-acp-${agentKey}`
 
   return (
@@ -181,7 +190,9 @@ function AcpAgentRow({
       description={
         isDsh
           ? "DeepSeek Harness over ACP. Answers arrive whole rather than token by token; progress shows as tool calls."
-          : `Spawned as \`${agent.command || "(no command)"}\` and driven over ACP stdio.`
+          : isTiny
+            ? "tinyagent's --acp mode. Its models are yours from Model providers and Ollama — or its own config default — and the chat's permission picker sets --read-only."
+            : `Spawned as \`${agent.command || "(no command)"}\` and driven over ACP stdio.`
       }
       control={
         <>
@@ -223,18 +234,88 @@ function AcpAgentRow({
           aria-label={`${agent.name || agentKey} command`}
           spellCheck={false}
           autoComplete="off"
-          placeholder={isDsh ? "dsh — or an absolute path to it" : "Command, e.g. /usr/local/bin/my-agent"}
+          placeholder={
+            isDsh
+              ? "dsh — or an absolute path to it"
+              : isTiny
+                ? isWsl
+                  ? "tinyagent — or its Linux path, e.g. ~/.local/bin/tinyagent"
+                  : "tinyagent — or an absolute path to it"
+                : "Command, e.g. /usr/local/bin/my-agent"
+          }
           className="h-8 font-mono text-[12px]"
           value={agent.command}
           onChange={(event) => patch({ command: event.target.value })}
         />
+
+        <div className="flex flex-wrap items-center gap-2">
+          {onRemove ? (
+            <Select
+              value={agent.kind === "dsh" ? "generic" : agent.kind}
+              onValueChange={(kind) => patch({ kind: kind as AcpAgentKind })}
+            >
+              <SelectTrigger
+                size="sm"
+                aria-label={`${agent.name || agentKey} kind`}
+                className="w-40 text-[12.5px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="generic">Generic ACP agent</SelectItem>
+                <SelectItem value="tinyagent">tinyagent</SelectItem>
+              </SelectContent>
+            </Select>
+          ) : null}
+          <Select
+            value={agent.runtime}
+            onValueChange={(runtime) => patch({ runtime: runtime as AcpRuntime })}
+          >
+            <SelectTrigger
+              size="sm"
+              aria-label={`${agent.name || agentKey} runs`}
+              className="w-44 text-[12.5px]"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="native">Runs on this machine</SelectItem>
+              <SelectItem value="wsl">Runs inside WSL</SelectItem>
+            </SelectContent>
+          </Select>
+          {isWsl ? (
+            <Input
+              aria-label={`${agent.name || agentKey} WSL distribution`}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="Distribution — empty = default"
+              className="h-8 w-56 font-mono text-[12px]"
+              value={agent.wslDistro}
+              onChange={(event) => patch({ wslDistro: event.target.value })}
+            />
+          ) : null}
+        </div>
+        {isWsl ? (
+          <p className="text-[11.5px] text-muted-foreground">
+            Started as <code>wsl.exe --cd &lt;folder&gt; -e sh -lc …</code>, so
+            your shell profile&apos;s PATH applies. Folders are passed as{" "}
+            <code>/mnt/c/…</code> and the paths it reports are mapped back.
+            Environment variables set here are forwarded through WSLENV. To reach
+            Ollama on Windows from WSL you may need WSL&apos;s mirrored
+            networking.
+          </p>
+        ) : null}
 
         {!isDsh ? (
           <Input
             aria-label={`${agent.name || agentKey} arguments`}
             spellCheck={false}
             autoComplete="off"
-            placeholder="Arguments, space separated — e.g. --acp"
+            placeholder={
+              isTiny
+                ? "Extra flags — --acp, -m, --reasoning-effort and --read-only are set per chat"
+                : "Arguments, space separated — e.g. --acp"
+            }
             className="h-8 font-mono text-[12px]"
             value={argsDraft ?? agent.args.join(" ")}
             onChange={(event) => setArgsDraft(event.target.value)}
@@ -284,6 +365,7 @@ function AcpAgentRow({
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
+          {isTiny ? null : (
           <Select
             value={agent.permissionMode}
             onValueChange={(mode) =>
@@ -305,6 +387,7 @@ function AcpAgentRow({
               ))}
             </SelectContent>
           </Select>
+          )}
 
           {isDsh ? (
             <Select
@@ -331,6 +414,16 @@ function AcpAgentRow({
           ) : null}
         </div>
 
+        {isTiny ? (
+          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
+            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+            <span>
+              tinyagent never asks: it reads, edits and runs commands in the
+              chat&apos;s folder unless the chat is set to Read only. Use{" "}
+              <code>--sandbox</code> in the flags above to confine its shell.
+            </span>
+          </p>
+        ) : (
         <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
           {PERMISSION_HINTS[agent.permissionMode]} The agent runs shell commands
@@ -340,6 +433,7 @@ function AcpAgentRow({
             ? " A chat's own permission picker still narrows the sandbox, but never turns this back into an automatic approval."
             : " Permission requests are answered by this policy, never by a prompt."}
         </p>
+        )}
       </div>
     </SettingsRow>
   )

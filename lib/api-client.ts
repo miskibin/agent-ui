@@ -145,6 +145,8 @@ export type ModelsResponse = {
   capabilities?: ProviderCapabilities
   /** Model ids known to take image input — undefined when the provider can't tell. */
   visionModels?: string[]
+  /** Models the effort control reaches; absent = all of them. */
+  effortModels?: string[]
   /**
    * Picker sections, in order, matching the `group` on each option — present
    * only for providers that serve models from more than one source.

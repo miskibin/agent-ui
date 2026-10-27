@@ -8,6 +8,7 @@ import {
   fetchLoadedOllamaModels,
   fetchOllamaContextLengths,
   fetchOllamaModels,
+  fetchThinkingCapableModelIds,
   fetchVisionCapableModelIds,
   normalizeBaseUrl,
   ollamaReachErrorMessage,
@@ -93,6 +94,15 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
     async visionModels() {
       const models = await fetchOllamaModels(baseUrl)
       return fetchVisionCapableModelIds(baseUrl, models)
+    },
+
+    /** The models Ollama itself says think — the only ones `think` reaches. */
+    async effortModels() {
+      const models = await fetchOllamaModels(baseUrl)
+      return fetchThinkingCapableModelIds(
+        baseUrl,
+        models.map((model) => model.id)
+      )
     },
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {

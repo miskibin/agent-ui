@@ -57,6 +57,8 @@ export function useAgentConfig({
     React.useState<ProviderCapabilities | null>(null)
   /** Model ids the active provider says take image input — empty until it says otherwise. */
   const [visionModels, setVisionModels] = React.useState<string[]>([])
+  /** Models the effort control reaches; null = every model the provider lists. */
+  const [effortModels, setEffortModels] = React.useState<string[] | null>(null)
   const [model, setModel] = React.useState("")
   const [effort, setEffort] = React.useState("")
   /**
@@ -234,6 +236,7 @@ export function useAgentConfig({
         setModelGroups(groups)
         setCapabilities(data.capabilities ?? null)
         setVisionModels(data.visionModels ?? [])
+        setEffortModels(data.effortModels ?? null)
         // A grouped catalog hands out composite `<source>/<model>` ids. A pick
         // stored before that — on the chat, or as the settings default — names
         // a bare Ollama model, so try its composite form before deciding the
@@ -279,8 +282,20 @@ export function useAgentConfig({
     [providers]
   )
 
+  /**
+   * The provider's capabilities *for the model picked*. Effort is a property
+   * of the model as much as of the transport: a harness that can carry it
+   * still sends nothing a non-reasoning model would act on, so the control —
+   * and every send path that reads `capabilities.effort` — follows the model.
+   */
+  const modelCapabilities = React.useMemo(() => {
+    if (!capabilities?.effort || effortModels === null) return capabilities
+    const reaches = effortModels.includes(model)
+    return reaches ? capabilities : { ...capabilities, effort: false }
+  }, [capabilities, effortModels, model])
+
   const showEfforts =
-    !!capabilities?.effort && (settings?.chat.defaultEffort ?? "") !== ""
+    !!modelCapabilities?.effort && (settings?.chat.defaultEffort ?? "") !== ""
 
   const activeProviderName = providers.find(
     (item) => item.id === providerId
@@ -325,7 +340,7 @@ export function useAgentConfig({
     providers,
     providerId,
     models,
-    capabilities,
+    capabilities: modelCapabilities,
     visionModels,
     model,
     effort,

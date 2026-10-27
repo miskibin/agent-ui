@@ -2,6 +2,7 @@ import "server-only"
 
 import type { ModelOption } from "@/components/ui/model-picker"
 import { loopbackConnectUrls } from "@/lib/host-classification"
+import { looksReasoningCapableId } from "@/lib/model-reasoning"
 import {
   architectureContextLength,
   configuredOllamaNumCtx,
@@ -189,6 +190,26 @@ export async function fetchVisionCapableModelIds(
         ? capabilities.includes("vision")
         : looksVisionCapable(model)
       return vision ? model.id : null
+    })
+  )
+  return checks.filter((id): id is string => id !== null)
+}
+
+/**
+ * Which of these models think — `/api/show` lists `thinking` among the
+ * capabilities of every model Ollama will pass `think` to. A server too old to
+ * report capabilities falls back to the id (`lib/model-reasoning`), the same
+ * trade the vision probe above makes.
+ */
+export async function fetchThinkingCapableModelIds(
+  baseUrl: string,
+  modelIds: string[]
+): Promise<string[]> {
+  const checks = await Promise.all(
+    modelIds.map(async (id) => {
+      const { capabilities } = await fetchModelDetails(baseUrl, id)
+      const thinks = capabilities ? capabilities.includes("thinking") : looksReasoningCapableId(id)
+      return thinks ? id : null
     })
   )
   return checks.filter((id): id is string => id !== null)

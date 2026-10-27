@@ -169,9 +169,33 @@ test("an ACP key that is not a plain slug is dropped", () => {
     }}}}`)
   )
   const agents = settings.providers.acp.agents
-  assert.deepEqual(Object.keys(agents).sort(), ["agent-2", "dsh"])
+  assert.deepEqual(Object.keys(agents).sort(), ["agent-2", "dsh", "tinyagent"])
   assert.equal(agents["agent-2"]!.command, "keep-me")
   assert.equal(({} as Record<string, unknown>).command, undefined)
+})
+
+test("tinyagent ships configured, and an agent's kind and runtime survive a round trip", () => {
+  const defaults = normalizeSettings({}).providers.acp.agents
+  assert.equal(defaults.tinyagent?.kind, "tinyagent")
+  assert.equal(defaults.tinyagent?.runtime, "native")
+
+  const agents = normalizeSettings({
+    providers: {
+      acp: {
+        agents: {
+          tinyagent: { runtime: "wsl", wslDistro: "Ubuntu" },
+          "agent-2": { kind: "tinyagent", command: "ta", runtime: "bogus" },
+          "agent-3": { kind: "bogus", command: "x" },
+        },
+      },
+    },
+  }).providers.acp.agents
+  assert.equal(agents.tinyagent?.runtime, "wsl")
+  assert.equal(agents.tinyagent?.wslDistro, "Ubuntu")
+  assert.equal(agents.tinyagent?.command, "tinyagent")
+  assert.equal(agents["agent-2"]?.kind, "tinyagent")
+  assert.equal(agents["agent-2"]?.runtime, "native")
+  assert.equal(agents["agent-3"]?.kind, "generic")
 })
 
 test("recent folders are de-duplicated, trimmed and capped", () => {

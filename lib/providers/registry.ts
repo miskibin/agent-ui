@@ -55,7 +55,7 @@ function build(id: string, settings: AppSettings): AgentProvider | null {
   const acpKey = acpAgentKey(id)
   if (acpKey) {
     const agent = providers.acp.agents[acpKey]
-    return agent ? createAcpProvider(acpKey, agent, dataDir()) : null
+    return agent ? createAcpProvider(acpKey, agent, dataDir(), settings) : null
   }
   if (id === MOCK_PROVIDER_ID) return createMockProvider(providers.mock.enabled)
   if (id === CURSOR_PROVIDER_ID) return createCursorProvider(providers.cursorAgent)

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { acpAgentKey, acpCommandsFor } from "@/lib/providers/acp"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { scanSkills } from "@/lib/skills-scan"
 import { getSession } from "@/lib/store/sessions"
@@ -26,5 +27,25 @@ export async function GET(req: Request) {
   const sessionId = (params.get("sessionId") ?? params.get("session") ?? "").trim()
   const session = sessionId ? await getSession(sessionId) : null
   const catalog = await scanSkills(session?.cwd?.trim() || undefined)
-  return NextResponse.json(catalog)
+  // An ACP agent publishes its own `/` commands on a session rather than as
+  // files, so they come from what the chat's agent last announced.
+  const providerId = session?.providerId ?? ""
+  const announced = acpAgentKey(providerId) ? acpCommandsFor(providerId) : []
+  if (announced.length === 0) return NextResponse.json(catalog)
+  const taken = new Set(catalog.commands.map((command) => command.name))
+  return NextResponse.json({
+    ...catalog,
+    commands: [
+      ...catalog.commands,
+      ...announced
+        .filter((command) => !taken.has(command.name))
+        .map((command) => ({
+          name: command.name,
+          ...(command.description ? { description: command.description } : null),
+          ...(command.hint ? { argHint: command.hint } : null),
+          scope: "user" as const,
+          path: providerId,
+        })),
+    ],
+  })
 }

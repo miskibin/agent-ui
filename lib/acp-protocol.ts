@@ -74,7 +74,8 @@ export type AcpToolCallState = AcpToolCallSummary & {
  */
 export function mapAcpUpdate(
   params: unknown,
-  tools: Map<string, AcpToolCallState>
+  tools: Map<string, AcpToolCallState>,
+  context: AcpMapContext = {}
 ): AgentStreamEvent[] {
   const update = (params as AcpSessionUpdateParams | undefined)?.update
   if (!update) return []
@@ -92,7 +93,7 @@ export function mapAcpUpdate(
     }
     case "tool_call":
     case "tool_call_update":
-      return [mapToolCall(update, tools)].filter(
+      return [mapToolCall(update, tools, context)].filter(
         (event): event is AgentStreamEvent => event !== null
       )
     case "plan": {
@@ -128,7 +129,8 @@ export function mapAcpUpdate(
 
 function mapToolCall(
   update: AcpSessionUpdate,
-  tools: Map<string, AcpToolCallState>
+  tools: Map<string, AcpToolCallState>,
+  context: AcpMapContext
 ): AgentStreamEvent | null {
   const id = update.toolCallId
   if (!id) return null
@@ -144,13 +146,18 @@ function mapToolCall(
   const raw =
     update.content === undefined
       ? undefined
-      : flattenToolContent(update.content as AcpToolCallContent[])
+      : flattenToolContent(update.content as AcpToolCallContent[], context.terminalOutput)
   // The envelope's header is at the *start* of the text, so it has to be read
   // before the tail bound below cuts it off — and past this length the text is
   // not a file read any more, it is a terminal redrawing itself.
   const read = raw && raw.length <= ENVELOPE_MAX_CHARS ? unwrapReadEnvelope(raw) : null
   const output = raw === undefined ? undefined : boundToolOutput(read ? read.body : raw)
-  const input = toolInput(update.rawInput, known?.rawInput, read)
+  const input = toolInput(
+    translateInputPaths(update.rawInput, context.toAppPath),
+    translateInputPaths(known?.rawInput, context.toAppPath),
+    read,
+    callDetails(update, known, context.toAppPath)
+  )
   const exitCode = exitCodeFrom(update.rawOutput)
 
   // An update is a patch, not a whole call: `tool_call_update` omits `title`
@@ -189,7 +196,7 @@ function mapToolCall(
   return {
     type: "tool",
     id,
-    name: next.title || "tool",
+    name: toolName(next.title, next.kind),
     status,
     ...(next.input ? { input: next.input } : null),
     ...(next.output ? { output: next.output } : null),
@@ -353,9 +360,10 @@ function stripLineNumbers(
 function toolInput(
   updated: unknown,
   known: unknown,
-  read: ReadEnvelope | null
+  read: ReadEnvelope | null,
+  details: Record<string, unknown> = {}
 ): string | undefined {
-  const derived: Record<string, unknown> = {}
+  const derived: Record<string, unknown> = { ...details }
   if (read?.path) derived.path = read.path
   if (read?.startLine && read.startLine > 1) derived.offset = read.startLine
 
@@ -372,7 +380,10 @@ function toolInput(
 }
 
 /** Flattens the `content` / `diff` / `terminal` variants down to text. */
-function flattenToolContent(content: AcpToolCallContent[] | undefined): string | undefined {
+function flattenToolContent(
+  content: AcpToolCallContent[] | undefined,
+  terminalOutput?: (terminalId: string) => string | undefined
+): string | undefined {
   if (!Array.isArray(content)) return undefined
   const parts = content
     .map((part) => {
@@ -382,7 +393,8 @@ function flattenToolContent(content: AcpToolCallContent[] | undefined): string |
         return `${header}${part.newText ?? ""}`
       }
       if (part.type === "terminal") {
-        return part.terminalId ? `[terminal ${part.terminalId}]` : ""
+        if (!part.terminalId) return ""
+        return terminalOutput?.(part.terminalId) ?? `[terminal ${part.terminalId}]`
       }
       return blockText(part.content) ?? ""
     })
@@ -391,6 +403,241 @@ function flattenToolContent(content: AcpToolCallContent[] | undefined): string |
   // head before `boundToolOutput` keeps only the tail. Nothing this size is
   // ever retained or emitted — `mapToolCall` bounds it a line later.
   return parts.length ? parts.join("\n") : undefined
+}
+
+/* -------------------------------------------------------------------------- */
+/*                      names, locations, diffs and paths                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Rewrites a path the agent reported into one the app can open. Identity for
+ * an agent that shares the app's filesystem; for one running under WSL it is
+ * the `/mnt/c/…` → `C:\…` translation (`lib/acp-wsl.ts`).
+ */
+export type AcpMapContext = {
+  toAppPath?: (path: string) => string
+  /**
+   * The output of a terminal the client is running for the agent, so a tool
+   * row that embeds one (`{type:"terminal"}`) shows the command's output
+   * rather than its id.
+   */
+  terminalOutput?: (terminalId: string) => string | undefined
+}
+
+/**
+ * What the vendored tool card keys its headline, icon and file card on is the
+ * tool's *name* — `bash`, `read_file`, `Edit` — while an ACP `title` is free
+ * text for humans. Three shapes are seen in the wild:
+ *
+ * - a bare tool name (dsh: `read_file`), kept as it is;
+ * - `name: argument` (tinyagent: `bash: npm test`), whose name is the prefix;
+ * - a sentence (`Read README.md`, `` `ls -la` ``), where the protocol's own
+ *   `kind` is the only reliable signal and becomes a canonical name.
+ */
+const TOOL_NAME = /^[A-Za-z_][\w.-]{0,63}$/
+const TOOL_NAME_PREFIX = /^([A-Za-z_][\w.-]{0,63}):\s/
+
+const KIND_NAMES: Record<string, string> = {
+  read: "Read",
+  edit: "Edit",
+  delete: "Delete",
+  move: "Move",
+  search: "Search",
+  execute: "Bash",
+  fetch: "WebFetch",
+}
+
+export function toolName(title: string | undefined, kind: string | undefined): string {
+  const text = title?.trim() ?? ""
+  if (text && TOOL_NAME.test(text)) return text
+  const prefixed = TOOL_NAME_PREFIX.exec(text)
+  if (prefixed) return prefixed[1]
+  return (kind && KIND_NAMES[kind]) || text || "tool"
+}
+
+const PATH_FIELDS = ["path", "file_path", "filePath", "abs_path", "target_file"] as const
+
+/** The same input object with every path field translated, or the input itself. */
+function translateInputPaths(
+  raw: unknown,
+  toAppPath: ((path: string) => string) | undefined
+): unknown {
+  if (!toAppPath || !raw || typeof raw !== "object" || Array.isArray(raw)) return raw
+  const record = raw as Record<string, unknown>
+  let copy: Record<string, unknown> | null = null
+  for (const field of PATH_FIELDS) {
+    const value = record[field]
+    if (typeof value !== "string") continue
+    const translated = toAppPath(value)
+    if (translated === value) continue
+    copy ??= { ...record }
+    copy[field] = translated
+  }
+  return copy ?? raw
+}
+
+/**
+ * The arguments a card needs that ACP carries *outside* `rawInput`: the file
+ * from `locations`, the before/after text from a `diff` content block (so an
+ * edit renders as a diff and counts in the Files Changed card), and for a
+ * shell call whose input names no command, the title — which agents that send
+ * sentences for titles set to the command itself.
+ *
+ * Whatever `rawInput` says wins over these (`toolInput` spreads it last).
+ */
+function callDetails(
+  update: AcpSessionUpdate,
+  known: AcpToolCallState | undefined,
+  toAppPath: ((path: string) => string) | undefined
+): Record<string, unknown> {
+  const details: Record<string, unknown> = {}
+  const translate = (value: string) => (toAppPath ? toAppPath(value) : value)
+  const location = update.locations?.find((entry) => typeof entry?.path === "string")
+  if (location?.path) details.path = translate(location.path)
+
+  if (Array.isArray(update.content)) {
+    const diff = (update.content as AcpToolCallContent[]).find(
+      (part) => part?.type === "diff" && typeof part.newText === "string"
+    )
+    if (diff) {
+      if (diff.path) details.path = translate(diff.path)
+      details.oldText = diff.oldText ?? ""
+      details.newText = diff.newText
+    }
+  }
+
+  const kind = update.kind ?? known?.kind
+  const title = (update.title ?? known?.title)?.trim()
+  const raw = (update.rawInput ?? known?.rawInput) as Record<string, unknown> | undefined
+  if (
+    kind === "execute" &&
+    title &&
+    !TOOL_NAME.test(title) &&
+    !TOOL_NAME_PREFIX.test(title) &&
+    !(raw && typeof raw === "object" && ("command" in raw || "cmd" in raw))
+  ) {
+    details.command = trimChar(title, "`")
+  }
+  return details
+}
+
+/** `value` without any run of `char` at either end — no regex, no backtracking. */
+function trimChar(value: string, char: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value[start] === char) start++
+  while (end > start && value[end - 1] === char) end--
+  return value.slice(start, end)
+}
+
+/* -------------------------------------------------------------------------- */
+/*                     usage, commands and the session's mode                 */
+/* -------------------------------------------------------------------------- */
+
+/** What one `usage_update` said: tokens in context, of how many, at what cost. */
+export type AcpContextUsage = { used: number; size?: number; costUsd?: number }
+
+export function usageFromUpdate(params: unknown): AcpContextUsage | null {
+  const update = (params as AcpSessionUpdateParams | undefined)?.update
+  if (update?.sessionUpdate !== "usage_update") return null
+  if (typeof update.used !== "number" || !Number.isFinite(update.used)) return null
+  const size = typeof update.size === "number" && update.size > 0 ? update.size : undefined
+  const cost =
+    update.cost?.currency === "USD" && typeof update.cost.amount === "number"
+      ? update.cost.amount
+      : undefined
+  return {
+    used: Math.max(0, Math.round(update.used)),
+    ...(size ? { size } : null),
+    ...(cost === undefined ? null : { costUsd: cost }),
+  }
+}
+
+export type AcpCommand = { name: string; description?: string; hint?: string }
+
+/** The agent's own `/` commands, from an `available_commands_update`. */
+export function commandsFromUpdate(params: unknown): AcpCommand[] | null {
+  const update = (params as AcpSessionUpdateParams | undefined)?.update
+  if (update?.sessionUpdate !== "available_commands_update") return null
+  const out: AcpCommand[] = []
+  for (const entry of update.availableCommands ?? []) {
+    const name = typeof entry?.name === "string" ? entry.name.trim().replace(/^\//, "") : ""
+    if (!name || out.some((command) => command.name === name)) continue
+    out.push({
+      name,
+      ...(entry.description ? { description: entry.description } : null),
+      ...(entry.input?.hint ? { hint: entry.input.hint } : null),
+    })
+  }
+  return out
+}
+
+/**
+ * The app's permission modes, spelled the ways agents name their own modes.
+ * An agent's mode is switched only when one of its published ids matches —
+ * nothing is ever guessed onto an agent that publishes none.
+ *
+ * `full` is deliberately absent: the widest modes agents publish
+ * (`bypassPermissions`, `yolo`) also skip the agent's own guardrails, and
+ * some refuse to start under root. The approval policy already answers
+ * every request for a full-access chat, so the agent's default mode is the
+ * honest pairing for it.
+ */
+const MODE_PATTERNS: Record<string, RegExp> = {
+  plan: /^plan/i,
+  "read-only": /^(read[-_ ]?only|readonly|ask|chat)$/i,
+  edits: /^(accept[-_ ]?edits|edit|edits|auto[-_ ]?edit)$/i,
+}
+
+export function matchSessionMode(
+  wanted: string | undefined,
+  modes: Array<{ id?: string; name?: string }> | undefined
+): string | undefined {
+  const pattern = wanted ? MODE_PATTERNS[wanted] : undefined
+  if (!pattern || !modes?.length) return undefined
+  for (const mode of modes) {
+    if (mode.id && (pattern.test(mode.id) || (mode.name && pattern.test(mode.name)))) {
+      return mode.id
+    }
+  }
+  return undefined
+}
+
+/* -------------------------------------------------------------------------- */
+/*                     briefing a session that lost its memory                */
+/* -------------------------------------------------------------------------- */
+
+export type AcpReplayTurn = { role: "user" | "assistant"; content: string }
+
+/**
+ * The conversation so far, fenced in front of the prompt, for an agent that
+ * had to start a fresh session in a chat that already has one.
+ *
+ * That happens when the process that held the session is gone (an app
+ * restart, an idle eviction, a model switch for an agent that takes its model
+ * as a flag) and the agent cannot `session/load` or `session/resume` — which
+ * is tinyagent, and every agent that keeps its sessions in memory. Without
+ * this the agent answers the second message of a chat as if it were the
+ * first. The chat route has already bounded `history`.
+ */
+export function withConversationReplay(
+  prompt: string,
+  history: AcpReplayTurn[] | undefined
+): string {
+  const turns = (history ?? []).filter((turn) => turn.content.trim())
+  if (turns.length === 0) return prompt
+  const lines = turns.map(
+    (turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${turn.content.trim()}`
+  )
+  return [
+    "<conversation-history>",
+    "This conversation started before this session. What was said so far, oldest first:",
+    "",
+    lines.join("\n\n"),
+    "</conversation-history>",
+    "",
+    prompt,
+  ].join("\n")
 }
 
 /** Past this a `content` payload is a growing terminal, not a file read. */

@@ -134,14 +134,29 @@ export type DshSettings = {
   sandbox: DshSandboxMode
 }
 
+export type AcpAgentKind = "dsh" | "tinyagent" | "generic"
+
+export type AcpRuntime = "native" | "wsl"
+
 export type AcpAgentSettings = {
   enabled: boolean
   /** Display name in the provider picker. */
   name: string
-  /** `dsh` gets the generated config + `--profile acp`; `generic` is spawned as configured. */
-  kind: "dsh" | "generic"
+  /**
+   * `dsh` gets the generated config + `--profile acp`; `tinyagent` gets
+   * `--acp` plus its model, effort and read-only flags per turn, and the
+   * app's model catalog; `generic` is spawned as configured.
+   */
+  kind: AcpAgentKind
   /** Command to spawn — an absolute path, or a name resolved on PATH. */
   command: string
+  /**
+   * Where the agent is installed. `wsl` runs it inside WSL through `wsl.exe`
+   * from the Windows app (`lib/acp-wsl.ts`); anywhere else it is `native`.
+   */
+  runtime: AcpRuntime
+  /** The WSL distribution to run it in; empty = the default one. */
+  wslDistro: string
   args: string[]
   env: Record<string, string>
   /** Session `cwd`, and the root `fs/*` requests are confined to; empty = the app's cwd. */
@@ -355,9 +370,35 @@ export const DEFAULT_DSH_AGENT: AcpAgentSettings = {
   name: "DeepSeek Harness",
   kind: "dsh",
   command: "dsh",
+  runtime: "native",
+  wslDistro: "",
   args: [],
   env: {},
   workspace: "",
+  permissionMode: "auto-approve",
+  dsh: { baseUrl: "", apiKey: "", sandbox: "workspace-write" },
+}
+
+/**
+ * tinyagent (github.com/vicgupta/tinyagent), a single Go binary whose `--acp`
+ * mode is a full ACP agent. Shipped configured like dsh, so the picker can
+ * say why it is greyed out when it is not installed. Its models come from
+ * the app's own catalog — Ollama and the OpenAI, Anthropic and OpenRouter
+ * entries under Model providers — or from its own config when "tinyagent
+ * default" is picked.
+ */
+export const DEFAULT_TINYAGENT_AGENT: AcpAgentSettings = {
+  enabled: true,
+  name: "tinyagent",
+  kind: "tinyagent",
+  command: "tinyagent",
+  runtime: "native",
+  wslDistro: "",
+  args: [],
+  env: {},
+  workspace: "",
+  // tinyagent never asks: its own `--read-only` is what narrows it, and the
+  // composer's permission picker sets that per turn.
   permissionMode: "auto-approve",
   dsh: { baseUrl: "", apiKey: "", sandbox: "workspace-write" },
 }
@@ -439,7 +480,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
       permissionMode: "edits",
     },
     mock: { enabled: true },
-    acp: { agents: { dsh: DEFAULT_DSH_AGENT } },
+    acp: { agents: { dsh: DEFAULT_DSH_AGENT, tinyagent: DEFAULT_TINYAGENT_AGENT } },
   },
   modelProviders: defaultModelProviders(),
   chat: {
@@ -699,6 +740,8 @@ const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
   "auto-approve-reads",
   "reject-all",
 ]
+const ACP_AGENT_KINDS = new Set<AcpAgentKind>(["dsh", "tinyagent", "generic"])
+
 const DSH_SANDBOX_MODES: DshSandboxMode[] = [
   "read-only",
   "workspace-write",
@@ -750,8 +793,12 @@ function normalizeAcpAgent(
   return {
     enabled: typeof value.enabled === "boolean" ? value.enabled : fallback.enabled,
     name: asString(value.name) ?? fallback.name,
-    kind: value.kind === "dsh" || value.kind === "generic" ? value.kind : fallback.kind,
+    kind: ACP_AGENT_KINDS.has(value.kind as AcpAgentKind)
+      ? (value.kind as AcpAgentKind)
+      : fallback.kind,
     command: asString(value.command) ?? fallback.command,
+    runtime: value.runtime === "wsl" || value.runtime === "native" ? value.runtime : fallback.runtime,
+    wslDistro: asString(value.wslDistro) ?? fallback.wslDistro,
     args: Array.isArray(value.args)
       ? value.args.filter((arg): arg is string => typeof arg === "string")
       : fallback.args,

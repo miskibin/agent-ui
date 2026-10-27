@@ -6,11 +6,25 @@ import path from "node:path"
 
 import type { ModelOption } from "@/components/ui/model-picker"
 import { acpConfigDir, hasAcpBinary } from "@/lib/acp-runtime"
+import type { AcpCommand } from "@/lib/acp-protocol"
+import { windowsToWslPath, wslSpawn, wslToWindowsPath } from "@/lib/acp-wsl"
+import { joinModelId } from "@/lib/model-providers/ids"
+import {
+  enabledModelSources,
+  listSourceModels,
+} from "@/lib/model-providers/server"
+import { hostedEffortModels } from "@/lib/model-reasoning"
+import {
+  TINYAGENT_DEFAULT_MODEL,
+  argsForceReadOnly,
+  tinyagentTurn,
+} from "@/lib/tinyagent-config"
 import {
   ACP_ERROR,
   AcpRpcError,
   type AcpAgentCapabilities,
   type AcpConfigOption,
+  type AcpSessionModeState,
 } from "@/lib/acp-types"
 import {
   DSH_ACP_ARGS,
@@ -21,12 +35,15 @@ import {
 } from "@/lib/dsh-config"
 import {
   fetchOllamaModels,
+  fetchThinkingCapableModelIds,
+  looksVisionCapableId,
   normalizeBaseUrl,
   probeOllama,
   type OllamaModel,
 } from "@/lib/providers/ollama-api"
 import type {
   AcpAgentSettings,
+  AppSettings,
   DshSandboxMode,
 } from "@/lib/settings/schema"
 import { hasDeepSeekCredentials } from "@/lib/providers/acp-availability"
@@ -109,14 +126,76 @@ function acceptsImages(id: string): boolean {
   return promptCapsCache.get(id)?.image === true
 }
 
+/**
+ * The agent's own session modes, as last published — on the probe's
+ * `session/new` or on a turn's. Kept like `promptCapsCache`: a property of
+ * the binary, which decides whether the permission picker may offer `plan`.
+ */
+const modesCache = new Map<string, AcpSessionModeState>()
+
+/** Whether the agent publishes a mode the app can call `plan`. */
+function hasPlanMode(id: string): boolean {
+  return (modesCache.get(id)?.availableModes ?? []).some(
+    (mode) => /^plan/i.test(mode.id ?? "") || /^plan/i.test(mode.name ?? "")
+  )
+}
+
+/**
+ * The `/` commands each agent last published (`available_commands_update`),
+ * for the composer's menu. An agent publishes them on a session, so the menu
+ * fills in after the first turn — the same moment Claude Code's own
+ * catalog would.
+ */
+const commandsCache = new Map<string, AcpCommand[]>()
+
+export function acpCommandsFor(providerId: string): AcpCommand[] {
+  return commandsCache.get(providerId) ?? []
+}
+
+/**
+ * Whether the agent publishes a reasoning-effort control at all — a config
+ * option of that category or id on its session. Learned on the model probe;
+ * unknown until then, and an agent that publishes none is never offered the
+ * control (setting it would silently do nothing).
+ */
+const effortOptionCache = new Map<string, boolean>()
+
+function publishesEffort(options: AcpConfigOption[]): boolean {
+  return options.some(
+    (option) =>
+      option.category === "thought_level" ||
+      option.category === "reasoning" ||
+      /effort|thought|reasoning|thinking/i.test(option.id ?? "")
+  )
+}
+
 export function createAcpProvider(
   key: string,
   agent: AcpAgentSettings,
-  dataDir: string
+  dataDir: string,
+  appSettings?: AppSettings
 ): AgentProvider {
   const id = acpProviderId(key)
   const isDsh = agent.kind === "dsh"
-  const modes = isDsh ? DSH_PERMISSION_MODES : ACP_PERMISSION_MODES
+  const isTiny = agent.kind === "tinyagent"
+  const isWsl = agent.runtime === "wsl"
+  const distro = agent.wslDistro.trim()
+  const sources = appSettings && isTiny ? enabledModelSources(appSettings) : []
+  const ollamaBaseUrl =
+    appSettings && isTiny && appSettings.providers.ollama.enabled
+      ? normalizeBaseUrl(appSettings.providers.ollama.baseUrl)
+      : ""
+  // Paths the agent reports are its own: under WSL they are Linux paths, and
+  // the file panel, the change card and `fs/*` all need this machine's.
+  const toAppPath = isWsl ? (value: string) => wslToWindowsPath(value, distro) : undefined
+  const fromAgentPath = (value: string) => (toAppPath ? toAppPath(value) : value)
+  const permissionModes = (): PermissionMode[] => {
+    if (isDsh) return DSH_PERMISSION_MODES
+    // tinyagent's `--read-only` is real enforcement in its executor; there is
+    // no `plan` and no `edits` short of `--sandbox`, which is the user's call.
+    if (isTiny) return argsForceReadOnly(agent.args) ? ["read-only"] : ["read-only", "full"]
+    return hasPlanMode(id) ? ["read-only", "plan", "full"] : ACP_PERMISSION_MODES
+  }
   const command = agent.command.trim()
   const configDir = acpConfigDir(dataDir, key)
   // The session `cwd` and the root `fs/*` requests are confined to. It is also
@@ -128,7 +207,17 @@ export function createAcpProvider(
   const detect = (): { available: boolean; reason?: string } => {
     if (!agent.enabled) return { available: false, reason: "Disabled in settings" }
     if (!command) return { available: false, reason: "No command configured" }
-    if (!hasAcpBinary(command)) {
+    if (isWsl) {
+      // Inside WSL the binary cannot be checked without spawning a distro,
+      // which `info()` must not do — a missing one surfaces on the first
+      // turn, with WSL's own words and a hint.
+      if (process.platform !== "win32") {
+        return { available: false, reason: "WSL runs only on Windows — set this agent to Native" }
+      }
+      if (!hasAcpBinary("wsl.exe")) {
+        return { available: false, reason: "wsl.exe not found — install WSL, or set this agent to Native" }
+      }
+    } else if (!hasAcpBinary(command)) {
       return {
         available: false,
         reason: command.includes("/") || command.includes("\\")
@@ -154,19 +243,24 @@ export function createAcpProvider(
    * it has one — it beats the single workspace from settings, and because the
    * sandbox is scoped to the process cwd it moves the writable root with it.
    */
-  const spawnSpec = async (mode?: PermissionMode, cwd?: string) => {
+  const spawnSpec = async (
+    mode?: PermissionMode,
+    cwd?: string,
+    extra?: { args: string[]; env: Record<string, string> }
+  ) => {
     const root = cwd || workspace
     if (!isDsh) {
-      return {
+      return wrap({
         command,
-        args: agent.args,
+        args: [...(extra?.args ?? []), ...agent.args],
         cwd: root,
-        env: agent.env,
-      }
+        // The agent's own env wins: it is what the user typed for this agent.
+        env: { ...(extra?.env ?? {}), ...agent.env },
+      })
     }
     const patch = await ensureDshPatch(configDir, baseUrl)
     const sandbox = dshSandbox(mode)
-    return {
+    return wrap({
       command,
       args: [...DSH_ACP_ARGS, ...(patch ? ["--patch", patch] : []), ...agent.args],
       cwd: root,
@@ -174,7 +268,21 @@ export function createAcpProvider(
         ...dshEnv(configDir, sandbox ? { ...agent.dsh, sandbox } : agent.dsh),
         ...agent.env,
       },
-    }
+    })
+  }
+
+  /** The same spawn, reached through `wsl.exe` when the agent lives in WSL. */
+  const wrap = (spec: AcpSpawnSpecLike): AcpSpawnSpecLike => {
+    if (!isWsl) return spec
+    const wrapped = wslSpawn({
+      command: spec.command,
+      args: spec.args,
+      cwd: spec.cwd,
+      env: spec.env,
+      distro,
+      inheritedWslEnv: process.env.WSLENV,
+    })
+    return { ...wrapped, cwd: spec.cwd, agentCwd: windowsToWslPath(spec.cwd) }
   }
 
   return {
@@ -184,23 +292,33 @@ export function createAcpProvider(
         name: label,
         description: isDsh
           ? `DeepSeek Harness over ACP — full tool access in ${workspace}${baseUrl ? ` via ${baseUrl}` : ""}. Answers arrive whole, not token by token.`
-          : `ACP agent \`${command || "(unset)"}\` with full tool access in ${workspace}.`,
+          : isTiny
+            ? `tinyagent over ACP${isWsl ? " in WSL" : ""} — read, write, edit, bash and plan in the chat's folder, on your configured models.`
+            : `ACP agent \`${command || "(unset)"}\`${isWsl ? " in WSL" : ""} with full tool access in ${workspace}.`,
         capabilities: {
           tools: true,
-          // ACP `session/resume` restores context across process restarts, so
-          // the chat route never replays history for these.
+          // The agent process and its sessions are kept between turns, and
+          // `session/resume`/`session/load` restore one across a restart where
+          // the agent supports either.
           resume: true,
-          // `reasoning_effort` is a session config option, and setting one an
-          // agent does not publish is already swallowed by `setConfigOption`
-          // rather than failing the turn — so the control is offered to every
-          // ACP agent and simply does nothing on the ones that ignore it.
+          // Where neither can — tinyagent keeps its sessions in memory only —
+          // a fresh session is briefed with the transcript instead.
+          historyOnFreshSession: true,
+          // Offered per model (`effortModels` below): tinyagent's
+          // `--reasoning-effort` reaches whatever model it runs, so it is the
+          // model that decides; any other agent has to publish a reasoning
+          // config option for the control to mean anything.
           effort: true,
           // Only ever true once the agent has said so on `initialize` — which
           // the model probe below is what discovers. A catalog entry that
           // mentions vision proves nothing about the transport.
-          vision: acceptsImages(id),
-          permissionModes: modes,
-          defaultPermissionMode: configuredMode(agent, isDsh, modes),
+          vision: isTiny || acceptsImages(id),
+          permissionModes: permissionModes(),
+          defaultPermissionMode: isTiny
+            ? argsForceReadOnly(agent.args)
+              ? "read-only"
+              : "full"
+            : configuredMode(agent, isDsh, permissionModes()),
         },
         available: false,
       }
@@ -227,6 +345,11 @@ export function createAcpProvider(
     },
 
     async listModels(): Promise<ModelOption[]> {
+      if (isTiny) {
+        const models = await tinyagentModels(sources, ollamaBaseUrl)
+        remember(id, { models, raw: new Map() })
+        return models
+      }
       const cached = modelCache.get(id)
       if (cached && Date.now() - cached.at < MODEL_CACHE_MS) return cached.models
 
@@ -241,6 +364,8 @@ export function createAcpProvider(
         const probed = await probeAcpConfigOptions(spec, label)
         options = probed.options
         promptCapsCache.set(id, probed.promptCapabilities)
+        if (probed.modes) modesCache.set(id, probed.modes)
+        effortOptionCache.set(id, publishesEffort(options))
       } catch (err) {
         // A configured local endpoint is enough to name the models ourselves;
         // otherwise the picker degrades to empty with the error shown.
@@ -262,11 +387,54 @@ export function createAcpProvider(
      * listed model takes images or none does.
      */
     async visionModels(): Promise<string[]> {
+      if (isTiny) {
+        // tinyagent attaches images to whatever model it runs; whether that
+        // model looks at them is the model's own property.
+        const models = modelCache.get(id)?.models ?? []
+        return effortlessVision(models)
+      }
       if (!acceptsImages(id)) return []
       // `/api/models` lists before it asks, so the cache is warm by now; a
       // cold one means nothing has been probed and there is nothing to claim.
       return (modelCache.get(id)?.models ?? []).map((model) => model.id)
     },
+
+    /**
+     * The models the effort control actually reaches. For tinyagent that is
+     * the model's own question (`lib/model-reasoning`); any other agent
+     * carries effort only through a config option it published, and then
+     * for every model it routes to.
+     */
+    async effortModels(): Promise<string[]> {
+      const models = modelCache.get(id)?.models ?? []
+      if (isTiny) {
+        const ids = models.map((model) => model.id).filter((model) => model !== TINYAGENT_DEFAULT_MODEL)
+        const local = ids.filter((model) => model.startsWith("ollama/"))
+        const thinking = ollamaBaseUrl
+          ? await fetchThinkingCapableModelIds(
+              ollamaBaseUrl,
+              local.map((model) => model.slice("ollama/".length))
+            ).catch(() => [])
+          : []
+        return [
+          ...thinking.map((model) => `ollama/${model}`),
+          ...hostedEffortModels(ids.filter((model) => !model.startsWith("ollama/"))),
+        ]
+      }
+      return effortOptionCache.get(id) ? models.map((model) => model.id) : []
+    },
+
+    ...(isTiny
+      ? {
+          async listModelGroups() {
+            return [
+              { id: "tinyagent", label: "tinyagent" },
+              ...(ollamaBaseUrl ? [{ id: "ollama", label: "Ollama" }] : []),
+              ...sources.map((source) => ({ id: source.slug, label: source.name })),
+            ]
+          },
+        }
+      : null),
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       if (isDsh && baseUrl && options.model?.startsWith("ollama/")) {
@@ -280,7 +448,20 @@ export function createAcpProvider(
       const root = options.cwd?.trim()
         ? path.resolve(/*turbopackIgnore: true*/ options.cwd.trim())
         : workspace
-      const spec = await spawnSpec(options.permissionMode, root).catch(
+      const tiny = isTiny
+        ? tinyagentTurn({
+            model: options.model,
+            effort: options.effort,
+            permissionMode: options.permissionMode,
+            sources,
+            ollamaBaseUrl,
+          })
+        : undefined
+      if (tiny?.error) {
+        yield { type: "error", message: tiny.error }
+        return
+      }
+      const spec = await spawnSpec(options.permissionMode, root, tiny).catch(
         (err: unknown) => err as Error
       )
       if (spec instanceof Error) {
@@ -326,11 +507,20 @@ export function createAcpProvider(
       yield* runAcpAgent({
         spawn: spec,
         prompt: withPromptContext(options.prompt, options),
-        model: decodeModelId(id, options.model, isDsh),
-        effort: options.effort,
+        // tinyagent takes both as flags, already in `spec`.
+        model: isTiny ? "" : decodeModelId(id, options.model, isDsh),
+        effort: isTiny ? "" : options.effort,
         sessionId: options.sessionId,
         label,
         canWriteFiles,
+        keepAlive: true,
+        history: options.history?.map((turn) => ({ role: turn.role, content: turn.content })),
+        sessionMode: options.permissionMode,
+        toAppPath,
+        // Commands run on this machine; an agent inside WSL runs its own.
+        terminalRoot: isWsl ? undefined : root,
+        onCommands: (commands) => commandsCache.set(id, commands),
+        onModes: (state) => modesCache.set(id, state),
         // Only sent when the agent said it takes them; `runAcpAgent` checks
         // `promptCapabilities.image` again against this turn's own handshake.
         images: acceptsImages(id) ? options.images : undefined,
@@ -338,14 +528,14 @@ export function createAcpProvider(
         signal: options.signal,
         handlers: {
           async readTextFile({ path: requested, line, limit }) {
-            const target = scopedPath(root, requested)
+            const target = scopedPath(root, fromAgentPath(requested))
             const content = await readFile(/*turbopackIgnore: true*/ target, "utf8").catch(() => {
               throw new AcpRpcError(ACP_ERROR.resourceNotFound, `Cannot read ${requested}`)
             })
             return sliceLines(content, line, limit)
           },
           async writeTextFile({ path: requested, content }) {
-            const target = scopedPath(root, requested)
+            const target = scopedPath(root, fromAgentPath(requested))
             // ACP requires the client to create the file if it is absent.
             await mkdir(path.dirname(target), { recursive: true })
             await writeFile(target, content, "utf8")
@@ -379,6 +569,9 @@ function acpPolicy(
 ): AcpAgentSettings["permissionMode"] | null {
   switch (mode) {
     case "read-only":
+    case "plan":
+      // A plan is read-only work; the agent's own plan mode (switched by
+      // `session/set_mode`) is what makes it write the plan down.
       return "auto-approve-reads"
     case "edits":
     case "full":
@@ -810,4 +1003,64 @@ async function ensureDshPatch(
     const existing = dshPatchPath(configDir)
     return (await readFile(existing, "utf8").catch(() => null)) ? existing : null
   }
+}
+
+/* -------------------------------------------------------------------------- */
+/*                                  tinyagent                                 */
+/* -------------------------------------------------------------------------- */
+
+type AcpSpawnSpecLike = {
+  command: string
+  args: string[]
+  cwd: string
+  env: Record<string, string>
+  agentCwd?: string
+}
+
+/**
+ * tinyagent's picker: its own configured default first, then the local
+ * Ollama models, then every enabled model provider's — each one an id
+ * tinyagent can be started with (`lib/tinyagent-config`).
+ */
+async function tinyagentModels(
+  sources: ReturnType<typeof enabledModelSources>,
+  ollamaBaseUrl: string
+): Promise<ModelOption[]> {
+  const [local, remote] = await Promise.all([
+    ollamaBaseUrl ? fetchOllamaModels(ollamaBaseUrl).catch(() => []) : Promise.resolve([]),
+    Promise.all(
+      sources.map(async (source) => ({
+        source,
+        // One unreachable endpoint must not empty the whole picker.
+        models: await listSourceModels(source).catch(() => []),
+      }))
+    ),
+  ])
+  return [
+    {
+      id: TINYAGENT_DEFAULT_MODEL,
+      name: "tinyagent default",
+      description: "Whatever tinyagent's own config (or $AGENT_MODEL) selects.",
+      group: "tinyagent",
+    },
+    ...local.map((model) => ({
+      id: joinModelId("ollama", model.id),
+      name: model.name,
+      group: "ollama",
+    })),
+    ...remote.flatMap(({ source, models }) =>
+      models.map((model) => ({
+        id: joinModelId(source.slug, model.id),
+        name: model.name,
+        group: source.slug,
+      }))
+    ),
+  ]
+}
+
+/** Vision by model id, the only signal a hosted catalog gives. */
+function effortlessVision(models: ModelOption[]): string[] {
+  return models
+    .filter((model) => model.id !== TINYAGENT_DEFAULT_MODEL && looksVisionCapableId(model.id))
+    .map((model) => model.id)
 }

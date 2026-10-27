@@ -56,6 +56,10 @@ export async function GET(req: Request) {
     const visionModels = provider.visionModels
       ? await provider.visionModels().catch(() => [])
       : undefined
+    // Which of those models the effort control reaches; absent = all of them.
+    const effortModels = provider.effortModels
+      ? await provider.effortModels().catch(() => [])
+      : undefined
     // Sections for the picker, when the provider serves more than one source.
     const groups = provider.listModelGroups
       ? await provider.listModelGroups().catch(() => undefined)
@@ -65,6 +69,7 @@ export async function GET(req: Request) {
       models,
       capabilities,
       ...(visionModels ? { visionModels } : null),
+      ...(effortModels ? { effortModels } : null),
       ...(groups?.length ? { groups } : null),
     })
   } catch (err) {

@@ -74,13 +74,34 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 | Claude Code | local `claude` CLI | Yes | Yes |
 | Codex | local `codex app-server` over stdio | Yes | Yes |
 | pi | local `pi` CLI with Ollama or hosted models | Yes | Yes |
-| ACP agents | configured command over JSON-RPC; includes a DeepSeek Harness profile | Yes | Yes |
+| ACP agents | configured command over JSON-RPC, natively or inside WSL; includes DeepSeek Harness and tinyagent profiles | Yes | Yes |
 | Ollama | native streaming chat API | No | Transcript replay |
 | Chat | any configured OpenAI-compatible `/chat/completions` endpoint | No | Transcript replay |
 | Mock | local scripted backend for development and tests | Yes | No |
 
 Provider availability is detected at runtime. Configure binaries, endpoints,
 API keys, models, workspaces, and supported permission modes in Settings.
+
+### ACP agents and tinyagent
+
+An ACP agent's process is kept between turns (and closed after 15 idle
+minutes), so an agent that holds its sessions in memory — like
+[tinyagent](https://github.com/vicgupta/tinyagent)'s `--acp` mode — remembers
+the conversation. When the process is gone and the agent cannot
+`session/load`, the fresh session is briefed with the transcript. Streamed
+text, tool calls with their files and diffs, plans, context usage, the agent's
+own `/` commands and session modes, and client-side terminals are all
+supported.
+
+tinyagent ships configured: install it, and its models are yours — Ollama and
+every entry under Model providers, LiteLLM and other OpenAI-compatible
+endpoints included — or "tinyagent default" for its own config. The chat's
+permission picker sets `--read-only`. If it is installed inside WSL, set the
+agent to "Runs inside WSL" in Settings → Harnesses.
+
+The reasoning-effort control appears only for models it reaches: Ollama models
+that report `thinking`, hosted models from reasoning families, and never one
+whose endpoint has already rejected `reasoning_effort`.
 
 ### Codex
 
