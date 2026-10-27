@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   if (!requested) {
     return NextResponse.json({ error: "root is required" }, { status: 400 })
   }
-  const root = path.resolve(requested)
+  const root = path.resolve(/*turbopackIgnore: true*/ requested)
   const repo = await repoRootOf(root)
   if (!repo || !repo.linked) {
     return NextResponse.json({ managed: false, root })

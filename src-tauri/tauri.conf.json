@@ -4,7 +4,7 @@
   "version": "0.9.0",
   "identifier": "com.miskibin.agent-ui",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:3000",
     "beforeBuildCommand": "node scripts/prepare-desktop.mjs",
     "frontendDist": "./splash"

@@ -236,7 +236,7 @@ async function prepareNode(triple) {
 /** Builds Next and stages the standalone server under src-tauri/resources/app. */
 async function prepareWebApp() {
   log("building the web app (next build)")
-  run("npm", ["run", "build"], {
+  run("bun", ["run", "build"], {
     env: { ...process.env, NEXT_TELEMETRY_DISABLED: "1" },
   })
 

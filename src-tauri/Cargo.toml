@@ -13,22 +13,22 @@ name = "agent_ui_lib"
 crate-type = ["lib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6", features = [] }
+tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 serde_json = "1"
-tauri = { version = "2.11", features = [] }
-tauri-plugin-dialog = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-os = "2.3"
-tauri-plugin-process = "2.3"
-tauri-plugin-shell = "2.3"
-tauri-plugin-updater = "2.11"
+tauri = { version = "2.12", features = [] }
+tauri-plugin-dialog = "2.8"
+tauri-plugin-notification = "2.7"
+tauri-plugin-os = "2.4"
+tauri-plugin-process = "2.4"
+tauri-plugin-shell = "2.5"
+tauri-plugin-updater = "2.14"
 
 # The kill-on-close job that ties the Node sidecar's life to the shell's
 # (`kill_on_close` in lib.rs). Already in the tree through Tauri itself.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_System_JobObjects",

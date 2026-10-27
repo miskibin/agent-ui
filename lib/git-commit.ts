@@ -138,7 +138,7 @@ export async function prepareCommitContext(
 export async function readRepositoryInstructions(cwd: string): Promise<string> {
   const root = await realPath(cwd)
   for (const name of ["AGENTS.md", "CLAUDE.md"]) {
-    const file = await realPath(path.join(root, name))
+    const file = await realPath(path.join(/*turbopackIgnore: true*/ root, name))
     if (!file.startsWith(root + path.sep)) continue
     try {
       const info = await stat(file)

@@ -27,7 +27,7 @@ const nextConfig: NextConfig = {
       "website/**",
       "docs/**",
       "src-tauri/**",
-      "package-lock.json",
+      "bun.lock",
       "app-icon.png",
     ],
   },

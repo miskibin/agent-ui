@@ -114,7 +114,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: 22
-          cache: npm
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: package.json
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -126,7 +129,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Install dependencies
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       # Builds the web app and fetches the Node runtime for this target. The
       # flag below then makes tauri's `beforeBuildCommand` a no-op instead of
@@ -150,6 +153,7 @@ jobs:
         with:
           releaseId: ${{ needs.create-release.outputs.release_id }}
           args: ${{ matrix.args }}
+          tauriScript: bun run tauri
           # Uploads `latest.json` alongside the installers — it is the file the
           # updater endpoint resolves to. Default on; spelled out because the
           # whole update path breaks silently without it.
