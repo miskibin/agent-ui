@@ -135,6 +135,19 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
       />
 
       <SettingsRow
+        title="Rich views in answers"
+        htmlFor="chat-generative-views"
+        description="Let agents show structured results — reviews, issues, CI runs — as cards, tables and timelines. Adds a short description of the format to the first turn of each conversation."
+        control={
+          <Switch
+            id="chat-generative-views"
+            checked={chat.generativeViews}
+            onCheckedChange={(generativeViews) => setChat({ generativeViews })}
+          />
+        }
+      />
+
+      <SettingsRow
         title="New worktrees start from origin"
         htmlFor="chat-worktrees-from-origin"
         description="Branch a new worktree off the remote's head rather than whatever this checkout is sitting on. Off starts it from the current local branch."

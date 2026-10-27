@@ -6,7 +6,7 @@
 
 Everything in `components/ui/**`, `hooks/use-click-outside.ts`, and these lib files:
 `lib/cursor-agent-types.ts`, `lib/cursor-stream.ts`, `lib/cursor-agent.ts`,
-`lib/cursor-transport-failure.ts`,
+`lib/cursor-transport-failure.ts`, `lib/generative-view.ts`,
 `lib/agent-runtime.ts`, `lib/mock-agent.ts`, `lib/layout-transition.ts`,
 `lib/command-label.ts`, `lib/lru-cache.ts`, `lib/markdown-clipboard.ts`,
 `lib/markdown-file-paths.ts`, `lib/markdown-github-alerts.ts`, `lib/markdown-list-indentation.ts`,
@@ -472,6 +472,19 @@ one interface:
   `renderActions` slot, and the composer's provider list says which agents resume, when they
   last ran, and which are owed a handoff. `handoff.enabled` (Settings → Chat) turns the journal,
   the git reads and the block off together; per-provider session ids are kept either way.
+- Generative views (vendored `components/ui/generative-view.tsx`, `lib/generative-view.ts`):
+  an agent can answer with a ` ```ui ` fence holding JSON from a closed vocabulary of display
+  blocks — card, fields, table, list, timeline, stats, progress, tabs — and `MessageMarkdown`
+  draws it; a tool row whose output is JSON is drawn the same way by `jsonToView`, which reads
+  the data's *shape* and knows nothing about Gerrit, Jira or GitHub. Nothing is written per
+  service, and the spec is data, never code, so it needs no sandbox. The vocabulary reaches the
+  model as `VIEW_SPEC_PROMPT` (~200 tokens) at the head of `standingContext`, before memory and
+  under the same once-per-backend-conversation rule; `chat.generativeViews` (Settings → Chat)
+  stops sending it. A view draws while its fence is still streaming (the JSON is closed where it
+  stands), and its `button` / `form` blocks talk back the only way a user can: `onViewAction`
+  in `app/page.tsx` sends their text as the next user message, or queues it behind a running
+  turn like anything typed mid-turn — the view itself never runs anything. Saved per-tool view
+  templates are the planned next step — design the spec so it stays plain JSON a file can hold.
 - Local files an answer points at: `lib/message-stream.ts` rewrites markdown image targets that
   name a path on this machine (`lib/local-media.ts`) to `GET /api/files`, which streams the file
   back on the app's own origin — a browser will not load `file://` from an http page. The route

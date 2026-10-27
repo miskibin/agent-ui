@@ -8,6 +8,7 @@ import {
   defaultRehypePlugins,
   defaultRemarkPlugins,
   type BlockProps,
+  type CustomRendererProps,
 } from "streamdown"
 import { code } from "@streamdown/code"
 import { mermaid } from "@streamdown/mermaid"
@@ -20,6 +21,7 @@ import {
   type FileActionItem,
 } from "@/components/ui/change-summary"
 import { FileIcon } from "@/components/ui/file-icon"
+import { GenerativeViewBlock } from "@/components/ui/generative-view"
 import { RenderErrorBoundary } from "@/components/ui/render-error-boundary"
 import { markdownClipboardPayload } from "@/lib/markdown-clipboard"
 import {
@@ -27,6 +29,7 @@ import {
   parseMarkdownFileLink,
   type FilePathPosition,
 } from "@/lib/markdown-file-paths"
+import { VIEW_FENCE_LANGUAGE, type ViewAction } from "@/lib/generative-view"
 import { remarkGithubAlerts } from "@/lib/markdown-github-alerts"
 import { remarkNormalizeListItemIndentation } from "@/lib/markdown-list-indentation"
 import { isContinuation, nextRevealLength } from "@/lib/stream-pacing"
@@ -36,7 +39,25 @@ const math = createMathPlugin({
   singleDollarTextMath: true,
 })
 
-const plugins = { code, mermaid, math }
+/**
+ * A ` ```ui ` fence is a view, not code: its JSON is drawn by
+ * `GenerativeViewBlock` from a closed vocabulary of display blocks. Module
+ * scope, like every renderer here — Streamdown compares them by reference.
+ */
+function ViewFence({ code: source, isIncomplete }: CustomRendererProps) {
+  const onAction = React.useContext(ViewActionContext)
+  return (
+    <GenerativeViewBlock
+      code={source}
+      isIncomplete={isIncomplete}
+      onAction={onAction}
+    />
+  )
+}
+
+const viewRenderers = [{ language: VIEW_FENCE_LANGUAGE, component: ViewFence }]
+const plugins = { code, mermaid, math, renderers: viewRenderers }
+const pluginsWithoutViews = { code, mermaid, math }
 
 type RehypePlugins = React.ComponentProps<typeof Streamdown>["rehypePlugins"]
 type RehypePlugin = NonNullable<RehypePlugins>[number]
@@ -207,6 +228,18 @@ export type MessageMarkdownProps = {
    * @default true
    */
   copyAsMarkdown?: boolean
+  /**
+   * Draws a ` ```ui ` fence as a view (`GenerativeView`) instead of showing
+   * its JSON. Off, the fence is an ordinary code block.
+   *
+   * @default true
+   */
+  views?: boolean
+  /**
+   * What a view's button or form asks for — a message to send as the user's
+   * next turn. Without it those actions are drawn disabled.
+   */
+  onViewAction?: (action: ViewAction) => void
 }
 
 type FileRefContextValue = {
@@ -223,6 +256,11 @@ const NO_FILE_REFS: FileRefContextValue = { onFileClick: null }
  * function per render would re-render every block on every token.
  */
 const FileRefContext = React.createContext<FileRefContextValue>(NO_FILE_REFS)
+
+/** Same reason as `FileRefContext`: the fence renderer is module scope. */
+const ViewActionContext = React.createContext<
+  ((action: ViewAction) => void) | undefined
+>(undefined)
 
 /**
  * Every href the hardening pass resolves on its own: an absolute URL or custom
@@ -609,6 +647,8 @@ export const MessageMarkdown = React.memo(function MessageMarkdown({
   onFileClick,
   fileActions,
   copyAsMarkdown = true,
+  views = true,
+  onViewAction,
 }: MessageMarkdownProps) {
   const paced = streaming === "paced"
   const { text: visibleText, settling } = usePacedText(
@@ -733,6 +773,8 @@ export const MessageMarkdown = React.memo(function MessageMarkdown({
     () => ({ onFileClick: fileClick, fileActions }),
     [fileClick, fileActions]
   )
+  const stableViewAction = useStableCallback(onViewAction)
+  const viewAction = onViewAction ? stableViewAction : undefined
 
   /**
    * Serializing the selection back to markdown, on the way to the clipboard.
@@ -759,25 +801,27 @@ export const MessageMarkdown = React.memo(function MessageMarkdown({
       onCopy={copyAsMarkdown ? handleCopy : undefined}
     >
       <FileRefContext.Provider value={fileRefs}>
-        <Streamdown
-          className={cn("lc-markdown max-w-none", className)}
-          plugins={plugins}
-          rehypePlugins={rehypePlugins}
-          remarkPlugins={remarkPlugins}
-          BlockComponent={IsolatedBlock}
-          shikiTheme={shikiTheme}
-          mermaid={mermaidConfig}
-          isAnimating={live}
-          animated={paced ? WORD_FADE : undefined}
-          caret={caret}
-          linkSafety={linkSafety}
-          parseIncompleteMarkdown
-          codeBlockMaxHeight={Infinity}
-          tableMaxHeight={Infinity}
-          components={components}
-        >
-          {visibleText}
-        </Streamdown>
+        <ViewActionContext.Provider value={viewAction}>
+          <Streamdown
+            className={cn("lc-markdown max-w-none", className)}
+            plugins={views ? plugins : pluginsWithoutViews}
+            rehypePlugins={rehypePlugins}
+            remarkPlugins={remarkPlugins}
+            BlockComponent={IsolatedBlock}
+            shikiTheme={shikiTheme}
+            mermaid={mermaidConfig}
+            isAnimating={live}
+            animated={paced ? WORD_FADE : undefined}
+            caret={caret}
+            linkSafety={linkSafety}
+            parseIncompleteMarkdown
+            codeBlockMaxHeight={Infinity}
+            tableMaxHeight={Infinity}
+            components={components}
+          >
+            {visibleText}
+          </Streamdown>
+        </ViewActionContext.Provider>
       </FileRefContext.Provider>
     </div>
   )

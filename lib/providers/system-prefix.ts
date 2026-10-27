@@ -10,8 +10,10 @@
  * Two blocks, two fences, one fixed order, and each is emitted at most once —
  * they come from two mechanisms that must not blur together:
  *
- *   `<context>`  standing context: the durable user memory from `lib/memory`,
- *                the same in every chat, sent once per backend conversation.
+ *   `<context>`  standing context: the generative-view vocabulary (when
+ *                `chat.generativeViews` is on) and the durable user memory
+ *                from `lib/memory`, the same in every chat, sent once per
+ *                backend conversation.
  *   `<handoff>`  turn context: what other agents did in *this* chat since the
  *                one about to run last looked (`lib/handoff`), sent on every
  *                turn it exists — including resumed ones, which is exactly
