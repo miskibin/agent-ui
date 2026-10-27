@@ -199,6 +199,14 @@ export type ChatSettings = {
    */
   desktopNotifications: boolean
   /**
+   * Teach the agent the generative-view vocabulary (`VIEW_SPEC_PROMPT`, about
+   * two hundred tokens of standing context, once per backend conversation) so
+   * it can answer with a ` ```ui ` block — a card, a table, a timeline —
+   * instead of prose. Off, nothing is sent; a fence an agent writes anyway
+   * still renders.
+   */
+  generativeViews: boolean
+  /**
    * Branch a new worktree off the remote's head rather than off whatever the
    * checkout currently has. On by default: a worktree is opened to start
    * something new, and starting it on a stale local head is the mistake that
@@ -490,6 +498,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     autoTitle: true,
     notificationSounds: true,
     desktopNotifications: true,
+    generativeViews: true,
     newWorktreesStartFromOrigin: true,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_DAYS,
   },
@@ -634,6 +643,7 @@ function normalizeChat(raw: unknown): ChatSettings {
       value.desktopNotifications,
       fallback.desktopNotifications
     ),
+    generativeViews: asBoolean(value.generativeViews, fallback.generativeViews),
     newWorktreesStartFromOrigin: asBoolean(
       value.newWorktreesStartFromOrigin,
       fallback.newWorktreesStartFromOrigin

@@ -52,6 +52,7 @@ const SHARED_FILES = [
   "lib/cursor-agent.ts",
   "lib/cursor-stream.ts",
   "lib/cursor-transport-failure.ts",
+  "lib/generative-view.ts",
   "lib/layout-transition.ts",
   "lib/lru-cache.ts",
   "lib/markdown-clipboard.ts",

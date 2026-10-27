@@ -10,6 +10,7 @@ import type {
   NewJournalEvent,
   TurnStateFrame,
 } from "@/lib/handoff/types"
+import { VIEW_SPEC_PROMPT } from "@/lib/generative-view"
 import { buildMemoryContext } from "@/lib/memory/context"
 import { ensureOllama } from "@/lib/providers/ollama-autostart"
 import { getProvider } from "@/lib/providers/registry"
@@ -203,7 +204,8 @@ export async function POST(req: Request) {
   let providerSessionId = prepared.resumeSessionId
 
   /**
-   * Standing user memory for this turn, when the feature is on.
+   * Standing context for this turn: the generative-view vocabulary, when
+   * `chat.generativeViews` is on, then the user's memory, when that is.
    *
    * Backends that resume server-side get it only on the first turn of their
    * conversation: they already hold everything sent before, so re-sending the
@@ -212,14 +214,19 @@ export async function POST(req: Request) {
    * time. Either way it never touches `userMessage` — what the user typed is
    * what gets stored and shown.
    */
-  const memoryContext =
-    info.capabilities.resume && prepared.resumeSessionId
-      ? undefined
-      : await buildMemoryContext(settings, {
-          toolCapable: info.capabilities.tools,
-          // Ranked against what was typed, not against attached file text.
-          query: typedText || prompt,
-        })
+  const resumed = info.capabilities.resume && !!prepared.resumeSessionId
+  const memoryContext = resumed
+    ? undefined
+    : await buildMemoryContext(settings, {
+        toolCapable: info.capabilities.tools,
+        // Ranked against what was typed, not against attached file text.
+        query: typedText || prompt,
+      })
+  const standingContext = resumed
+    ? undefined
+    : [settings.chat.generativeViews ? VIEW_SPEC_PROMPT : "", memoryContext ?? ""]
+        .filter(Boolean)
+        .join("\n\n") || undefined
 
   const abort = new AbortController()
   const onClientGone = () => abort.abort()
@@ -259,7 +266,7 @@ export async function POST(req: Request) {
         for await (const event of provider.run({
           prompt,
           model,
-          standingContext: memoryContext,
+          standingContext,
           turnContext: prepared.handoff?.text,
           sessionId: providerSessionId,
           effort: info.capabilities.effort ? body.effort : undefined,
