@@ -650,7 +650,7 @@ export default function ChatPage() {
    */
   const sidePanel = preview
     ? "file"
-    : changesOpen && activeCwd
+    : changesOpen
       ? "changes"
       : processesOpen
         ? "processes"
@@ -1164,10 +1164,11 @@ export default function ChatPage() {
                     className="flex min-w-0 flex-col"
                     style={{ overflow: "hidden" }}
                   >
-                    {dockedPanel === "changes" && activeCwd ? (
+                    {dockedPanel === "changes" ? (
                       <ChangesPanel
                         sessionId={activeId}
                         cwd={activeCwd}
+                        chatFiles={chatChanges}
                         onClose={closeChanges}
                         onOpenFile={handleChangesFileOpen}
                         fileActions={fileActions}
@@ -1242,10 +1243,11 @@ export default function ChatPage() {
                 !overlayPanel && "translate-x-full"
               )}
             >
-              {overlayPanel === "changes" && activeCwd ? (
+              {overlayPanel === "changes" ? (
                 <ChangesPanel
                   sessionId={activeId}
                   cwd={activeCwd}
+                  chatFiles={chatChanges}
                   onClose={closeChanges}
                   onOpenFile={handleChangesFileOpen}
                   fileActions={fileActions}

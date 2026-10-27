@@ -5,7 +5,10 @@ import * as React from "react"
 
 import { CommitControl } from "@/components/commit-control"
 import { refreshFolderStatus, useFolderStatus } from "@/components/folder-status"
-import type { FileActionItem } from "@/components/ui/change-summary"
+import type {
+  ChangeSummaryFile,
+  FileActionItem,
+} from "@/components/ui/change-summary"
 import { DiffStack, type DiffStackFile } from "@/components/ui/diff-view"
 import {
   FileTree,
@@ -44,13 +47,21 @@ function treeStatus(letter: string): FileTreeStatus {
 export function ChangesPanel({
   sessionId,
   cwd,
+  chatFiles,
   onClose,
   onOpenFile,
   fileActions,
   className,
 }: {
   sessionId: string
-  cwd: string
+  /**
+   * The chat's folder. Without one there is no worktree to diff, so the panel
+   * lists `chatFiles` — what the transcript says the turns wrote — and a row
+   * opens that file in the file panel, which reads it from the tool calls.
+   */
+  cwd?: string
+  /** The header's own count: every file the chat's turns changed. */
+  chatFiles?: ChangeSummaryFile[]
   onClose?: () => void
   /** A map row's "open on its own" — hands the path to the file panel. */
   onOpenFile?: (path: string) => void
@@ -58,7 +69,7 @@ export function ChangesPanel({
   fileActions?: FileActionItem[]
   className?: string
 }) {
-  const status = useFolderStatus(cwd, sessionId)
+  const status = useFolderStatus(cwd ?? "", sessionId)
   const [files, setFiles] = React.useState<api.ChangedFilePatch[] | null>(null)
   const [error, setError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(false)
@@ -83,7 +94,7 @@ export function ChangesPanel({
    * hooks rules forbid outright.
    */
   const load = React.useCallback(() => {
-    if (!sessionId) return
+    if (!sessionId || !cwd) return
     queueMicrotask(() => setLoading(true))
     api
       .fetchChangedFiles(sessionId)
@@ -95,7 +106,7 @@ export function ChangesPanel({
         setError(err instanceof Error ? err.message : "Could not read the changes")
       })
       .finally(() => setLoading(false))
-  }, [sessionId])
+  }, [cwd, sessionId])
 
   /**
    * On open, and again whenever the worktree moves. A commit from the control
@@ -123,13 +134,20 @@ export function ChangesPanel({
 
   const treeEntries = React.useMemo<FileTreeEntry[]>(
     () =>
-      (files ?? []).map((file) => ({
-        path: file.path,
-        status: treeStatus(file.status),
-        additions: file.insertions,
-        deletions: file.deletions,
-      })),
-    [files]
+      cwd
+        ? (files ?? []).map((file) => ({
+            path: file.path,
+            status: treeStatus(file.status),
+            additions: file.insertions,
+            deletions: file.deletions,
+          }))
+        : (chatFiles ?? []).map((file) => ({
+            path: file.path,
+            status: "modified" as const,
+            additions: file.additions,
+            deletions: file.deletions,
+          })),
+    [chatFiles, cwd, files]
   )
 
   /**
@@ -140,13 +158,14 @@ export function ChangesPanel({
   const reveal = React.useCallback(
     (path: string) => {
       const file = files?.find((entry) => entry.path === path)
-      if (file && (file.binary || !file.patch) && onOpenFile) {
+      // Folderless, every row is one: there is no stack to scroll.
+      if (onOpenFile && (!cwd || (file && (file.binary || !file.patch)))) {
         onOpenFile(path)
         return
       }
       setFocus((prev) => ({ path, nonce: (prev?.nonce ?? 0) + 1 }))
     },
-    [files, onOpenFile]
+    [cwd, files, onOpenFile]
   )
 
   const loadChildren = React.useCallback(
@@ -165,7 +184,7 @@ export function ChangesPanel({
   )
 
   const refresh = React.useCallback(() => {
-    refreshFolderStatus(cwd)
+    if (cwd) refreshFolderStatus(cwd)
     load()
   }, [cwd, load])
 
@@ -181,9 +200,9 @@ export function ChangesPanel({
       >
         <GitCompare className="size-3.5 shrink-0 opacity-70" />
         <span className="shrink-0 font-medium text-foreground">Changes</span>
-        {files ? (
+        {(cwd ? files : chatFiles) ? (
           <span className="shrink-0 text-[11.5px] tabular-nums text-muted-foreground">
-            {files.length}
+            {(cwd ? files : chatFiles)?.length}
           </span>
         ) : null}
         {status?.branch ? (
@@ -207,16 +226,18 @@ export function ChangesPanel({
         >
           <PanelLeft />
         </button>
-        <button
-          type="button"
-          data-slot="changes-panel-refresh"
-          aria-label="Re-read the changes"
-          title="Re-read the changes"
-          onClick={refresh}
-          className={ICON_BUTTON}
-        >
-          <RefreshCw className={loading ? "animate-spin" : undefined} />
-        </button>
+        {cwd ? (
+          <button
+            type="button"
+            data-slot="changes-panel-refresh"
+            aria-label="Re-read the changes"
+            title="Re-read the changes"
+            onClick={refresh}
+            className={ICON_BUTTON}
+          >
+            <RefreshCw className={loading ? "animate-spin" : undefined} />
+          </button>
+        ) : null}
         {onClose ? (
           <button
             type="button"
@@ -237,28 +258,30 @@ export function ChangesPanel({
             data-slot="changes-panel-map"
             className="flex w-[13.75rem] shrink-0 flex-col border-r"
           >
-            <div
-              role="group"
-              aria-label="File list scope"
-              className="flex shrink-0 items-center gap-0.5 px-2 py-1.5"
-            >
-              <button
-                type="button"
-                data-active={!browsing}
-                onClick={() => setBrowsing(false)}
-                className={SCOPE}
+            {cwd ? (
+              <div
+                role="group"
+                aria-label="File list scope"
+                className="flex shrink-0 items-center gap-0.5 px-2 py-1.5"
               >
-                Changed
-              </button>
-              <button
-                type="button"
-                data-active={browsing}
-                onClick={() => setBrowsing(true)}
-                className={SCOPE}
-              >
-                Browse
-              </button>
-            </div>
+                <button
+                  type="button"
+                  data-active={!browsing}
+                  onClick={() => setBrowsing(false)}
+                  className={SCOPE}
+                >
+                  Changed
+                </button>
+                <button
+                  type="button"
+                  data-active={browsing}
+                  onClick={() => setBrowsing(true)}
+                  className={SCOPE}
+                >
+                  Browse
+                </button>
+              </div>
+            ) : null}
             <div className="min-h-0 flex-1">
               {browsing && cwd ? (
                 <FileTree
@@ -281,9 +304,11 @@ export function ChangesPanel({
                   label="Changed files"
                   search={false}
                   emptyLabel={
-                    files === null
-                      ? "Reading the worktree…"
-                      : "Nothing has changed in this folder yet."
+                    !cwd
+                      ? "Nothing has changed in this chat yet."
+                      : files === null
+                        ? "Reading the worktree…"
+                        : "Nothing has changed in this folder yet."
                   }
                   className="h-full"
                 />
@@ -293,7 +318,12 @@ export function ChangesPanel({
         ) : null}
 
         <div data-slot="changes-panel-body" className="min-h-0 min-w-0 flex-1">
-          {error ? (
+          {!cwd ? (
+            <p className="px-3 py-2 text-[12.5px] text-muted-foreground">
+              This chat has no folder, so there is no worktree to diff. Pick a
+              file in the list to open what the chat wrote to it.
+            </p>
+          ) : error ? (
             <p className="flex items-start gap-1.5 px-3 py-2 text-[12.5px] text-muted-foreground">
               <FileWarning aria-hidden className="mt-0.5 size-3.5 shrink-0" />
               {error}
@@ -316,7 +346,7 @@ export function ChangesPanel({
         </div>
       </div>
 
-      {status?.isGitRepo ? (
+      {cwd && status?.isGitRepo ? (
         <CommitControl sessionId={sessionId} cwd={cwd} paths={dirtyPaths} />
       ) : null}
     </aside>
