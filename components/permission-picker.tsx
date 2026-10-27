@@ -15,6 +15,8 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { PermissionMode } from "@/lib/providers/types"
@@ -80,6 +82,9 @@ export const PermissionPicker = React.memo(function PermissionPicker({
         <button
           type="button"
           data-slot="permission-picker-trigger"
+          /* The first control to fold into the composer's "…" menu — see
+             `PermissionMenuItems`, which stands in for it there. */
+          data-composer-overflow
           title="Change what the agent may do"
           /* The name is hidden on a narrow composer, so it is named here too. */
           aria-label={`Permissions: ${current.name}`}
@@ -89,7 +94,9 @@ export const PermissionPicker = React.memo(function PermissionPicker({
           )}
         >
           <CurrentIcon className="size-3.5" />
-          <span className="hidden truncate sm:inline">{current.name}</span>
+          <span data-composer-label className="truncate">
+            {current.name}
+          </span>
           <ChevronDown className="size-3 opacity-60 transition-transform duration-150 group-data-[state=open]:rotate-180" />
         </button>
       </DropdownMenuTrigger>
@@ -136,3 +143,42 @@ export const PermissionPicker = React.memo(function PermissionPicker({
     </DropdownMenu>
   )
 })
+
+/**
+ * The same choice as radio items, for the composer's "…" menu (`toolsMenu`):
+ * what the picker turns into once the composer row is too narrow to hold it.
+ */
+export function PermissionMenuItems({
+  modes,
+  value,
+  onChange,
+}: Omit<PermissionPickerProps, "className">) {
+  return (
+    <>
+      <DropdownMenuLabel className="text-[11px] tracking-wide text-muted-foreground uppercase">
+        Access
+      </DropdownMenuLabel>
+      <DropdownMenuRadioGroup
+        value={value}
+        onValueChange={(next) => onChange(next as PermissionMode)}
+      >
+        {modes.map((mode) => {
+          const meta = PERMISSION_LABELS[mode]
+          if (!meta) return null
+          const ModeIcon = meta.icon
+          return (
+            <DropdownMenuRadioItem
+              key={mode}
+              value={mode}
+              data-slot="permission-menu-item"
+              className="gap-2 text-[13px]"
+            >
+              <ModeIcon className="size-3.5 text-muted-foreground" />
+              {meta.name}
+            </DropdownMenuRadioItem>
+          )
+        })}
+      </DropdownMenuRadioGroup>
+    </>
+  )
+}

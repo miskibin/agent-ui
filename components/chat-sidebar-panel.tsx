@@ -288,6 +288,10 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           isDesktop ? onCollapsedChange(next) : onCloseDrawer()
         }
         edgeZones
+        /* Holding ⌥ reveals the ⌥1…9 each of the first nine rows answers to
+           (`lib/app-shortcuts.ts`); ⌘ is the browser's own there. */
+        showJumpHints
+        jumpHintModifier="alt"
         /*
          * The drag writes `--chat-sidebar-width` on the panel itself, once per
          * frame, and tells React only on release — which is why the width is
