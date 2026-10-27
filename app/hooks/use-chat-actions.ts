@@ -24,6 +24,9 @@ import type { QueuedMessage, SessionRun } from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
 import type { LoadThread } from "./use-threads"
 
+/** How long "Restore" is offered before a deleted chat is gone from disk. */
+const UNDO_DELETE_MS = 8_000
+
 /**
  * The mutations that cross concerns: opening a chat has to re-point the
  * pickers and close the file panel, deleting one has to drop its thread, its
@@ -498,67 +501,52 @@ export function useChatActions({
     [worktreeRootOf]
   )
 
-  const removeSession = React.useCallback(
-    (id: string) => {
-      const known = sessionsRef.current
-      const removed = known.find((session) => session.id === id)
-      const remaining = known.filter((session) => session.id !== id)
-      if (activeIdRef.current === id) closePreview()
-      abortsRef.current.get(id)?.abort()
-      abortsRef.current.delete(id)
-      setQueues((prev) => omit(prev, id))
-      forgetDraft(id)
-      clearDraft(id)
-      setThreads((prev) => {
-        if (prev[id] === undefined) return prev
-        const next = { ...prev }
-        delete next[id]
-        return next
-      })
-      setRuns((prev) => omit(prev, id))
-      setFailures((prev) => omit(prev, id))
-      setSessions((prev) => {
-        const next = prev.filter((session) => session.id !== id)
-        setActiveId((current) =>
-          current === id ? (next[0]?.id ?? "") : current
-        )
-        return next
-      })
-      void api
-        .deleteSession(id)
-        .then(() => offerWorktreeCleanup([removed], remaining))
-        .catch((err: unknown) =>
-          toast.error(errorMessage(err, "Could not delete the chat"))
-        )
-    },
-    [
-      abortsRef,
-      activeIdRef,
-      closePreview,
-      forgetDraft,
-      offerWorktreeCleanup,
-      sessionsRef,
-      setActiveId,
-      setFailures,
-      setQueues,
-      setRuns,
-      setSessions,
-      setThreads,
-    ]
+  /**
+   * Deleting is immediate on screen and deferred on disk: the chat leaves the
+   * sidebar at once, the toast says so and offers "Restore", and only when
+   * that window closes is the transcript removed. Asking first ("Delete?") was
+   * a second click on every delete to protect the rare mistake; an undo costs
+   * the common case nothing. Anything still pending when the page goes away is
+   * committed then (`keepalive`), so a quit inside the window still deletes.
+   */
+  const pendingDeletes = React.useRef(
+    new Map<string, { timer: ReturnType<typeof setTimeout>; commit: () => void }>()
   )
+
+  React.useEffect(() => {
+    const pending = pendingDeletes.current
+    const flush = () => {
+      for (const entry of [...pending.values()]) {
+        clearTimeout(entry.timer)
+        entry.commit()
+      }
+    }
+    window.addEventListener("pagehide", flush)
+    return () => {
+      window.removeEventListener("pagehide", flush)
+      flush()
+    }
+  }, [])
 
   const removeSessions = React.useCallback(
     (ids: string[]) => {
       if (ids.length === 0) return
       const idSet = new Set(ids)
       const known = sessionsRef.current
-      const removed = known.filter((session) => idSet.has(session.id))
+      // Where each one sat, so a restore puts it back in place.
+      const removed = known
+        .map((session, index) => ({ session, index }))
+        .filter(({ session }) => idSet.has(session.id))
+      if (removed.length === 0) return
       const remaining = known.filter((session) => !idSet.has(session.id))
+      const wasActive = idSet.has(activeIdRef.current)
+        ? activeIdRef.current
+        : ""
+      if (wasActive) closePreview()
       for (const id of ids) {
         abortsRef.current.get(id)?.abort()
         abortsRef.current.delete(id)
         forgetDraft(id)
-        clearDraft(id)
       }
       setQueues((prev) => {
         let next = prev
@@ -592,21 +580,65 @@ export function useChatActions({
         )
         return next
       })
-      void Promise.all(
-        ids.map((id) =>
-          api
-            .deleteSession(id)
-            .catch((err: unknown) =>
-              toast.error(errorMessage(err, "Could not delete the chat"))
-            )
+
+      const key = ids.join("\n")
+      let done = false
+      const commit = () => {
+        if (done) return
+        done = true
+        pendingDeletes.current.delete(key)
+        for (const id of ids) clearDraft(id)
+        void Promise.all(
+          ids.map((id) =>
+            api
+              .deleteSession(id, { keepalive: true })
+              .catch((err: unknown) =>
+                toast.error(errorMessage(err, "Could not delete the chat"))
+              )
+          )
+        ).then(() =>
+          offerWorktreeCleanup(
+            removed.map(({ session }) => session),
+            remaining
+          )
         )
-      ).then(() => offerWorktreeCleanup(removed, remaining))
+      }
+      const restore = () => {
+        if (done) return
+        done = true
+        const entry = pendingDeletes.current.get(key)
+        if (entry) clearTimeout(entry.timer)
+        pendingDeletes.current.delete(key)
+        setSessions((prev) => {
+          const present = new Set(prev.map((session) => session.id))
+          const next = [...prev]
+          for (const { session, index } of removed) {
+            if (present.has(session.id)) continue
+            next.splice(Math.min(index, next.length), 0, session)
+          }
+          return next
+        })
+        if (wasActive) setActiveId(wasActive)
+      }
+      pendingDeletes.current.set(key, {
+        timer: setTimeout(commit, UNDO_DELETE_MS),
+        commit,
+      })
+      const first = removed[0].session.title.trim() || "Untitled"
       toast.message(
-        ids.length === 1 ? "Chat deleted" : `${ids.length} chats deleted`
+        removed.length === 1
+          ? `Deleted “${first}”`
+          : `${removed.length} chats deleted`,
+        {
+          duration: UNDO_DELETE_MS,
+          action: { label: "Restore", onClick: restore },
+        }
       )
     },
     [
       abortsRef,
+      activeIdRef,
+      closePreview,
       forgetDraft,
       offerWorktreeCleanup,
       sessionsRef,
@@ -617,6 +649,11 @@ export function useChatActions({
       setSessions,
       setThreads,
     ]
+  )
+
+  const removeSession = React.useCallback(
+    (id: string) => removeSessions([id]),
+    [removeSessions]
   )
 
   const handleNewChat = React.useCallback(async () => {
