@@ -525,6 +525,7 @@ export function createAcpProvider(
         // `promptCapabilities.image` again against this turn's own handshake.
         images: acceptsImages(id) ? options.images : undefined,
         askUser: options.askUser,
+        processes: options.processes,
         signal: options.signal,
         handlers: {
           async readTextFile({ path: requested, line, limit }) {

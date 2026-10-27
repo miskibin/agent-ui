@@ -25,6 +25,7 @@ import {
   newId,
   seedAssistantMessage,
 } from "@/lib/message-stream"
+import { TurnProcesses } from "@/lib/background-processes"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { createAskUser } from "@/lib/turn-requests"
 import { readSettings } from "@/lib/settings/server"
@@ -240,6 +241,18 @@ export async function POST(req: Request) {
    */
   let runStarted = false
 
+  /**
+   * What the agent leaves running when this turn ends — a dev server, a
+   * watcher — is kept and listed under the chat (`lib/background-processes`)
+   * instead of dying with the harness.
+   */
+  const processes = new TurnProcesses({
+    sessionId: sessionId!,
+    providerId,
+    cwd,
+    startedAt,
+  })
+
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
@@ -273,6 +286,7 @@ export async function POST(req: Request) {
           // chat and dies with the turn's abort, so a stopped run can never
           // leave a form waiting on a promise nobody will resolve.
           askUser: createAskUser({ sessionId, signal: abort.signal }),
+          processes,
           signal: abort.signal,
         })) {
           if (event.type === "session") providerSessionId = event.sessionId
@@ -298,6 +312,9 @@ export async function POST(req: Request) {
         }
       } finally {
         req.signal.removeEventListener("abort", onClientGone)
+        // Counted in the background: the answer does not wait for a process
+        // scan, and `GET /api/processes` waits for this one instead.
+        void processes.settle()
         const state = await persist()
         // An app-level frame, not an `AgentStreamEvent`: the marker and the
         // composer's per-agent hints are this app's own concern, and the

@@ -18,6 +18,7 @@ import {
   type PiImage,
 } from "@/lib/pi-protocol"
 import { resolvePiCommand, type PiCommand } from "@/lib/pi-runtime"
+import type { TurnProcessScope } from "@/lib/providers/types"
 import {
   detachedSpawnOptions,
   killProcessTree,
@@ -61,6 +62,8 @@ export type PiRunOptions = {
   /** Where a mid-turn question goes. Absent = every request is cancelled. */
   askUser?: AskUser
   binPath?: string
+  /** Keeps what the agent left running at a normal end; see `AgentRunOptions`. */
+  processes?: TurnProcessScope
   signal?: AbortSignal
 }
 
@@ -339,7 +342,9 @@ export async function* runPiAgent(
   } finally {
     options.signal?.removeEventListener("abort", onAbort)
     child.stdin?.end()
-    killProcessTree(child)
+    // A stopped turn takes the tree; one that ended keeps the agent's work.
+    if (options.processes && !options.signal?.aborted) options.processes.release(child)
+    else killProcessTree(child)
   }
 }
 

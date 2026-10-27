@@ -304,7 +304,13 @@ export function createCodexProvider(
         if (!options.signal.aborted) yield { type: "error", message: error instanceof Error ? error.message : String(error) }
       } finally {
         options.signal.removeEventListener("abort", abort)
-        client.close()
+        // A turn that ended keeps the background terminals Codex left
+        // running; a stopped one takes the whole tree.
+        if (options.processes && !options.signal.aborted) {
+          options.processes.release(client.child)
+        } else {
+          client.close()
+        }
       }
     },
   }

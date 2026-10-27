@@ -811,3 +811,36 @@ export function fetchDevServers(sessionId?: string): Promise<DevServer[]> {
     .then(json<{ servers: DevServer[] }>)
     .then((data) => data.servers)
 }
+
+import type { BackgroundProcess } from "@/lib/background-processes"
+/** A background process as the page sees it: plus the page it serves, if any. */
+export type BackgroundProcessRow = BackgroundProcess & { url?: string }
+
+/**
+ * What the chat's agents left running, still running now
+ * (`lib/background-processes`). Right after a turn ends this waits for that
+ * turn's survivors to be counted.
+ */
+export function fetchBackgroundProcesses(
+  sessionId: string,
+  signal?: AbortSignal
+): Promise<BackgroundProcessRow[]> {
+  return fetch(`/api/processes?sessionId=${encodeURIComponent(sessionId)}`, {
+    cache: "no-store",
+    signal,
+  })
+    .then(json<{ processes: BackgroundProcessRow[] }>)
+    .then((data) => data.processes)
+}
+
+/** Stops one of the chat's background processes, or all of them. */
+export function stopBackgroundProcesses(
+  sessionId: string,
+  pid?: number
+): Promise<number> {
+  const params = new URLSearchParams({ sessionId })
+  if (pid !== undefined) params.set("pid", String(pid))
+  return fetch(`/api/processes?${params}`, { method: "DELETE" })
+    .then(json<{ stopped: number }>)
+    .then((data) => data.stopped)
+}

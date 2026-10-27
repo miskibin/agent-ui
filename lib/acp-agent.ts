@@ -27,6 +27,7 @@ import {
   killProcessTree,
   trackChildProcess,
 } from "@/lib/process-tree"
+import type { TurnProcessScope } from "@/lib/providers/types"
 import { LineBuffer } from "@/lib/stream-framing"
 import { UnfinishedTools } from "@/lib/unfinished-tools"
 import {
@@ -198,6 +199,11 @@ export type AcpRunOptions = {
    */
   askUser?: AskUser
   handlers: AcpClientHandlers
+  /**
+   * The agent outlives the turn, so nothing is released at its end; what it
+   * started *during* the turn and left running is found below its pid.
+   */
+  processes?: TurnProcessScope
   signal?: AbortSignal
 }
 
@@ -228,6 +234,8 @@ type AcpConnection = {
   onClose(handler: () => void): void
   /** The spawn errno, if the process never started. */
   spawnFailure(): NodeJS.ErrnoException | undefined
+  /** The agent process, for the turn's background-process bookkeeping. */
+  pid(): number | undefined
   stderr(): string
   dispose(): void
 }
@@ -451,6 +459,7 @@ function connectAcp(spec: AcpSpawnSpec): AcpConnection {
       else closeHandlers.push(handler)
     },
     spawnFailure: () => failure.error,
+    pid: () => child.pid,
     stderr: () => stderrChunks.join("").trim(),
     dispose() {
       fail(new Error(`${command.cmd} was closed`))
@@ -810,6 +819,7 @@ export async function* runAcpAgent(
   }
   settledHosts.add(host)
   const conn = host.conn
+  options.processes?.observe(conn.pid())
 
   const route: SessionRoute = {
     notify(method, params) {

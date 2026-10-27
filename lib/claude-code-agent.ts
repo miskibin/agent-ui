@@ -13,7 +13,12 @@ import {
   type ClaudeCodeCommand,
 } from "@/lib/claude-code-runtime"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
-import type { PermissionMode } from "@/lib/providers/types"
+import {
+  detachedSpawnOptions,
+  killProcessTree,
+  trackChildProcess,
+} from "@/lib/process-tree"
+import type { PermissionMode, TurnProcessScope } from "@/lib/providers/types"
 import { LineBuffer } from "@/lib/stream-framing"
 
 /**
@@ -37,6 +42,8 @@ export type ClaudeCodeRunOptions = {
   permissionMode: PermissionMode
   workspace: string
   binPath?: string
+  /** Keeps what the agent left running at a normal end; see `AgentRunOptions`. */
+  processes?: TurnProcessScope
   signal?: AbortSignal
 }
 
@@ -57,7 +64,12 @@ export async function* runClaudeCodeAgent(
     env: process.env,
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
+    // Its own process group: a stop has to reach what the Bash tool started,
+    // and a turn's end has to be able to tell that work apart from the
+    // server's own processes (`lib/background-processes`).
+    ...detachedSpawnOptions,
   })
+  trackChildProcess(child)
 
   // A process that never starts emits `error`, not `exit` — and an unhandled
   // one would surface as a bare errno with no hint at what was being spawned.
@@ -85,7 +97,7 @@ export async function* runClaudeCodeAgent(
     stderrChunks.push(chunk)
   })
 
-  const onAbort = () => killClaude(child)
+  const onAbort = () => killProcessTree(child)
   options.signal?.addEventListener("abort", onAbort)
 
   try {
@@ -145,7 +157,7 @@ export async function* runClaudeCodeAgent(
     if (parked) {
       // Nothing more is coming; the `error` the translator already emitted is
       // the turn's outcome, and the subprocess is only holding the pipe open.
-      killClaude(child)
+      endClaude(child, options)
       yield* translator.finish(false)
       yield { type: "done", durationMs: Date.now() - startedAt }
       return
@@ -190,8 +202,18 @@ export async function* runClaudeCodeAgent(
     yield* translator.finish(true)
   } finally {
     options.signal?.removeEventListener("abort", onAbort)
-    killClaude(child)
+    endClaude(child, options)
   }
+}
+
+/**
+ * A stopped turn takes everything down; one that ended lets the CLI go and
+ * keeps whatever the agent meant to leave running.
+ */
+function endClaude(child: ChildProcess, options: ClaudeCodeRunOptions) {
+  if (options.signal?.aborted) killProcessTree(child)
+  else if (options.processes) options.processes.release(child)
+  else killClaude(child)
 }
 
 /**

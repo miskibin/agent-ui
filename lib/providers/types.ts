@@ -1,3 +1,5 @@
+import type { ChildProcess } from "node:child_process"
+
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type { ModelOption } from "@/components/ui/model-picker"
 import type { AskUser } from "@/lib/turn-requests"
@@ -152,7 +154,21 @@ export type AgentRunOptions = {
    * says so in the `question` row it publishes for the wait.
    */
   askUser?: AskUser
+  /**
+   * The turn's process bookkeeping (`lib/background-processes`). A provider
+   * that spawns its harness per turn calls `release(child)` at a *normal* end
+   * instead of killing the tree, so a dev server or watcher the agent started
+   * survives the turn and is listed under the chat; a stopped turn still
+   * kills the tree. A long-lived harness calls `observe(pid)` instead. Absent
+   * (tests, title generation) means the old behaviour: kill everything.
+   */
+  processes?: TurnProcessScope
   signal: AbortSignal
+}
+
+export type TurnProcessScope = {
+  release(child: ChildProcess): void
+  observe(pid: number | undefined): void
 }
 
 /**

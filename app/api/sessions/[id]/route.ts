@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { forgetBackground } from "@/lib/background-processes"
 import { deleteCheckpointRefs } from "@/lib/checkpoints"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { regenerateSessionTitle } from "@/lib/session-title"
@@ -130,6 +131,9 @@ export async function DELETE(req: Request, ctx: Ctx) {
       /* refs the user can prune themselves; the chat still goes */
     })
   }
+  // What its agents left running keeps running — it is the user's to stop —
+  // but no longer belongs to a chat that exists.
+  await forgetBackground(id).catch(() => undefined)
   const deleted = await deleteSession(id)
   if (!deleted) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })

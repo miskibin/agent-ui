@@ -64,6 +64,8 @@ does not ship them, so they have no upstream to match. They are listed in the ch
 `components/chat-sidebar-panel.tsx`, `components/sidebar-sections.tsx`,
 `components/binary-file.tsx`, `components/file-panel.tsx`, `components/diff-workers.tsx`,
 `components/chat-skeletons.tsx`, `components/chat-suggestions.tsx`, `components/live-time.tsx`,
+`components/processes-panel.tsx`, `lib/background-processes.ts`, `lib/process-list.ts`,
+`lib/process-scan.ts`,
 `components/import-dialog.tsx`, `components/quit-hold.tsx`, `components/desktop-updater.tsx`,
 `app/settings/model-providers-section.tsx`,
 everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `lib/settings/`,
@@ -647,6 +649,32 @@ one interface:
   document or redirects to one, which is what keeps Postgres, Redis and the app's own port out
   of a list meant to be clicked. A `sessionId` narrows it to the chat's own folder where the
   platform can attribute a listener to one.
+- What an agent left running (`lib/background-processes.ts`, `lib/process-list.ts`,
+  `lib/process-scan.ts`, `GET/DELETE /api/processes`, `components/processes-panel.tsx`,
+  `app/hooks/use-background-processes.ts`): a dev server or a watcher an agent starts has to
+  outlive the turn that started it, so a turn that **ends** no longer kills its harness's tree —
+  the provider calls `AgentRunOptions.processes.release(child)`, which snapshots the table, stops
+  the harness and its own plumbing (MCP servers, anything with no shell above it) one pid at a
+  time, and keeps the *work*. A turn that is **stopped** still kills the tree. The chat route's
+  `TurnProcesses.settle` then counts what survived and records it, per chat, as pid **plus start
+  time** in `$AGENT_UI_DIR/processes.json` — a recycled pid is never the process the agent
+  started, and never killed in its place. Work is found three ways, because agents escape three
+  ways: a descendant with a shell at or above it (`harnessWork`); on POSIX, a member of the
+  harness's process group no longer attached below it — `nohup cmd &` keeps the group while it
+  loses the parent, and the harness is spawned as a group leader for exactly this (a group named
+  after a CLI that already exited is still that CLI's, so Claude Code exiting on its own loses
+  nothing); on Windows, a background-ish program started during the turn whose parent vanished
+  (`orphanedDuring`) — what `Start-Process` leaves — counted only when one turn is running, since
+  an orphan cannot say which of two turns started it. ACP agents outlive the turn and `observe`
+  instead. This is deliberately the process table rather than each CLI's own events: T3 Code
+  tracks Claude's `task_started` and Codex's background terminals, which never see a `nohup`.
+  The header badge counts the chat's rows and opens the list in the side panel (after a file and
+  the review, before the plan); a row names the program, tints the command, links the page it
+  serves (`lib/dev-servers` matches listener pids — `lsof`, or `netstat -ano` on Windows, read
+  by foreign address because the state column is translated), and stops its whole tree. The
+  first read after a turn waits server-side for that turn's count, then the page polls only while
+  something is listed. A deleted chat's entries are forgotten, not killed. Cursor (vendored) does
+  not report its harness, so only Windows orphans are found for it.
 - One way to run git (`lib/git-exec.ts`): every `git` and `gh` call goes through it, so four
   things are true of all of them rather than of the ones somebody remembered.
   `--literal-pathspecs` comes first — a path in this app comes from a tool call, an answer or

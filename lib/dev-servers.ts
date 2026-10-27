@@ -21,8 +21,9 @@ import { realPath } from "@/lib/fs-roots"
  *   form is the only one worth parsing — one field per line, tagged by its
  *   first character — because lsof's human-readable columns are aligned, not
  *   delimited, and a command name with a space in it silently shifts them.
- * - **A curated port list** on Windows, and anywhere lsof is missing. Guessing
- *   is worse than looking, but it costs one bounded request per port.
+ * - **`netstat -ano`** on Windows, which names each listener's pid too.
+ * - **A curated port list** anywhere neither is there. Guessing is worse than
+ *   looking, but it costs one bounded request per port.
  * - **A bounded HTTP GET** decides what is published, in both cases. A
  *   listener is a dev server only if it answers with an HTML document or
  *   redirects to one, which is what keeps Postgres, Redis, an SSH tunnel and
@@ -124,6 +125,36 @@ export function parseLsofListeners(stdout: string): Listener[] {
 }
 
 /**
+ * `netstat -ano` output → the local TCP listeners in it, with their pids —
+ * Windows' answer to lsof, and the only built-in one that names the owner.
+ *
+ * A listening socket is recognized by its foreign address (`0.0.0.0:0`,
+ * `[::]:0`) rather than by the state column, which Windows translates: a
+ * Polish install says `NASŁUCHIWANIE` where an English one says `LISTENING`.
+ * System pids (0, 4) and ports outside 1024–49151 are dropped — below is the
+ * OS's own, above is the RPC range Windows hands out by the dozen — so the
+ * probe that follows stays a handful of requests.
+ */
+export function parseNetstatListeners(stdout: string): Listener[] {
+  const byPort = new Map<number, Listener>()
+  for (const line of stdout.split(/\r?\n/)) {
+    const fields = line.trim().split(/\s+/)
+    if (fields[0]?.toUpperCase() !== "TCP" || fields.length < 5) continue
+    const local = fields[1]
+    const foreign = fields[2]
+    const pid = Number.parseInt(fields[fields.length - 1], 10)
+    if (!/:0$/.test(foreign)) continue
+    const colon = local.lastIndexOf(":")
+    if (colon < 0 || !LOCAL_HOST_TOKENS.has(local.slice(0, colon))) continue
+    const port = Number.parseInt(local.slice(colon + 1), 10)
+    if (!Number.isInteger(port) || port < 1024 || port > 49_151) continue
+    if (!Number.isInteger(pid) || pid <= 4 || byPort.has(port)) continue
+    byPort.set(port, { port, pid })
+  }
+  return [...byPort.values()].sort((left, right) => left.port - right.port)
+}
+
+/**
  * The port of an lsof name field, when the address is a local one.
  *
  * Shapes: `*:5173`, `127.0.0.1:5173`, `[::1]:5173`, `localhost:5173 (LISTEN)`,
@@ -140,6 +171,39 @@ function parseLsofPort(name: string): number | null {
 }
 
 /** One bounded `lsof`; null when there is none, or it failed. */
+function runNetstat(): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      /*turbopackIgnore: true*/ "netstat",
+      ["-ano", "-p", "TCP"],
+      { timeout: LSOF_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: "utf8" },
+      (error, stdout) => resolve(stdout && stdout.trim() ? stdout : null)
+    )
+  })
+}
+
+/** The platform's listener table, or null when there is none to read. */
+async function readListeners(): Promise<Listener[] | null> {
+  if (process.platform === "win32") {
+    const [v4, v6] = await Promise.all([runNetstat(), runNetstatV6()])
+    if (v4 === null && v6 === null) return null
+    return parseNetstatListeners(`${v4 ?? ""}\n${v6 ?? ""}`)
+  }
+  const stdout = await runLsof()
+  return stdout === null ? null : parseLsofListeners(stdout)
+}
+
+function runNetstatV6(): Promise<string | null> {
+  return new Promise((resolve) => {
+    execFile(
+      /*turbopackIgnore: true*/ "netstat",
+      ["-ano", "-p", "TCPv6"],
+      { timeout: LSOF_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: "utf8" },
+      (error, stdout) => resolve(stdout && stdout.trim() ? stdout : null)
+    )
+  })
+}
+
 function runLsof(): Promise<string | null> {
   if (process.platform === "win32") return Promise.resolve(null)
   return new Promise((resolve) => {
@@ -308,11 +372,8 @@ export type DiscoverOptions = {
 export async function discoverDevServers(
   options: DiscoverOptions = {}
 ): Promise<DevServer[]> {
-  const stdout = await runLsof()
   const listeners: Listener[] =
-    stdout === null
-      ? COMMON_DEV_PORTS.map((port) => ({ port }))
-      : parseLsofListeners(stdout)
+    (await readListeners()) ?? COMMON_DEV_PORTS.map((port) => ({ port }))
 
   const excluded = new Set(options.exclude ?? [])
   const candidates = listeners.filter((entry) => !excluded.has(entry.port))

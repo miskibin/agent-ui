@@ -300,6 +300,7 @@ export function createPiProvider(
         })),
         askUser: options.askUser,
         binPath,
+        processes: options.processes,
         signal: options.signal,
       })
     },

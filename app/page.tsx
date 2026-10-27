@@ -31,6 +31,7 @@ import {
   PermissionPicker,
 } from "@/components/permission-picker"
 import { PlanPanel } from "@/components/plan-panel"
+import { ChatProcesses, ProcessesPanel } from "@/components/processes-panel"
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
 import { ChatInput } from "@/components/ui/chat-input"
@@ -61,6 +62,7 @@ import { useChatTurns } from "./hooks/use-chat-turns"
 import { useCommandPalette, useMessageJump } from "./hooks/use-command-palette"
 import { useComposerDrafts } from "./hooks/use-composer-drafts"
 import { useComposerHeight } from "./hooks/use-composer-height"
+import { useBackgroundProcesses } from "./hooks/use-background-processes"
 import { useChangesPanel } from "./hooks/use-changes-panel"
 import { usePlanPanel } from "./hooks/use-plan-panel"
 import {
@@ -617,19 +619,29 @@ export default function ChatPage() {
   const { openPlan, closePlan, reopenPlan } = usePlanPanel({ activeId, plan })
   const { changesOpen, toggle: toggleChanges, close: closeChanges } =
     useChangesPanel(activeId)
+  const {
+    processes,
+    processesOpen,
+    toggle: toggleProcesses,
+    close: closeProcesses,
+    stop: stopProcess,
+  } = useBackgroundProcesses({ activeId, isGenerating })
+
   /**
-   * One panel, three things that want it, in the order of how recently the
-   * user asked for each: a file they clicked, the review they opened from the
-   * header, then the plan the agent wrote. Closing the one on top uncovers the
+   * One panel, four things that want it, in the order of how recently the
+   * user asked for each: a file they clicked, the review or the background
+   * processes they opened from the header, then the plan the agent wrote. Closing the one on top uncovers the
    * next rather than emptying the panel.
    */
   const sidePanel = preview
     ? "file"
     : changesOpen && activeCwd
       ? "changes"
-      : openPlan
-        ? "plan"
-        : null
+      : processesOpen
+        ? "processes"
+        : openPlan
+          ? "plan"
+          : null
 
   // The panel is a resizable pane on desktop and an overlay below md.
   // Derived, so exactly one of each is ever mounted.
@@ -915,6 +927,11 @@ export default function ChatPage() {
               open={changesOpen}
               onToggle={toggleChanges}
             />
+            <ChatProcesses
+              count={processes.length}
+              open={processesOpen}
+              onToggle={toggleProcesses}
+            />
             <ChatUsageSummary usage={usage} />
             <AppHeaderButton
               label="Search chats and commands"
@@ -1140,6 +1157,14 @@ export default function ChatPage() {
                         fileActions={fileActions}
                         className="min-h-0 flex-1 border-l pt-10"
                       />
+                    ) : dockedPanel === "processes" ? (
+                      <ProcessesPanel
+                        processes={processes}
+                        onStop={stopProcess}
+                        onClose={closeProcesses}
+                        providerName={providerName}
+                        className="min-h-0 flex-1 border-l pt-10"
+                      />
                     ) : dockedPanel === "plan" && openPlan ? (
                       <PlanPanel
                         plan={openPlan.plan}
@@ -1182,7 +1207,9 @@ export default function ChatPage() {
                   ? closePlan
                   : overlayPanel === "changes"
                     ? closeChanges
-                    : closePreview
+                    : overlayPanel === "processes"
+                      ? closeProcesses
+                      : closePreview
               }
               className={cn(
                 "absolute inset-x-0 top-10 bottom-0 z-40 bg-foreground/20 backdrop-blur-[1px] transition-opacity duration-200 motion-reduce:transition-none md:hidden",
@@ -1207,6 +1234,14 @@ export default function ChatPage() {
                   onOpenFile={handleChangesFileOpen}
                   fileActions={fileActions}
                   className="h-full border-l max-sm:[&_[data-slot=changes-panel-map]]:hidden"
+                />
+              ) : overlayPanel === "processes" ? (
+                <ProcessesPanel
+                  processes={processes}
+                  onStop={stopProcess}
+                  onClose={closeProcesses}
+                  providerName={providerName}
+                  className="h-full border-l"
                 />
               ) : overlayPanel === "plan" && openPlan ? (
                 <PlanPanel

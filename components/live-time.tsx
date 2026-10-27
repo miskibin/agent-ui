@@ -25,3 +25,10 @@ export const RelativeTime = React.memo(function RelativeTime({
   useTick(30_000)
   return <>{relativeTime(from, nowMs())}</>
 })
+
+/** "just now", "4m ago" — a start time read as a sentence. */
+export const TimeAgo = React.memo(function TimeAgo({ from }: { from: number }) {
+  useTick(30_000)
+  const text = relativeTime(from, nowMs())
+  return <>{text === "now" ? "just now" : `${text} ago`}</>
+})
