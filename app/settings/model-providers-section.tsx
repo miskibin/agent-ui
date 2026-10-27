@@ -134,12 +134,21 @@ function ModelProviderRow({
     { ok: boolean; count?: number; error?: string } | null
   >(null)
   const inputId = `model-provider-${slug}`
+  // A comma-separated list over a string[]: held raw while typing so the
+  // separator being typed is not swallowed, committed when the field is left.
+  const [modelsDraft, setModelsDraft] = React.useState<string | null>(null)
 
   // Bound per row so the memoized inputs below never see a fresh closure.
   const patch = React.useCallback(
     (changes: Partial<ModelProviderEntry>) => onPatch(slug, changes),
     [slug, onPatch]
   )
+
+  const commitModels = React.useCallback(() => {
+    if (modelsDraft === null) return
+    patch({ models: parseModelIds(modelsDraft) })
+    setModelsDraft(null)
+  }, [modelsDraft, patch])
 
   const test = React.useCallback(async () => {
     setProbing(true)
@@ -211,6 +220,19 @@ function ModelProviderRow({
           value={entry.apiKey}
           onChange={(event) => patch({ apiKey: event.target.value })}
         />
+        <Input
+          aria-label={`${entry.name || slug} model ids`}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder="Model ids, comma separated — empty lists them from /models"
+          className="h-8 font-mono text-[12px]"
+          value={modelsDraft ?? entry.models.join(", ")}
+          onChange={(event) => setModelsDraft(event.target.value)}
+          onBlur={commitModels}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.currentTarget.blur()
+          }}
+        />
         <div className="flex items-center gap-2">
           <Button
             type="button"
@@ -251,16 +273,21 @@ function AddModelProviderRow({
   const [slug, setSlug] = React.useState("")
   const [name, setName] = React.useState("")
   const [baseUrl, setBaseUrl] = React.useState("")
+  const [apiKey, setApiKey] = React.useState("")
+  const [models, setModels] = React.useState("")
 
   const reset = React.useCallback(() => {
     setOpen(false)
     setSlug("")
     setName("")
     setBaseUrl("")
+    setApiKey("")
+    setModels("")
   }, [])
 
   const submit = React.useCallback(() => {
-    const normalizedSlug = slug.trim().toLowerCase()
+    // The slug defaults to the name, slugged — "LiteLLM" → `litellm`.
+    const normalizedSlug = (slug.trim() || slugFromName(name)).toLowerCase()
     if (!MODEL_PROVIDER_SLUG_RE.test(normalizedSlug)) {
       toast.error("Slug must be lowercase letters, digits or hyphens (1-32 chars).")
       return
@@ -275,15 +302,21 @@ function AddModelProviderRow({
     }
     const trimmedName = name.trim() || normalizedSlug
     const trimmedBaseUrl = baseUrl.trim().replace(/\/+$/, "")
+    if (!/^https?:\/\/\S+$/i.test(trimmedBaseUrl)) {
+      toast.error("Base URL must start with http:// or https:// — e.g. http://localhost:4000/v1")
+      return
+    }
+    // Added switched on: a provider someone just typed a URL for is one they
+    // mean to use, and a disabled one supplies no models anywhere.
     onAdd(normalizedSlug, {
-      enabled: false,
+      enabled: true,
       name: trimmedName,
       baseUrl: trimmedBaseUrl,
-      apiKey: "",
-      models: [],
+      apiKey: apiKey.trim(),
+      models: parseModelIds(models),
     })
     reset()
-  }, [slug, name, baseUrl, existing, onAdd, reset])
+  }, [slug, name, baseUrl, apiKey, models, existing, onAdd, reset])
 
   if (!open) {
     return (
@@ -309,41 +342,71 @@ function AddModelProviderRow({
   return (
     <SettingsRow
       title="Add custom provider"
-      description="Slug becomes the model id prefix, e.g. my-provider/gpt-4."
+      description="Any OpenAI-compatible endpoint — LiteLLM, vLLM, LM Studio, a gateway. The slug becomes the model id prefix, e.g. litellm/gpt-4o."
     >
-      <div className="grid gap-2">
-        <Input
-          aria-label="Provider slug"
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Slug, e.g. my-provider"
-          className="h-8 font-mono text-[12px]"
-          value={slug}
-          onChange={(event) => setSlug(event.target.value)}
-        />
-        <Input
-          aria-label="Provider display name"
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Display name"
-          className="h-8 text-[12.5px]"
-          value={name}
-          onChange={(event) => setName(event.target.value)}
-        />
-        <Input
-          aria-label="Provider base URL"
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="https://api.example.com/v1"
-          className="h-8 font-mono text-[12px]"
-          value={baseUrl}
-          onChange={(event) => setBaseUrl(event.target.value)}
-        />
+      <div className="grid gap-2.5">
+        <AddField label="Name" htmlFor="add-provider-name">
+          <Input
+            id="add-provider-name"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="LiteLLM"
+            className="h-8 text-[12.5px]"
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+          />
+        </AddField>
+        <AddField label="Slug" htmlFor="add-provider-slug">
+          <Input
+            id="add-provider-slug"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={slugFromName(name) || "litellm"}
+            className="h-8 font-mono text-[12px]"
+            value={slug}
+            onChange={(event) => setSlug(event.target.value)}
+          />
+        </AddField>
+        <AddField label="Base URL" htmlFor="add-provider-url">
+          <Input
+            id="add-provider-url"
+            aria-label="Provider base URL"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="http://localhost:4000/v1"
+            className="h-8 font-mono text-[12px]"
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+          />
+        </AddField>
+        <AddField label="API key" htmlFor="add-provider-key">
+          <Input
+            id="add-provider-key"
+            type="password"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Optional — e.g. your LiteLLM master or virtual key"
+            className="h-8 font-mono text-[12px]"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+          />
+        </AddField>
+        <AddField label="Models" htmlFor="add-provider-models">
+          <Input
+            id="add-provider-models"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Optional, comma separated — empty lists them from /models"
+            className="h-8 font-mono text-[12px]"
+            value={models}
+            onChange={(event) => setModels(event.target.value)}
+          />
+        </AddField>
         <div className="flex items-center gap-2">
           <Button
             type="button"
             size="sm"
-            disabled={!slug.trim()}
+            disabled={!(slug.trim() || slugFromName(name)) || !baseUrl.trim()}
             onClick={submit}
             className="text-[12.5px]"
           >
@@ -362,4 +425,36 @@ function AddModelProviderRow({
       </div>
     </SettingsRow>
   )
+}
+
+function AddField({
+  label,
+  htmlFor,
+  children,
+}: {
+  label: string
+  htmlFor: string
+  children: React.ReactNode
+}) {
+  return (
+    <div className="grid gap-1 sm:grid-cols-[6rem_1fr] sm:items-center sm:gap-3">
+      <label htmlFor={htmlFor} className="text-[12px] text-muted-foreground">
+        {label}
+      </label>
+      {children}
+    </div>
+  )
+}
+
+/** "My LiteLLM" → `my-litellm`, within the slug alphabet and length. */
+function slugFromName(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+}
+
+function parseModelIds(value: string): string[] {
+  return [...new Set(value.split(/[,\n]/).map((id) => id.trim()).filter(Boolean))]
 }
