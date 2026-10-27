@@ -106,7 +106,7 @@ export async function POST(req: Request) {
     const settings = await readSettings()
     const session = await getSession(body.sessionId ?? "")
     // The chat's own model when this app can reach it directly, else the one
-    // the memory extractor uses — the same order `POST /api/sessions/<id>/title`
+    // the memory extractor uses — the same order `POST /api/sessions/<id>`
     // follows, and for the same reason: a CLI harness's model is not something
     // a plain completion can call.
     const candidates = [

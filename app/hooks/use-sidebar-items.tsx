@@ -416,15 +416,8 @@ export function useSidebarItems({
             className={SIDEBAR_ROW_ACTION}
             title="Delete chat"
             aria-label={`Delete ${item.title}`}
-            onClick={() =>
-              // Deleting a chat takes its transcript with it, so it gets the
-              // same second click every other destructive action here gets.
-              toast.warning(`Delete “${item.title || "Untitled"}”?`, {
-                description: "The conversation and its transcript are removed.",
-                duration: 8_000,
-                action: { label: "Delete", onClick: () => onDelete(item.id) },
-              })
-            }
+            // No confirmation: the delete toast offers "Restore" instead.
+            onClick={() => onDelete(item.id)}
           >
             <Trash2 />
           </button>

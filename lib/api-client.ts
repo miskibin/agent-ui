@@ -47,7 +47,15 @@ async function errorText(res: Response) {
   } catch {
     /* not JSON — fall through to the raw body */
   }
-  return body.trim() || `Request failed (${res.status})`
+  // An HTML page is a framework error page (a route the running server does
+  // not know, a crash), never a message meant for a toast.
+  const text = body.trim()
+  if (!text || /^<(!doctype|html)/i.test(text)) {
+    return res.status === 404
+      ? `Not found (404): ${new URL(res.url || "/", "http://x").pathname} — restart the app if it was just updated`
+      : `Request failed (${res.status})`
+  }
+  return text.length > 300 ? `${text.slice(0, 300)}…` : text
 }
 
 export function fetchSettings(): Promise<AppSettings> {
@@ -209,9 +217,13 @@ export function patchSession(
     .then((data) => data.session)
 }
 
-export function deleteSession(id: string): Promise<void> {
+export function deleteSession(
+  id: string,
+  options: { keepalive?: boolean } = {}
+): Promise<void> {
   return fetch(`/api/sessions/${encodeURIComponent(id)}`, {
     method: "DELETE",
+    keepalive: options.keepalive,
   }).then(async (res) => {
     if (!res.ok) throw new Error(await errorText(res))
   })
@@ -592,7 +604,7 @@ export function fetchSkills(sessionId: string): Promise<SkillCatalog> {
 export function regenerateTitle(
   sessionId: string
 ): Promise<{ session: SessionMeta; title: string }> {
-  return fetch(`/api/sessions/${encodeURIComponent(sessionId)}/title`, {
+  return fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
     method: "POST",
   }).then(json<{ session: SessionMeta; title: string }>)
 }

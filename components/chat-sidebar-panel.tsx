@@ -273,7 +273,6 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           onTogglePin(drop.itemId, true)
         } else if (drop.action === "delete") {
           onDelete(drop.itemId)
-          toast.message("Chat deleted")
         }
       }}
       renderOverlay={(id) => {

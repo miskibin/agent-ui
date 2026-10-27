@@ -3,11 +3,18 @@ import "server-only"
 import { parseJsonObject } from "@/lib/json-rescue"
 import { splitModelId } from "@/lib/model-providers/ids"
 import { enabledModelSources } from "@/lib/model-providers/server"
+import {
+  effortRejected,
+  looksReasoningCapableId,
+  rememberEffortRejected,
+} from "@/lib/model-reasoning"
 import { OLLAMA_DEFAULT_NUM_CTX } from "@/lib/ollama-context"
 import {
   fetchOllamaModelContext,
   normalizeBaseUrl,
+  probeOllama,
 } from "@/lib/providers/ollama-api"
+import { ensureOllama } from "@/lib/providers/ollama-autostart"
 import type { AppSettings } from "@/lib/settings/schema"
 import { estimateTokens, fitMessagesToContext } from "@/lib/token-estimate"
 
@@ -18,7 +25,23 @@ import { estimateTokens, fitMessagesToContext } from "@/lib/token-estimate"
  * calls tools; those belong to the providers.
  */
 
-const TIMEOUT_MS = 20_000
+/**
+ * How long one completion may take, per kind of source. The answer itself is
+ * a few dozen tokens; what the clock actually waits on is everything before
+ * it. A local model that is not loaded yet spends most of a minute reading
+ * its weights off disk before it produces a token (a 20s cap made "Regenerate
+ * title" fail on exactly the first try of the day), and a hosted reasoning
+ * model thinks before it answers even when told to keep that short.
+ */
+const OLLAMA_TIMEOUT_MS = 90_000
+const HOSTED_TIMEOUT_MS = 45_000
+
+/**
+ * A reasoning model spends `max_tokens` on its thinking first, so the budget
+ * a title needs is not the budget it must be given — 200 tokens left a
+ * reasoning model with nothing to answer in.
+ */
+const REASONING_MIN_TOKENS = 2_048
 
 /**
  * Ollama's default window is 4096 whatever the weights allow — see
@@ -109,6 +132,14 @@ async function failureText(res: Response, label: string): Promise<string> {
   return detail ? `${label} (${res.status}): ${detail}` : `${label} (${res.status})`
 }
 
+/** A timeout reads as one; the platform's own message names no model. */
+function timeoutAware(err: unknown, label: string, ms: number): Error {
+  if (err instanceof Error && err.name === "TimeoutError") {
+    return new Error(`${label} did not answer within ${Math.round(ms / 1000)}s`)
+  }
+  return err instanceof Error ? err : new Error(String(err))
+}
+
 export async function complete(
   settings: AppSettings,
   modelId: string,
@@ -117,66 +148,123 @@ export async function complete(
 ): Promise<string> {
   const { source, model } = splitModelId(modelId)
   const maxTokens = options.maxTokens ?? 200
-  const signal = AbortSignal.timeout(TIMEOUT_MS)
 
   if (source === "ollama") {
     const baseUrl = normalizeBaseUrl(settings.providers.ollama.baseUrl)
-    const fitted = await fitToOllamaContext(baseUrl, model, messages, maxTokens)
-    const res = await fetch(`${baseUrl}/api/chat`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    // The chat may never have touched Ollama this session; start it the way
+    // the providers do rather than failing on a server that is merely down.
+    if (!(await ensureOllama(baseUrl)) && !(await probeOllama(baseUrl))) {
+      throw new Error(`Ollama is not reachable at ${baseUrl}`)
+    }
+    const signal = AbortSignal.timeout(OLLAMA_TIMEOUT_MS)
+    try {
+      const fitted = await fitToOllamaContext(
+        baseUrl,
         model,
-        messages: fitted.messages,
-        stream: false,
-        think: false,
-        options: {
-          temperature: 0.2,
-          num_predict: maxTokens,
-          ...(fitted.numCtx ? { num_ctx: fitted.numCtx } : null),
-        },
-      }),
-      cache: "no-store",
-      signal,
-    })
-    if (!res.ok) throw new Error(await failureText(res, "Ollama /api/chat failed"))
-    const data = (await res.json()) as { message?: { content?: string } }
-    return data.message?.content?.trim() ?? ""
+        messages,
+        maxTokens
+      )
+      const res = await fetch(`${baseUrl}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model,
+          messages: fitted.messages,
+          stream: false,
+          think: false,
+          options: {
+            temperature: 0.2,
+            num_predict: maxTokens,
+            ...(fitted.numCtx ? { num_ctx: fitted.numCtx } : null),
+          },
+        }),
+        cache: "no-store",
+        signal,
+      })
+      if (!res.ok) {
+        throw new Error(await failureText(res, "Ollama /api/chat failed"))
+      }
+      const data = (await res.json()) as { message?: { content?: string } }
+      return data.message?.content?.trim() ?? ""
+    } catch (err) {
+      throw timeoutAware(err, `Ollama model ${model}`, OLLAMA_TIMEOUT_MS)
+    }
   }
 
-  const entry = enabledModelSources(settings).find((item) => item.slug === source)
+  const entry = enabledModelSources(settings).find(
+    (item) => item.slug === source
+  )
   if (!entry) throw new Error(`No configured model provider named "${source}"`)
-  const res = await fetch(`${entry.baseUrl}/chat/completions`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(entry.apiKey
-        ? {
-            Authorization: `Bearer ${entry.apiKey}`,
-            "x-api-key": entry.apiKey,
-            "anthropic-version": "2023-06-01",
-          }
-        : null),
-    },
-    body: JSON.stringify({
-      model,
-      messages,
-      max_tokens: maxTokens,
-      temperature: 0.2,
-      stream: false,
-    }),
-    cache: "no-store",
-    signal,
-  })
-  if (!res.ok) {
-    throw new Error(
-      await failureText(res, `${entry.name} chat/completions failed`)
-    )
+
+  // A reasoning model is asked to think as little as it will, which is most of
+  // the latency, and given room to think in; an endpoint that refuses the
+  // field is retried without it and remembered, as the chat path does.
+  const reasoning = looksReasoningCapableId(model)
+  let effort = reasoning && !effortRejected(modelId)
+  let tokenField: "max_tokens" | "max_completion_tokens" = "max_tokens"
+  const signal = AbortSignal.timeout(HOSTED_TIMEOUT_MS)
+  try {
+    for (let attempt = 0; ; attempt++) {
+      const res = await fetch(`${entry.baseUrl}/chat/completions`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(entry.apiKey
+            ? {
+                Authorization: `Bearer ${entry.apiKey}`,
+                "x-api-key": entry.apiKey,
+                "anthropic-version": "2023-06-01",
+              }
+            : null),
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          [tokenField]: reasoning
+            ? Math.max(maxTokens, REASONING_MIN_TOKENS)
+            : maxTokens,
+          // Reasoning models refuse `temperature` at all on some endpoints.
+          ...(effort
+            ? { reasoning_effort: "low" }
+            : reasoning
+              ? null
+              : { temperature: 0.2 }),
+          stream: false,
+        }),
+        cache: "no-store",
+        signal,
+      })
+      if (res.status === 400 && attempt < 2) {
+        const detail = await res
+          .clone()
+          .text()
+          .catch(() => "")
+        if (effort && /reasoning_effort|unknown|unsupported/i.test(detail)) {
+          effort = false
+          rememberEffortRejected(modelId)
+          continue
+        }
+        if (
+          tokenField === "max_tokens" &&
+          /max_completion_tokens/.test(detail)
+        ) {
+          tokenField = "max_completion_tokens"
+          continue
+        }
+      }
+      if (!res.ok) {
+        throw new Error(
+          await failureText(res, `${entry.name} chat/completions failed`)
+        )
+      }
+      const data = (await res.json()) as {
+        choices?: Array<{ message?: { content?: string } }>
+      }
+      return data.choices?.[0]?.message?.content?.trim() ?? ""
+    }
+  } catch (err) {
+    throw timeoutAware(err, `${entry.name} model ${model}`, HOSTED_TIMEOUT_MS)
   }
-  const data = (await res.json()) as {
-    choices?: Array<{ message?: { content?: string } }>
-  }
-  return data.choices?.[0]?.message?.content?.trim() ?? ""
 }
 
 /** Longest chat title kept; the sidebar row is narrow. */

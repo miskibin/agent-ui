@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import { deleteCheckpointRefs } from "@/lib/checkpoints"
 import { crossOriginRefusal } from "@/lib/request-origin"
+import { regenerateSessionTitle } from "@/lib/session-title"
 import {
   deleteSession,
   getSession,
@@ -17,6 +18,19 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 type Ctx = { params: Promise<{ id: string }> }
+
+/**
+ * Asks a model to (re)name the chat. It lives on this route rather than a
+ * nested `/title` one: that was the only route under a dynamic segment, and
+ * some dev servers answered it with Next's own 404 page.
+ */
+export async function POST(req: Request, ctx: Ctx) {
+  // A model call on the user's key, from a page on another origin — no.
+  const refused = crossOriginRefusal(req)
+  if (refused) return refused
+  const { id } = await ctx.params
+  return regenerateSessionTitle(id)
+}
 
 /** One thread's messages, loaded only when the thread is opened. */
 export async function GET(_req: Request, ctx: Ctx) {

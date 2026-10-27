@@ -4,7 +4,7 @@ import path from "node:path"
 
 import { NextResponse } from "next/server"
 
-import { isWithinReal } from "@/lib/fs-roots"
+import { isWithinKnownRoot, isWithinReal } from "@/lib/fs-roots"
 import { resolveInRoot } from "@/lib/fs-search"
 import { acpAgentKey } from "@/lib/providers/acp"
 import { CURSOR_PROVIDER_ID } from "@/lib/providers/cursor"
@@ -83,7 +83,8 @@ async function workspaceRoot(providerId: string, sessionId: string) {
  *
  * The panel opens on the transcript alone, so this is strictly an enhancement:
  * every failure here is a 4xx the page swallows, never something that blocks
- * the UI. Reads are confined to the provider's workspace, the app's own data
+ * the UI. Reads are confined to the provider's workspace (an absolute path
+ * past it follows `files.anyPath`, as `/api/files` does), the app's own data
  * directory (`~/.agent-ui`, which holds settings and any keys in them) is
  * refused even when it sits inside that workspace, and a cross-site request is
  * refused before either — file contents are not something another origin gets
@@ -121,9 +122,25 @@ export async function GET(req: Request) {
   // tool said.
   const name = found && !found.exact ? found.relative : requested
 
+  /**
+   * An absolute path outside the folder is still the agent's own work — a
+   * script it wrote to a temp directory, a log under the user's home — and the
+   * card that names it is useless if the panel cannot show it. It is held to
+   * the rule `/api/files` and `/api/open` already follow: any path while
+   * `files.anyPath` is on (the default), only the app's known folders when it
+   * is off. A relative path never gets this far out; it is joined to the root.
+   */
+  const readableElsewhere = async () => {
+    if (!path.isAbsolute(requested)) return false
+    const settings = await readSettings()
+    return (
+      settings.files.anyPath || (await isWithinKnownRoot(resolved, settings))
+    )
+  }
+
   // Containment is decided on real paths (`lib/fs-roots`): a symlink under the
   // workspace is otherwise a way straight out of it.
-  if (!(await isWithinReal(root, resolved))) {
+  if (!(await isWithinReal(root, resolved)) && !(await readableElsewhere())) {
     return NextResponse.json(
       { error: "That path is outside the workspace" },
       { status: 403 }
