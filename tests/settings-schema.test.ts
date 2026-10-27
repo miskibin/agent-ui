@@ -76,9 +76,9 @@ test("the two default-on switches only turn off on a real false", () => {
   assert.equal(normalizeSettings({ memory: { enabled: true } }).memory.enabled, true)
 })
 
-test("the memory embedding model defaults to EmbeddingGemma 2 and never ends up blank", () => {
-  assert.equal(normalizeSettings({ memory: {} }).memory.embedModel, "embeddinggemma-2")
-  assert.equal(normalizeSettings({ memory: { embedModel: "  " } }).memory.embedModel, "embeddinggemma-2")
+test("the memory embedding model defaults to EmbeddingGemma 2's text-only tag and never ends up blank", () => {
+  assert.equal(normalizeSettings({ memory: {} }).memory.embedModel, "embeddinggemma-2:270m")
+  assert.equal(normalizeSettings({ memory: { embedModel: "  " } }).memory.embedModel, "embeddinggemma-2:270m")
   assert.equal(
     normalizeSettings({ memory: { embedModel: "nomic-embed-text" } }).memory.embedModel,
     "nomic-embed-text"

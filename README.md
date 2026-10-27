@@ -169,7 +169,7 @@ another location.
 - `sessions/<id>.json` — rendered transcripts
 - `memory/*.md` — optional cross-chat memory; off by default. Runs on Ollama
   (started for you when it is down) and recalls facts by relevance with
-  EmbeddingGemma 2, whose vectors are cached in `memory/.vectors.json`
+  EmbeddingGemma 2 (the text-only 270M tag), whose vectors are cached in `memory/.vectors.json`
 - `imports.json` — which chats were imported, and from which CLI
 - `worktrees/` — git worktrees the app created for chats that asked for one
 - `pi/` and `dsh/` — isolated harness configuration and session data

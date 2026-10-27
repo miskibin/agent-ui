@@ -24,7 +24,13 @@ import {
  * with the directory.
  */
 
-/** Matryoshka cut — see `toUnitVector`. */
+/**
+ * Matryoshka cut — see `toUnitVector`. Asked of Ollama directly (`dimensions`)
+ * so the full 768 floats never cross the wire; the client-side cut stays as
+ * the backstop for a server too old to honour the field, which ignores it.
+ * 256 rather than 128: at a few hundred one-line facts the cache is small
+ * either way, and the duplicate threshold wants the sharper similarities.
+ */
 const DIMS = 256
 /** Ollama takes a batch per request; this keeps one request well under a second on CPU. */
 const BATCH = 32
@@ -194,6 +200,7 @@ async function embedRaw(
         model,
         input: inputs.slice(start, start + BATCH),
         truncate: true,
+        dimensions: DIMS,
         keep_alive: KEEP_ALIVE,
       }),
       cache: "no-store",

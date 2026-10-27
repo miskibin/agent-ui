@@ -6,7 +6,7 @@ import { memoryOllama } from "@/lib/memory/ollama"
 import type { MemoryStatus } from "@/lib/memory/types"
 import { fetchOllamaModels, normalizeBaseUrl } from "@/lib/providers/ollama-api"
 
-/** `embeddinggemma-2` is installed as `embeddinggemma-2:latest`. */
+/** An untagged name is installed as `<name>:latest`. */
 function installed(names: string[], model: string) {
   const wanted = model.includes(":") ? model : `${model}:latest`
   return names.some((name) => name === model || name === wanted)

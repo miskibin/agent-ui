@@ -348,10 +348,12 @@ one interface:
   second spawn (`allowOllamaRespawn`).
 
   **Recall is retrieval, not truncation** (`retrieve.ts` pure and unit-tested, `embed.ts` the
-  I/O). EmbeddingGemma 2 (`memory.embedModel`, pulled through `/api/pull` the first time the
-  status check finds it missing) embeds every fact once — `memory/.vectors.json`, keyed by the
-  fact's normalized text so a hand-edited line misses and an untouched one never re-embeds,
-  256-dim Matryoshka cut, its `task: search result | query:` / `title: none | text:` prompts
+  I/O). EmbeddingGemma 2 (`memory.embedModel`, default the 270M text-only tag — memory never
+  embeds an image, so the multimodal `latest` is three times the download for nothing — pulled
+  through `/api/pull` the first time the status check finds it missing) embeds every fact once
+  — `memory/.vectors.json`, keyed by the fact's normalized text so a hand-edited line misses
+  and an untouched one never re-embeds, 256 of 768 dims (Matryoshka, asked of Ollama as
+  `dimensions` so the full vector never crosses the wire), its `task: search result | query:` / `title: none | text:` prompts
   on both sides because Ollama's tag carries no template. `memory.maxChars` is a *per-turn*
   budget: a store that fits is sent whole and unranked; one that does not keeps the
   `preferences` category (capped at half the budget — how to answer is relevant to every

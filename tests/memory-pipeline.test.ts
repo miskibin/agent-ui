@@ -42,10 +42,14 @@ test.before(async () => {
     req.on("end", () => {
       res.setHeader("Content-Type", "application/json")
       if (req.url === "/api/tags") {
-        res.end(JSON.stringify({ models: [{ name: "embeddinggemma-2:latest" }] }))
+        res.end(JSON.stringify({ models: [{ name: "embeddinggemma-2:270m" }] }))
       } else if (req.url === "/api/embed") {
         embedCalls++
-        const { input } = JSON.parse(body) as { input: string[] }
+        const { input, dimensions } = JSON.parse(body) as {
+          input: string[]
+          dimensions?: number
+        }
+        assert.equal(dimensions, 256)
         res.end(JSON.stringify({ embeddings: input.map(embedding) }))
       } else if (req.url === "/api/chat") {
         res.end(JSON.stringify({ message: { content: JSON.stringify({ operations }) } }))

@@ -388,8 +388,12 @@ function defaultModelProviders(): Record<string, ModelProviderEntry> {
  */
 export const DEFAULT_MEMORY_BUDGET = 2_000
 export const MEMORY_BUDGET_RANGE = { min: 500, max: 8_000 } as const
-/** EmbeddingGemma 2 — small, local, and trained for exactly this retrieval. */
-export const DEFAULT_MEMORY_EMBED_MODEL = "embeddinggemma-2"
+/**
+ * EmbeddingGemma 2, the 270M text-only tag. Memory embeds one-line facts and
+ * the typed prompt, never an image, so the multimodal `latest` (740M, 1.3 GB)
+ * buys nothing here but a download three times the size of this one (378 MB).
+ */
+export const DEFAULT_MEMORY_EMBED_MODEL = "embeddinggemma-2:270m"
 
 /** Two weeks — long enough that a chat you are still coming back to survives. */
 export const DEFAULT_AUTO_SETTLE_DAYS = 14
