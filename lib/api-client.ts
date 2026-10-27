@@ -604,7 +604,7 @@ export function fetchSkills(sessionId: string): Promise<SkillCatalog> {
 export function regenerateTitle(
   sessionId: string
 ): Promise<{ session: SessionMeta; title: string }> {
-  return fetch(`/api/sessions/${encodeURIComponent(sessionId)}/title`, {
+  return fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
     method: "POST",
   }).then(json<{ session: SessionMeta; title: string }>)
 }

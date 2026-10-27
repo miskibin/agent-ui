@@ -1,14 +1,10 @@
+import "server-only"
+
 import { NextResponse } from "next/server"
 
 import { canComplete, complete, sanitizeTitle } from "@/lib/completion"
-import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
 import { getSession, patchSession, readMessages } from "@/lib/store/sessions"
-
-export const runtime = "nodejs"
-export const dynamic = "force-dynamic"
-
-type Ctx = { params: Promise<{ id: string }> }
 
 /** Enough of the thread to name it; the whole transcript would be waste. */
 const MAX_CONTEXT_CHARS = 6_000
@@ -83,18 +79,14 @@ function regeneratePrompt(previousTitle: string) {
 }
 
 /**
- * `POST /api/sessions/<id>/title` — asks a model for a title and stores it.
+ * `POST /api/sessions/<id>` — asks a model for a title and stores it.
  *
  * The chat's own model is used when it is one the app can reach directly (a
  * composite `<source>/<model>` id from Ollama or a configured provider);
  * a CLI harness's model is not, so the memory extractor's Ollama model is the
  * fallback. Nothing to ask → 409, and the title is left alone.
  */
-export async function POST(req: Request, ctx: Ctx) {
-  // A model call on the user's key, from a page on another origin — no.
-  const refused = crossOriginRefusal(req)
-  if (refused) return refused
-  const { id } = await ctx.params
+export async function regenerateSessionTitle(id: string): Promise<Response> {
   const session = await getSession(id)
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })

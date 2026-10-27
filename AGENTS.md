@@ -728,7 +728,7 @@ one interface:
   `settings.chat.desktopNotifications` switches it off. Sidebar folder headers poll
   `GET /api/git/status` (`lib/git-status.ts`: ahead/behind, dirty count, the branch's PR via
   `gh` when present) once a minute and on focus. "Regenerate title" (`POST
-  /api/sessions/<id>/title`, `lib/completion.ts`) asks the chat's own model when it is one the
+  /api/sessions/<id>`, `lib/session-title.ts`, `lib/completion.ts`) asks the chat's own model when it is one the
   app can reach directly, else the memory model. Token counts get an estimated price from
   `lib/model-pricing.ts` — list prices by `<source>/<model>`; Ollama is free, a CLI harness's
   bare id is unknown rather than free. `claude-code` is the one exception, because unlike
