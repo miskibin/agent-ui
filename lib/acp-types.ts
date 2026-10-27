@@ -61,6 +61,8 @@ export class AcpRpcError extends Error {
 export type AcpContentBlock = {
   type?: string
   text?: string
+  data?: string
+  mimeType?: string
   /** `resource_link` / `resource` carry a uri instead of text. */
   uri?: string
   resource?: { uri?: string; text?: string; mimeType?: string }
@@ -75,6 +77,7 @@ export type AcpSessionCapabilities = {
 
 export type AcpAgentCapabilities = {
   loadSession?: boolean
+  mcpCapabilities?: { http?: boolean; sse?: boolean }
   promptCapabilities?: {
     image?: boolean
     audio?: boolean
@@ -114,12 +117,34 @@ export type AcpConfigOption = {
   options?: AcpConfigChoice[]
 }
 
+/**
+ * An agent's own operating modes ("ask", "plan", "code", …), published on
+ * `session/new` and switched with `session/set_mode`. Ids are the agent's.
+ */
+export type AcpSessionMode = { id?: string; name?: string; description?: string }
+
+export type AcpSessionModeState = {
+  currentModeId?: string
+  availableModes?: AcpSessionMode[]
+}
+
 export type AcpSessionNewResult = {
   sessionId?: string
   configOptions?: AcpConfigOption[]
+  modes?: AcpSessionModeState | null
 }
 
-export type AcpSessionResumeResult = { configOptions?: AcpConfigOption[] }
+export type AcpSessionResumeResult = {
+  configOptions?: AcpConfigOption[]
+  modes?: AcpSessionModeState | null
+}
+
+/** One entry of `available_commands_update` — the agent's own `/` commands. */
+export type AcpAvailableCommand = {
+  name?: string
+  description?: string
+  input?: { hint?: string } | null
+}
 
 export type AcpToolCallStatus = "pending" | "in_progress" | "completed" | "failed"
 
@@ -159,8 +184,22 @@ export type AcpSessionUpdate = {
    * shell-shaped tool published one.
    */
   rawOutput?: unknown
+  /**
+   * Absolute paths a tool call touches. An agent that names its file there
+   * rather than in `rawInput` (tinyagent puts it in both, Claude Code's
+   * adapter often only here) still gets a card that knows its file.
+   */
+  locations?: Array<{ path?: string; line?: number | null }>
   /** plan */
   entries?: AcpPlanEntry[]
+  /** usage_update: tokens in context, window size, and spend so far. */
+  used?: number
+  size?: number
+  cost?: { amount?: number; currency?: string } | null
+  /** available_commands_update */
+  availableCommands?: AcpAvailableCommand[]
+  /** current_mode_update */
+  currentModeId?: string
 }
 
 export type AcpSessionUpdateParams = {
@@ -211,4 +250,30 @@ export type AcpStopReason =
   | "refusal"
   | "cancelled"
 
-export type AcpPromptResult = { stopReason?: AcpStopReason | string }
+/**
+ * Token accounting some agents attach to the prompt result (an unstable part
+ * of v1). `usage_update` notifications carry the context-window view instead.
+ */
+export type AcpPromptUsage = {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+  thoughtTokens?: number
+  cachedReadTokens?: number
+  cachedWriteTokens?: number
+}
+
+export type AcpPromptResult = {
+  stopReason?: AcpStopReason | string
+  usage?: AcpPromptUsage | null
+}
+
+/** `terminal/create` — the client runs a command on the agent's behalf. */
+export type AcpCreateTerminalParams = {
+  sessionId?: string
+  command?: string
+  args?: string[]
+  env?: Array<{ name?: string; value?: string }>
+  cwd?: string | null
+  outputByteLimit?: number | null
+}

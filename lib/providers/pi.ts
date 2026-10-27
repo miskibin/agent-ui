@@ -6,6 +6,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import type { ModelOption } from "@/components/ui/model-picker"
+import { hostedEffortModels, looksReasoningCapableId } from "@/lib/model-reasoning"
 import { joinModelId, splitModelId } from "@/lib/model-providers/ids"
 import {
   enabledModelSources,
@@ -170,6 +171,21 @@ export function createPiProvider(
      * `input` written into models.json, so what the composer offers and what
      * pi will actually forward can never drift.
      */
+    /**
+     * Effort reaches a hosted model pi marks as reasoning (the same predicate
+     * that writes `reasoning` into models.json, so the two cannot disagree).
+     * The local ones are left out: Ollama's OpenAI shim rejects
+     * `reasoning_effort`, so pi is told never to send it there.
+     */
+    async effortModels() {
+      const remote = await collectSourceModels(sources)
+      return hostedEffortModels(
+        remote.flatMap(({ source, models: listed }) =>
+          listed.map((model) => joinModelId(source.slug, model.id))
+        )
+      )
+    },
+
     async visionModels() {
       const [models, remote] = await Promise.all([
         collectLocalModels(baseUrl),
@@ -302,6 +318,12 @@ type ModelsConfig = {
         id: string
         name: string
         input?: string[]
+        /**
+         * Whether pi sends a thinking level for this model at all. pi clamps
+         * `--thinking` to off for a model not marked as reasoning, so leaving
+         * it out made the effort picker a control that did nothing.
+         */
+        reasoning?: boolean
         contextWindow?: number
         maxTokens?: number
       }>
@@ -478,6 +500,7 @@ async function writeModelsConfig(
               id: model.id,
               name: model.name,
               input: looksVisionCapableId(model.id) ? TEXT_AND_IMAGE : TEXT_ONLY,
+              reasoning: looksReasoningCapableId(model.id),
             })),
           },
         ])

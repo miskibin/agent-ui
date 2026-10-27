@@ -157,9 +157,10 @@ export async function POST(req: Request) {
   // Providers that resume server-side get the id; stateless ones get the
   // transcript replayed instead — images included, so a vision model keeps
   // seeing what was attached earlier in the thread.
-  const history: ChatTurn[] | undefined = info.capabilities.resume
-    ? undefined
-    : replayHistory(prior, info.capabilities.vision)
+  const history: ChatTurn[] | undefined =
+    info.capabilities.resume && !info.capabilities.historyOnFreshSession
+      ? undefined
+      : replayHistory(prior, info.capabilities.vision)
 
   const startedAt = Date.now()
   let assistant = seedAssistantMessage(body.assistantMessageId || newId())

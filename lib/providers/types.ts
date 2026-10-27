@@ -22,6 +22,13 @@ export type ProviderCapabilities = {
   tools: boolean
   /** Server-side conversation resume via sessionId. */
   resume: boolean
+  /**
+   * Resumes when it can, but may have to start a fresh backend session in a
+   * chat that already had one (an ACP agent that keeps its sessions in
+   * memory, after its process went away). The chat route then hands it
+   * `history` anyway, for that fresh session's briefing.
+   */
+  historyOnFreshSession?: boolean
   /** Reasoning-effort selection is meaningful. */
   effort: boolean
   /** Accepts image attachments. */
@@ -163,6 +170,14 @@ export type AgentProvider = {
    * asked. Omit it and every model is treated as vision-incapable.
    */
   visionModels?(): Promise<string[]>
+  /**
+   * Ids from `listModels()` that the effort control actually reaches — a
+   * model that does not reason, or a transport that cannot carry the
+   * setting, is left out and the composer hides the control for it. Omit it
+   * and every model is taken to accept effort whenever
+   * `capabilities.effort` is set (`lib/model-reasoning`).
+   */
+  effortModels?(): Promise<string[]>
   /**
    * Sections for grouped model pickers: `[{ id: sourceSlug, label: sourceName }]`,
    * matching the `group` each option from `listModels()` carries. Only

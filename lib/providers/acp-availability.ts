@@ -1,6 +1,6 @@
 /** Hosted credentials are a fallback only for the built-in dsh agent. */
 export function hasDeepSeekCredentials(agent: {
-  kind: "dsh" | "generic"
+  kind: string
   dsh: { apiKey: string }
 }): boolean {
   return (

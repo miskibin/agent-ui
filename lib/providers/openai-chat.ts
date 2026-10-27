@@ -7,6 +7,7 @@ import {
   listSourceModels,
   type ModelSource,
 } from "@/lib/model-providers/server"
+import { hostedEffortModels, rememberEffortRejected } from "@/lib/model-reasoning"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import { LineBuffer } from "@/lib/stream-framing"
 import type { AppSettings } from "@/lib/settings/schema"
@@ -104,6 +105,24 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
       return sources.map((source) => ({ id: source.slug, label: source.name }))
     },
 
+    /**
+     * `reasoning_effort` reaches a model only if it reasons: read off the id,
+     * minus every model whose endpoint has already refused the field.
+     */
+    async effortModels() {
+      const listed = await Promise.all(
+        sources.map(async (source) => ({
+          source,
+          models: await listSourceModels(source).catch(() => []),
+        }))
+      )
+      return hostedEffortModels(
+        listed.flatMap(({ source, models }) =>
+          models.map((model) => joinModelId(source.slug, model.id))
+        )
+      )
+    },
+
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       const startedAt = Date.now()
       const { source: slug, model } = splitModelId(options.model)
@@ -158,7 +177,11 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
         // as-is instead of being sent again.
         for (let attempt = 0; attempt < 2 && res.status === 400; attempt++) {
           const detail = await res.text().catch(() => "")
+          const hadEffort = !!body.reasoningEffort
           const dropped = dropOffendingField(body, detail)
+          // The endpoint has answered for this model: the picker stops
+          // offering a control that cannot reach it.
+          if (hadEffort && !body.reasoningEffort) rememberEffortRejected(options.model)
           if (!dropped) {
             yield { type: "error", message: failureMessage(source, 400, detail) }
             return
