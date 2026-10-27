@@ -83,6 +83,7 @@ import { useThreads } from "./hooks/use-threads"
 import { useTurnRunner } from "./hooks/use-turn-runner"
 import type { SettingsSectionId } from "@/app/settings/settings-view"
 import * as api from "@/lib/api-client"
+import type { ViewAction } from "@/lib/generative-view"
 
 /**
  * Settings render over the chat, so they live in this page's tree — but they
@@ -466,6 +467,20 @@ export default function ChatPage() {
     pushSettings,
     knownSkillNamesRef: skillCatalog.knownSkillNamesRef,
   })
+
+  /**
+   * A button or form in an answer's ` ```ui ` view speaks as the user: sent
+   * now, or queued behind a running turn exactly like anything typed into the
+   * composer mid-turn. `MessageList` holds it at one identity for its rows.
+   */
+  const handleViewAction = React.useCallback(
+    (_messageId: string, action: ViewAction) => {
+      const payload = { text: action.text, files: [], skills: [] }
+      if (isGenerating) handleQueue(payload)
+      else handleSend(payload)
+    },
+    [handleQueue, handleSend, isGenerating]
+  )
 
   const {
     listMessages,
@@ -1026,6 +1041,7 @@ export default function ChatPage() {
                       resolveFileUrl={resolveFileUrl}
                       fileActions={fileActions}
                       onQuote={handleQuote}
+                      onViewAction={handleViewAction}
                       renderActions={(message) =>
                         message.sender === "assistant" ? (
                           <>

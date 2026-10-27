@@ -478,8 +478,11 @@ one interface:
   service, and the spec is data, never code, so it needs no sandbox. The vocabulary reaches the
   model as `VIEW_SPEC_PROMPT` (~200 tokens) at the head of `standingContext`, before memory and
   under the same once-per-backend-conversation rule; `chat.generativeViews` (Settings → Chat)
-  stops sending it. Saved per-tool view templates are the planned next step — design the spec
-  so it stays plain JSON a file can hold.
+  stops sending it. A view draws while its fence is still streaming (the JSON is closed where it
+  stands), and its `button` / `form` blocks talk back the only way a user can: `onViewAction`
+  in `app/page.tsx` sends their text as the next user message, or queues it behind a running
+  turn like anything typed mid-turn — the view itself never runs anything. Saved per-tool view
+  templates are the planned next step — design the spec so it stays plain JSON a file can hold.
 - Local files an answer points at: `lib/message-stream.ts` rewrites markdown image targets that
   name a path on this machine (`lib/local-media.ts`) to `GET /api/files`, which streams the file
   back on the app's own origin — a browser will not load `file://` from an http page. The route
