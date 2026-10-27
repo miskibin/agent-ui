@@ -106,7 +106,9 @@ export const ProviderPicker = React.memo(function ProviderPicker({
           ) : (
             <Plug className="size-3.5" />
           )}
-          <span className="hidden truncate sm:inline">
+          {/* Dropped by the composer itself when its row runs out of room —
+              the container decides, not the viewport. */}
+          <span data-composer-label className="truncate">
             {current?.name ?? "Provider"}
           </span>
           {current && !current.available ? (

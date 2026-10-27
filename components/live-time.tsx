@@ -2,8 +2,7 @@
 
 import * as React from "react"
 
-import { formatElapsed, nowMs, relativeTime } from "@/lib/chat-helpers"
-import { cn } from "@/lib/utils"
+import { nowMs, relativeTime } from "@/lib/chat-helpers"
 
 /**
  * A live label owns its own tick. A single page-level clock re-rendered the
@@ -17,21 +16,6 @@ function useTick(everyMs: number) {
     return () => clearInterval(timer)
   }, [everyMs])
 }
-
-export const WorkingFor = React.memo(function WorkingFor({
-  startedAt,
-  dim,
-}: {
-  startedAt: number
-  dim: boolean
-}) {
-  useTick(1_000)
-  return (
-    <span className={cn("font-medium text-primary", dim && "opacity-75")}>
-      Working · {formatElapsed(startedAt, nowMs())}
-    </span>
-  )
-})
 
 export const RelativeTime = React.memo(function RelativeTime({
   from,

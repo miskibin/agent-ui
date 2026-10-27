@@ -15,14 +15,15 @@ import {
 import * as React from "react"
 import { toast } from "sonner"
 
-import type {
-  ChatSidebarItemData,
-  SidebarItemMenuAction,
-  SidebarItemRenderActions,
+import {
+  SidebarItemStatusLabel,
+  type ChatSidebarItemData,
+  type SidebarItemMenuAction,
+  type SidebarItemRenderActions,
 } from "@/components/ui/chat-sidebar"
 import type { GenerationStage } from "@/components/ui/generation-status"
 import type { ModelOption } from "@/components/ui/model-picker"
-import { RelativeTime, WorkingFor } from "@/components/live-time"
+import { RelativeTime } from "@/components/live-time"
 import {
   SIDEBAR_ROW_ACTION,
   SnoozeAction,
@@ -68,6 +69,9 @@ const STAGE_SUBTITLES: Record<Exclude<GenerationStage, "idle">, string> = {
 const MAX_TIMEOUT = 2_147_483_647
 
 const EMPTY_THREADS: Record<string, StoredMessage[]> = {}
+
+/** The platform never changes under a page, so there is nothing to subscribe to. */
+const subscribeNever = () => () => {}
 const EMPTY_SECTIONS: Record<string, boolean> = {}
 
 /**
@@ -76,8 +80,9 @@ const EMPTY_SECTIONS: Record<string, boolean> = {}
  * that hold what is not in play.
  *
  * The live labels are components rather than strings, so a running turn ticks
- * its own "Working · 12s" without a page-level clock re-rendering the sidebar,
- * the composer and the message list once a second for one label.
+ * its own "Working · 12s" (written straight to the DOM by the vendored
+ * `SidebarItemStatusLabel`) without a page-level clock re-rendering the
+ * sidebar, the composer and the message list once a second for one label.
  */
 export function useSidebarItems({
   refs,
@@ -230,13 +235,16 @@ export function useSidebarItems({
                 title={session.title}
                 onDismiss={() => onMarkVisited(session.id)}
               />
+            ) : awaiting.has(session.id) ? (
+              <SidebarItemStatusLabel status="pending" label="Awaiting input" />
             ) : run ? (
-              <WorkingFor
+              <SidebarItemStatusLabel
+                status="streaming"
+                label="Working"
                 startedAt={run.startedAt}
-                dim={session.id !== activeId}
               />
             ) : failures[session.id] ? (
-              <span className="font-medium text-destructive">Failed</span>
+              <SidebarItemStatusLabel status="fault" label="Failed" />
             ) : (
               <RelativeTime from={session.updatedAt} />
             ),
@@ -289,6 +297,47 @@ export function useSidebarItems({
       }),
     [activeId, closedSections, now, sessionItems, sessions, shelfPages]
   )
+
+  /**
+   * The first nine rows in jump order carry the shortcut that opens them —
+   * ⌥1…9 — shown while ⌥ is held (`ChatSidebar showJumpHints`). Only those
+   * nine rows are rebuilt when the order moves.
+   */
+  const apple = React.useSyncExternalStore(
+    subscribeNever,
+    () => /Mac|iPhone|iPad|iPod/.test(navigator.platform),
+    () => false
+  )
+  const jumpLabelled = React.useMemo(() => {
+    const label = (item: ChatSidebarItemData, position: number) =>
+      position < 9
+        ? {
+            ...item,
+            jumpLabel: apple ? `⌥${position + 1}` : `Alt ${position + 1}`,
+          }
+        : item
+    // Where each folder's rows start in the one sequence the shortcuts count.
+    const starts = folderGroups.reduce<number[]>(
+      (acc, group, i) => [
+        ...acc,
+        i === 0
+          ? pinnedItems.length
+          : acc[i - 1] + folderGroups[i - 1].items.length,
+      ],
+      []
+    )
+    return {
+      pinned: pinnedItems.map((item, i) => label(item, i)),
+      folders: folderGroups.map((group, g) =>
+        starts[g] >= 9
+          ? group
+          : {
+              ...group,
+              items: group.items.map((item, i) => label(item, starts[g] + i)),
+            }
+      ),
+    }
+  }, [apple, folderGroups, pinnedItems])
 
   React.useEffect(() => {
     orderedIdsRef.current = [
@@ -459,8 +508,8 @@ export function useSidebarItems({
 
   return {
     sessionItems,
-    pinnedItems,
-    folderGroups,
+    pinnedItems: jumpLabelled.pinned,
+    folderGroups: jumpLabelled.folders,
     snoozedShelf,
     settledShelf,
     showMoreOnShelf,

@@ -23,6 +23,7 @@ import { checkForUpdates } from "@/components/desktop-updater"
 import {
   Command,
   CommandEmpty,
+  CommandFooter,
   CommandGroup,
   CommandInput,
   CommandItem,
@@ -30,6 +31,7 @@ import {
   CommandSeparator,
   CommandShortcut,
 } from "@/components/ui/command"
+import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { useMessageSearch } from "@/app/hooks/use-command-palette"
 import { nowMs, relativeTime } from "@/lib/chat-helpers"
 import type { MessageSearchHit, MessageSearchRange } from "@/lib/message-search"
@@ -378,7 +380,7 @@ function CommandPaletteOverlay({
           if (event.key === "Tab") event.preventDefault()
         }}
         className={cn(
-          "relative w-[min(36rem,calc(100vw-2rem))] overflow-hidden rounded-lg border bg-popover shadow-lg",
+          "relative w-[min(36rem,calc(100vw-2rem))] overflow-hidden rounded-2xl border bg-popover shadow-xl",
           "duration-150 animate-in fade-in-0 zoom-in-95 motion-reduce:animate-none"
         )}
       >
@@ -472,6 +474,23 @@ function CommandPaletteOverlay({
               </CommandGroup>
             ) : null}
           </CommandList>
+          <CommandFooter aria-hidden>
+            <span className="inline-flex items-center gap-1.5">
+              <KbdGroup>
+                <Kbd>↑</Kbd>
+                <Kbd>↓</Kbd>
+              </KbdGroup>
+              Navigate
+            </span>
+            <span className="inline-flex items-center gap-1.5">
+              <Kbd>↵</Kbd>
+              Open
+            </span>
+            <span className="ml-auto inline-flex items-center gap-1.5">
+              <Kbd>Esc</Kbd>
+              Close
+            </span>
+          </CommandFooter>
         </Command>
       </div>
     </div>

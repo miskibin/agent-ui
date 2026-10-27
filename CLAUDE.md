@@ -288,12 +288,13 @@ one interface:
   in `globals.css` are `color-mix`ed from those tokens. Do not hand-edit theme data.
 
   Two token families are *not* taken verbatim, and `lib/theme/contrast.ts` owns both.
-  **`accent` / `sidebar-accent` are derived**: a tint of the theme's own primary over its own
-  surface, with the tint weakened until the surface's own ink reads on it. A registry accent is
-  whatever its author picked, and the app leans on it for every hover and every selected row —
-  `notebook` dark ships one at oklch(0.907) under a foreground of oklch(0.895), which is white
-  on white. Deriving it keeps the theme's hue (and carries more of it than most originals did)
-  while making the hover the same shape everywhere. **Contrast is a setting**, `soft |
+  **`accent` / `sidebar-accent` are derived**: a few percent of the surface's own ink over that
+  surface (5–7% for `accent`, a touch more for the sidebar), weakened if the ink would stop
+  reading on it. A registry accent is whatever its author picked, and the app leans on it for
+  every hover and every selected row — `notebook` dark ships one at oklch(0.907) under a
+  foreground of oklch(0.895), which is white on white. Deriving it as a neutral shade (the
+  highlight T3 Code uses) makes the hover the same shape in every theme and leaves the theme's
+  hue to `primary`, where a colour actually means something. **Contrast is a setting**, `soft |
   standard | high` (Settings → Appearance, persisted in `appearance.contrast`): `standard`
   holds every text pair to WCAG AA against the surface it actually sits on, `high` to AAA,
   `soft` relaxes the greys down to a floor. Each level is emitted as its own small
