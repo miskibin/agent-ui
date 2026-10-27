@@ -91,7 +91,7 @@ export function ModelProvidersSection({
     <SettingsSection
       id="models"
       title="Model providers"
-      description="OpenAI-compatible endpoints that supply models to harnesses like pi and direct chat — this is where API keys live."
+      description="OpenAI-compatible endpoints that supply models to pi, Codex, tinyagent and direct chat — this is where API keys live. Codex needs an endpoint that serves the Responses API (/responses)."
     >
       {loaded
         ? orderedSlugs.map((slug) => (

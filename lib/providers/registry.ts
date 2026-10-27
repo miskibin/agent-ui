@@ -69,7 +69,7 @@ function build(id: string, settings: AppSettings): AgentProvider | null {
   if (id === CLAUDE_CODE_PROVIDER_ID) {
     return createClaudeCodeProvider(providers.claudeCode)
   }
-  if (id === CODEX_PROVIDER_ID) return createCodexProvider(providers.codex)
+  if (id === CODEX_PROVIDER_ID) return createCodexProvider(providers.codex, settings)
   // Not a backend of its own: it exists exactly as long as some model provider
   // under `settings.modelProviders` is switched on.
   if (id === OPENAI_CHAT_PROVIDER_ID) return createOpenAiChatProvider(settings)

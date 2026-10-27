@@ -111,6 +111,12 @@ its available models at runtime and supports reasoning effort selection. Set a b
 `codex` is not on PATH. The default permission mode allows edits in the chat’s
 workspace; read-only and full-access modes are also available.
 
+Codex also runs on everything under Settings → Model providers — a LiteLLM
+proxy, OpenRouter, a local Ollama — without touching `~/.codex/config.toml`
+and without a ChatGPT login: pick a model from that provider's section in the
+model picker. Codex speaks only the Responses API, so the endpoint has to
+serve `/responses`; LiteLLM, OpenRouter, OpenAI and current Ollama do.
+
 See the [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
 for the protocol used by this integration.
 
