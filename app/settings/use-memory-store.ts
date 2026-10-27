@@ -4,15 +4,13 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import * as api from "@/lib/api-client"
-import type { MemoryFile } from "@/lib/memory/types"
+import type { MemoryFile, MemoryStatus } from "@/lib/memory/types"
 
 export type MemoryStoreApi = {
   files: MemoryFile[]
   dir: string
   bytes: number
-  ollamaEnabled: boolean
-  ollamaBaseUrl: string
-  ollamaReachable: boolean
+  status: MemoryStatus | null
   loading: boolean
   /** Category currently being written, so its row can disable itself. */
   saving: string | null
@@ -29,13 +27,12 @@ export type MemoryStoreApi = {
  * settings blob: the files are the store, and a user editing one is editing
  * the thing the agent will actually be handed, not a copy of it.
  *
- * It reads once and then only on an explicit `reload()`. Re-reading whenever a
- * memory setting changes would be worse than useless: settings are saved on a
- * debounce, so the response would describe the state from before the change
- * that triggered it. Whether the feature is on and which model it uses is the
- * caller's own live state — only Ollama's reachability comes from here.
+ * It reads on mount, on an explicit `reload()`, and when `probe` flips — the
+ * caller's live "memory on" switch. Probing asks the server as if memory were
+ * on (starting Ollama and the embedding model's download), so it does not
+ * wait for the debounced settings save to land.
  */
-export function useMemoryStore(): MemoryStoreApi {
+export function useMemoryStore(probe: boolean): MemoryStoreApi {
   const [store, setStore] = React.useState<api.MemoryStore | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [saving, setSaving] = React.useState<string | null>(null)
@@ -44,7 +41,7 @@ export function useMemoryStore(): MemoryStoreApi {
   React.useEffect(() => {
     let cancelled = false
     api
-      .fetchMemory()
+      .fetchMemory(probe)
       .then((next) => {
         if (!cancelled) setStore(next)
       })
@@ -58,7 +55,7 @@ export function useMemoryStore(): MemoryStoreApi {
     return () => {
       cancelled = true
     }
-  }, [nonce])
+  }, [nonce, probe])
 
   const reload = React.useCallback(() => setNonce((value) => value + 1), [])
 
@@ -106,9 +103,7 @@ export function useMemoryStore(): MemoryStoreApi {
     files: store?.files ?? [],
     dir: store?.dir ?? "",
     bytes: store?.bytes ?? 0,
-    ollamaEnabled: store?.ollamaEnabled ?? false,
-    ollamaBaseUrl: store?.ollamaBaseUrl ?? "",
-    ollamaReachable: store?.ollamaReachable ?? false,
+    status: store?.status ?? null,
     loading,
     saving,
     save,

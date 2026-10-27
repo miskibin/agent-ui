@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import { isInternalMessage } from "@/lib/ask-tools"
 import { extractMemory } from "@/lib/memory/extract"
+import { memoryOllama } from "@/lib/memory/ollama"
 import { memoryBytes, readMemoryFiles } from "@/lib/memory/server"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
@@ -67,7 +68,7 @@ export async function POST(req: Request) {
 
   const result = await extractMemory({
     settings: settings.memory,
-    ollamaBaseUrl: settings.providers.ollama.baseUrl,
+    baseUrl: await memoryOllama(settings),
     userMessages,
     signal: req.signal,
   })

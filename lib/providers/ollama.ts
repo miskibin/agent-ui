@@ -78,7 +78,10 @@ export function createOllamaProvider(settings: OllamaSettings): AgentProvider {
       const reachable = (await ensureOllama(baseUrl)) || (await probeOllama(baseUrl))
       return reachable
         ? { ...base, available: true }
-        : { ...base, unavailableReason: `No server at ${baseUrl}` }
+        : {
+            ...base,
+            unavailableReason: `Ollama isn't running at ${baseUrl}, and starting it didn't work. Start it with \`ollama serve\`.`,
+          }
     },
 
     async listModels() {

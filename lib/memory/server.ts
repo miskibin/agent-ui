@@ -128,33 +128,7 @@ export async function clearMemory() {
   await rm(memoryDir(), { recursive: true, force: true })
 }
 
-/**
- * The block handed to the agent for a turn: every fact, under its category
- * heading, trimmed to `budget` characters.
- *
- * Everything fits by design — the whole store is capped at a couple of
- * thousand characters — so there is no retrieval step and nothing to rank.
- * The trim here is a backstop for a hand-edited file that blew past the cap,
- * and it drops whole categories from the end rather than truncating a fact
- * into a half-sentence the model would read as fact.
- */
-export function memoryPromptBlock(files: MemoryFile[], budget: number): string {
-  const sections: string[] = []
-  let used = 0
-  for (const file of files) {
-    const lines = memoryFactLines(file.content).filter(
-      (line) => !line.startsWith("#")
-    )
-    if (lines.length === 0) continue
-    const section = `## ${file.title}\n${lines.join("\n")}`
-    if (used + section.length > budget) continue
-    used += section.length + 2
-    sections.push(section)
-  }
-  return sections.join("\n\n")
-}
-
-/** Total characters the store currently holds, for the budget check. */
+/** Total characters the store currently holds, shown against the per-turn budget. */
 export function memoryBytes(files: MemoryFile[]) {
   return files.reduce(
     (total, file) => total + memoryFactLines(file.content).join("\n").length,

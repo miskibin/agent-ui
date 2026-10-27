@@ -124,7 +124,7 @@ export function createPiProvider(
       return {
         ...base,
         unavailableReason: baseUrl
-          ? `No server at ${baseUrl}, and no model providers configured`
+          ? `Ollama isn't running at ${baseUrl} and no model providers are configured. Start Ollama with \`ollama serve\`, or add a provider in Settings.`
           : "No Ollama URL and no model providers configured",
       }
     },

@@ -176,6 +176,15 @@ async function reachable(baseUrl: string, fetchImpl: FetchLike) {
   return false
 }
 
+/**
+ * Gives one URL its spawn back — for an explicit "try again" from the user,
+ * never for a background probe, which is exactly the retry storm the budget
+ * exists to stop.
+ */
+export function allowOllamaRespawn(baseUrl: string) {
+  spawnAttempts.delete(autostartKey(baseUrl.trim().replace(/\/+$/, "")))
+}
+
 /** Testing seam: forgets in-flight starts and the per-URL spawn budget. */
 export function resetOllamaAutostart() {
   starts.clear()

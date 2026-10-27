@@ -9,7 +9,7 @@ import {
   writeMemoryFile,
 } from "@/lib/memory/server"
 import { isValidMemoryCategory } from "@/lib/memory/types"
-import { normalizeBaseUrl, probeOllama } from "@/lib/providers/ollama-api"
+import { memoryStatus } from "@/lib/memory/status"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { readSettings } from "@/lib/settings/server"
 
@@ -17,27 +17,29 @@ export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * The memory store as the settings page sees it: the files, and the state of
- * the Ollama server behind the extraction step.
+ * The memory store as the settings page sees it: the files, and whether memory
+ * can run (`memoryStatus`).
  *
- * Deliberately no "is this feature working" verdict. Whether it is enabled and
- * which model it uses are settings the page holds live and saves on a debounce,
- * so a verdict computed here from settings.json would describe the state from
- * before the user's last click. The page composes the reason itself; the only
- * thing it cannot know without asking is whether Ollama answers.
+ * `?probe=1` asks as if memory were on, and is what the page sends while its
+ * own switch is on. The page holds that switch live and saves it on a
+ * debounce, so settings.json may not say "on" yet — and checking only then
+ * would leave a fresh "on" showing nothing until the next reload. Probing
+ * starts Ollama and the embedding model's download when they are missing, so
+ * a page with memory off never sends it: looking at settings must not pull a
+ * model.
  */
-export async function GET() {
+export async function GET(req: Request) {
+  const probe = new URL(req.url).searchParams.get("probe") === "1"
   const settings = await readSettings()
   const files = await readMemoryFiles()
-  const baseUrl = normalizeBaseUrl(settings.providers.ollama.baseUrl)
-
   return NextResponse.json({
     dir: memoryDir(),
     files,
     bytes: memoryBytes(files),
-    ollamaEnabled: settings.providers.ollama.enabled,
-    ollamaBaseUrl: baseUrl,
-    ollamaReachable: Boolean(baseUrl) && (await probeOllama(baseUrl)),
+    status: await memoryStatus({
+      ...settings,
+      memory: { ...settings.memory, enabled: probe },
+    }),
   })
 }
 

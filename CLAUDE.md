@@ -57,7 +57,7 @@ does not ship them, so they have no upstream to match. They are listed in the ch
 
 **App-local components** (edit freely, same idiom): `components/app-header.tsx`,
 `components/command-palette.tsx`, `components/folder-picker.tsx`, `components/handoff-notice.tsx`,
-`components/memory-notice.tsx`, `components/message-actions.tsx`, `components/stash-menu.tsx`,
+`components/memory-notice.tsx`, `components/memory-unavailable-dialog.tsx`, `components/message-actions.tsx`, `components/stash-menu.tsx`,
 `components/folder-status.tsx`, `components/chat-changes.tsx`, `components/context-usage.tsx`,
 `components/provider-picker.tsx`, `components/provider-logo.tsx`, `components/permission-picker.tsx`,
 `components/pending-question.tsx`, `components/theme-provider.tsx`,
@@ -337,14 +337,38 @@ one interface:
   `capabilities.resume` is sent it only on the first turn of its conversation. It is the
   *standing* half of the two-context split — see `lib/handoff/` for the other half, and for
   why the two must not blur together.
+
+  **Memory runs on Ollama, and is off when Ollama is.** `lib/memory/ollama.ts`
+  (`memoryOllama`) starts a local server the way the harness does (`ensureOllama`), and when
+  that fails nothing is injected and nothing extracted — a feature the user was told is off
+  must not keep steering answers. The chat page asks `GET /api/memory/status` once on open;
+  when both the probe and the start failed it shows `components/memory-unavailable-dialog.tsx`
+  *once*, and the per-turn update then runs silently (no toast to fail) until one succeeds,
+  which is how memory notices Ollama came back. "Try again" is the one caller allowed a
+  second spawn (`allowOllamaRespawn`).
+
+  **Recall is retrieval, not truncation** (`retrieve.ts` pure and unit-tested, `embed.ts` the
+  I/O). EmbeddingGemma 2 (`memory.embedModel`, pulled through `/api/pull` the first time the
+  status check finds it missing) embeds every fact once — `memory/.vectors.json`, keyed by the
+  fact's normalized text so a hand-edited line misses and an untouched one never re-embeds,
+  256-dim Matryoshka cut, its `task: search result | query:` / `title: none | text:` prompts
+  on both sides because Ollama's tag carries no template. `memory.maxChars` is a *per-turn*
+  budget: a store that fits is sent whole and unranked; one that does not keeps the
+  `preferences` category (capped at half the budget — how to answer is relevant to every
+  answer, which no similarity score sees) and fills the rest by MMR over cosine against what
+  the user typed, and a tool-capable harness is told how many facts were left out and where —
+  the always-on-core-plus-greppable-tail shape Claude Code and Codex both use. When the
+  embedder cannot run (still downloading, or a build that cannot run the model) ranking and
+  dedupe fall back to idf-weighted word overlap; that is a worse ranking, never memory off.
   `extract.ts` is the write path and runs *outside* the chat turn, on `POST /api/memory/update`
   after the answer has settled, against a small Ollama model — so a slow or broken extraction
-  can never delay an answer. It rewrites whole categories rather than patching lines (that is
-  what lets one call add, correct, merge and shorten at once) and the UI's change list is a
-  line diff of the whole run, taken against the state it started from. The
-  `memory.maxChars` budget is enforced *after* the write, with a second merge-and-shorten pass
-  when it is exceeded — a small model will promise to stay under a cap and then not.
-  Two rules are load-bearing and must not be relaxed: the extractor is handed **only what
+  can never delay an answer. The model is shown the *related* facts (the whole store below 40,
+  else the top 24 by embedding) under short ids and answers with `add | update | delete`
+  operations, Mem0-style, never with files — so a fact it does not name cannot be lost, and
+  the store can outgrow any prompt. Every `add` is then checked against the store by the
+  embedding (`DUPLICATE_SIMILARITY`), because a 3B model told not to duplicate still will.
+  The UI's change list is a line diff of the whole run, taken against the state it started
+  from. Two rules are load-bearing and must not be relaxed: the extractor is handed **only what
   the user typed** — `metadata.typedText` on a user message, which the composer sends beside
   the prompt, never the attachments fenced into the stored content, assistant text, tool
   calls, tool output or the app's own ask-answer turns — so content the agent merely read

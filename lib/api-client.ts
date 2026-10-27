@@ -3,7 +3,11 @@ import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker
 import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { FolderLogoMap } from "@/lib/folder-logo"
 import type { TurnStateFrame } from "@/lib/handoff/types"
-import type { MemoryFile, MemoryUpdateResult } from "@/lib/memory/types"
+import type {
+  MemoryFile,
+  MemoryStatus,
+  MemoryUpdateResult,
+} from "@/lib/memory/types"
 import type { MessageSearchResult } from "@/lib/message-search"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type {
@@ -412,14 +416,25 @@ export type MemoryStore = {
   dir: string
   files: MemoryFile[]
   bytes: number
-  /** Ollama's state, which the settings page cannot know without asking. */
-  ollamaEnabled: boolean
-  ollamaBaseUrl: string
-  ollamaReachable: boolean
+  /** Whether memory can run; only meaningful when fetched with `probe`. */
+  status: MemoryStatus
 }
 
-export function fetchMemory(): Promise<MemoryStore> {
-  return fetch("/api/memory", { cache: "no-store" }).then(json<MemoryStore>)
+/** `probe` checks Ollama and the models as if memory were on — see the route. */
+export function fetchMemory(probe = false): Promise<MemoryStore> {
+  return fetch(`/api/memory${probe ? "?probe=1" : ""}`, {
+    cache: "no-store",
+  }).then(json<MemoryStore>)
+}
+
+/**
+ * The chat page's boot check: starts Ollama if it can, and the embedding
+ * model's download if it is missing. `retry` re-arms the one spawn attempt.
+ */
+export function fetchMemoryStatus(retry = false): Promise<MemoryStatus> {
+  return fetch(`/api/memory/status${retry ? "?retry=1" : ""}`, {
+    cache: "no-store",
+  }).then(json<MemoryStatus>)
 }
 
 type MemoryWriteResult = { files: MemoryFile[]; bytes: number }

@@ -26,7 +26,11 @@ import {
   withMemoryHeading,
   type MemoryFile,
 } from "@/lib/memory/types"
-import { MEMORY_BUDGET_RANGE, type AppSettings } from "@/lib/settings/schema"
+import {
+  DEFAULT_MEMORY_EMBED_MODEL,
+  MEMORY_BUDGET_RANGE,
+  type AppSettings,
+} from "@/lib/settings/schema"
 import { cn } from "@/lib/utils"
 
 import { SettingsRow, SettingsSection } from "./section"
@@ -195,7 +199,7 @@ function MemoryFileRow({
 
 export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
   const memory = settings.memory
-  const store = useMemoryStore()
+  const store = useMemoryStore(memory.enabled)
   const [models, setModels] = React.useState<
     { id: string; name: string }[] | null
   >(null)
@@ -226,7 +230,13 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
     api
       .fetchModels("ollama")
       .then((res) => {
-        if (!cancelled) setModels(res.models.map(({ id, name }) => ({ id, name })))
+        if (cancelled) return
+        // An embedding model cannot chat, so it is no extraction model.
+        setModels(
+          res.models
+            .filter(({ id }) => !/embed/i.test(id))
+            .map(({ id, name }) => ({ id, name }))
+        )
       })
       .catch(() => {
         if (!cancelled) setModels([])
@@ -275,28 +285,39 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
     [store]
   )
 
-  const overBudget = store.bytes > memory.maxChars
+  const status = store.status
 
   /**
-   * Why the extraction step would do nothing, said in the page's own terms.
-   * Composed from the settings this component holds — which are current — plus
-   * the one fact only the server knows, whether Ollama answers.
+   * Why memory would do nothing, said in the page's own terms. Composed from
+   * the settings this component holds — which are current — plus what only
+   * the server knows: whether Ollama answers and what it has pulled.
    */
-  const blocker = !memory.enabled
+  const blocker =
+    !memory.enabled || store.loading || !status
+      ? undefined
+      : !status.reachable
+        ? `Ollama isn't running at ${status.baseUrl || "an unset URL"} and couldn't be started, so memory is off — nothing is learned and nothing is sent. Start Ollama and it comes back on its own.`
+        : !memory.model
+          ? "No extraction model chosen, so nothing new is learned. The notes below are still used."
+          : !status.extractionInstalled && status.extractionModel === memory.model
+            ? `${memory.model} isn't pulled on this Ollama server — run \`ollama pull ${memory.model}\`.`
+            : undefined
+
+  const embedNote = !status?.reachable
     ? undefined
-    : !memory.model
-      ? "No extraction model chosen."
-      : !store.ollamaEnabled
-        ? "Ollama is disabled in Harnesses."
-        : !store.ollamaReachable && !store.loading
-          ? `No Ollama server at ${store.ollamaBaseUrl || "an unset URL"}.`
-          : undefined
+    : status.embed === "pulling"
+      ? "Downloading… until it lands, facts are matched by shared words."
+      : status.embed === "failed"
+        ? `Can't run here${status.embedError ? ` (${status.embedError})` : ""} — facts are matched by shared words instead.`
+        : status.embed === "missing"
+          ? "Not pulled yet — facts are matched by shared words until it is."
+          : "Ready."
 
   return (
     <SettingsSection
       id="memory"
       title="Memory"
-      description="Durable preferences carried into every new conversation, extracted by a local model from what you type."
+      description="Durable preferences carried into new conversations, extracted by a local model from what you type and recalled by relevance with a local embedding model."
     >
       <SettingsRow
         title="Remember preferences"
@@ -348,6 +369,26 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
           />
 
           <SettingsRow
+            title="Embedding model"
+            htmlFor="memory-embed"
+            description={`Ranks remembered facts against each message, so only the relevant ones are sent, and catches a fact that restates one already stored. Pulled automatically when missing.${embedNote ? ` ${embedNote}` : ""}`}
+            control={
+              <Input
+                id="memory-embed"
+                value={memory.embedModel}
+                onChange={(event) => setMemory({ embedModel: event.target.value })}
+                onBlur={() => {
+                  if (!memory.embedModel.trim()) {
+                    setMemory({ embedModel: DEFAULT_MEMORY_EMBED_MODEL })
+                  }
+                }}
+                spellCheck={false}
+                className="h-8 w-52 font-mono text-[12px]"
+              />
+            }
+          />
+
+          <SettingsRow
             title="Update after every turn"
             htmlFor="memory-auto"
             description="Runs the extraction in the background once an answer settles. Off means the notes only change when you edit them here."
@@ -376,16 +417,11 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
           />
 
           <SettingsRow
-            title="Size budget"
-            description="Everything remembered fits in this many characters, so it all goes into the prompt and nothing has to be searched for. Going over it makes the extractor merge and shorten rather than keep adding."
+            title="Per-turn budget"
+            description="Characters of memory sent with each message. While everything fits, everything is sent; past that, the facts most relevant to the message fill it, and agents with file tools are told where the rest are."
             control={
-              <span
-                className={cn(
-                  "font-mono text-[12px] tabular-nums",
-                  overBudget ? "text-destructive" : "text-muted-foreground"
-                )}
-              >
-                {store.bytes} / {memory.maxChars}
+              <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+                {store.bytes} stored · {memory.maxChars} per turn
               </span>
             }
           >
@@ -395,7 +431,7 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
               max={MEMORY_BUDGET_RANGE.max}
               step={250}
               onValueChange={([maxChars]) => setMemory({ maxChars })}
-              aria-label="Memory size budget in characters"
+              aria-label="Memory characters per turn"
             />
           </SettingsRow>
         </>
@@ -411,8 +447,7 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
       >
         {blocker ? (
           <p className="rounded-md border border-dashed px-3 py-2 text-[12px] text-muted-foreground">
-            {blocker} Nothing will be extracted until that&apos;s fixed — the
-            notes below are still used in every chat.
+            {blocker}
           </p>
         ) : null}
       </SettingsRow>

@@ -216,6 +216,8 @@ export async function POST(req: Request) {
       ? undefined
       : await buildMemoryContext(settings, {
           toolCapable: info.capabilities.tools,
+          // Ranked against what was typed, not against attached file text.
+          query: typedText || prompt,
         })
 
   const abort = new AbortController()

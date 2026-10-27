@@ -231,6 +231,12 @@ export type MemorySettings = {
   enabled: boolean
   /** Ollama model id that runs the extraction; empty = the feature is inert. */
   model: string
+  /**
+   * Ollama embedding model behind retrieval and write-time dedupe. Pulled on
+   * first use when missing; when it cannot run, both fall back to lexical
+   * matching rather than turning memory off.
+   */
+  embedModel: string
   /** Run an extraction pass after every turn, rather than only on demand. */
   autoUpdate: boolean
   /**
@@ -240,7 +246,11 @@ export type MemorySettings = {
    * deliberate act to store, not a passing mention.
    */
   includeSensitive: boolean
-  /** Character budget for the whole store; going over triggers a merge pass. */
+  /**
+   * Characters of memory handed to one turn. The store itself may grow past
+   * it: a store that fits is sent whole, one that does not is ranked against
+   * the prompt and the most relevant facts fill the budget.
+   */
   maxChars: number
 }
 
@@ -371,13 +381,15 @@ function defaultModelProviders(): Record<string, ModelProviderEntry> {
 }
 
 /**
- * Characters of memory handed to a turn. Small on purpose: at this size every
- * fact fits in the prompt, so the feature needs no retrieval step, no
- * embeddings and no ranking — and the budget is what forces the extractor to
- * merge rather than accrete.
+ * Characters of memory handed to a turn. Small on purpose — every character
+ * is paid for on every turn of every backend — which is why a store that has
+ * outgrown it is *retrieved from* (`lib/memory/retrieve.ts`) rather than
+ * truncated.
  */
 export const DEFAULT_MEMORY_BUDGET = 2_000
 export const MEMORY_BUDGET_RANGE = { min: 500, max: 8_000 } as const
+/** EmbeddingGemma 2 — small, local, and trained for exactly this retrieval. */
+export const DEFAULT_MEMORY_EMBED_MODEL = "embeddinggemma-2"
 
 /** Two weeks — long enough that a chat you are still coming back to survives. */
 export const DEFAULT_AUTO_SETTLE_DAYS = 14
@@ -446,6 +458,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   memory: {
     enabled: false,
     model: "",
+    embedModel: DEFAULT_MEMORY_EMBED_MODEL,
     autoUpdate: true,
     includeSensitive: false,
     maxChars: DEFAULT_MEMORY_BUDGET,
@@ -836,6 +849,7 @@ function normalizeMemory(raw: unknown): MemorySettings {
   return {
     enabled: value.enabled === true,
     model: asString(value.model)?.trim() ?? fallback.model,
+    embedModel: asString(value.embedModel)?.trim() || fallback.embedModel,
     autoUpdate: value.autoUpdate !== false,
     includeSensitive: value.includeSensitive === true,
     maxChars: budget,

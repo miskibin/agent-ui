@@ -29,13 +29,11 @@ const EDIT_MEMORY_LINK =
 
 export function MemoryNotice({
   changes,
-  compacted,
   onDismiss,
   onOpenMemorySettings,
   className,
 }: {
   changes: MemoryChange[]
-  compacted?: boolean
   onDismiss: () => void
   /**
    * Opens settings on the memory section. Given by a host that shows settings
@@ -66,9 +64,6 @@ export function MemoryNotice({
           <span>
             Memory updated
             <span className="text-muted-foreground/70"> · {summary}</span>
-            {compacted ? (
-              <span className="text-muted-foreground/70"> · merged to fit</span>
-            ) : null}
           </span>
           <ChevronDown
             className={cn("size-3 transition-transform", open && "rotate-180")}

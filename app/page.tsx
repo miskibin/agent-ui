@@ -23,6 +23,7 @@ import { DiffWorkers } from "@/components/diff-workers"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
+import { MemoryUnavailableDialog } from "@/components/memory-unavailable-dialog"
 import { MessageActions } from "@/components/message-actions"
 import { PermissionPicker } from "@/components/permission-picker"
 import { PendingQuestion, PendingUserRequest } from "@/components/pending-question"
@@ -252,8 +253,15 @@ export default function ChatPage() {
     handleReviewChanges,
   } = panel
 
-  const { memoryNotices, setMemoryNotices, runMemoryUpdate, dismissMemoryNotice } =
-    useMemoryNotices(refs)
+  const {
+    memoryNotices,
+    setMemoryNotices,
+    runMemoryUpdate,
+    dismissMemoryNotice,
+    memoryOutage,
+    retryMemory,
+    dismissMemoryOutage,
+  } = useMemoryNotices(refs)
 
   const { stash, parkDraft, handleStash, restoreStash, discardStash } =
     usePromptStash(refs)
@@ -369,6 +377,11 @@ export default function ChatPage() {
     () => openSettings("memory"),
     [openSettings]
   )
+  /** The outage dialog's "Memory settings": the dialog has said its piece. */
+  const openMemorySettingsFromOutage = React.useCallback(() => {
+    dismissMemoryOutage()
+    openSettings("memory")
+  }, [dismissMemoryOutage, openSettings])
   /**
    * Settings → Data has deleted every chat. The page behind the panel still
    * holds the whole index, the open thread and its queue in memory, and would
@@ -986,7 +999,6 @@ export default function ChatPage() {
                       {memoryNotices[activeId] && !isGenerating ? (
                         <MemoryNotice
                           changes={memoryNotices[activeId].changes}
-                          compacted={memoryNotices[activeId].compacted}
                           onDismiss={() => dismissMemoryNotice(activeId)}
                           onOpenMemorySettings={openMemorySettings}
                         />
@@ -1224,6 +1236,16 @@ export default function ChatPage() {
           onImported={reloadSessions}
         />
       ) : null}
+
+      <MemoryUnavailableDialog
+        open={memoryOutage !== null}
+        baseUrl={memoryOutage?.baseUrl ?? ""}
+        retrying={memoryOutage?.retrying ?? false}
+        stillDown={memoryOutage?.stillDown ?? false}
+        onRetry={retryMemory}
+        onClose={dismissMemoryOutage}
+        onOpenSettings={openMemorySettingsFromOutage}
+      />
     </div>
   )
 }

@@ -45,8 +45,11 @@ export type MemoryUpdateResult = {
   skipped?: MemorySkipReason
   /** Ollama model that ran the extraction, for the details line. */
   model?: string
-  /** True when the run had to merge and shorten to fit the character budget. */
-  compacted?: boolean
+  /**
+   * How related facts were found: EmbeddingGemma, or word overlap when the
+   * embedder could not run (still downloading, or unsupported on this build).
+   */
+  ranking?: "embedding" | "lexical"
   /** Total characters across all category files after the run. */
   bytes?: number
 }
@@ -162,4 +165,24 @@ export function summarizeMemoryChanges(changes: MemoryChange[]) {
     parts.push(`${removed} ${merged ? "rewritten" : "removed"}`)
   }
   return parts.join(", ") || "no changes"
+}
+
+/**
+ * Whether memory can run right now, as the boot check and the settings page
+ * see it. Memory runs on Ollama, so "reachable" is the whole verdict: without
+ * it nothing is injected and nothing extracted. The embedding model is the
+ * quality half — without it ranking and dedupe fall back to word overlap.
+ */
+export type MemoryStatus = {
+  enabled: boolean
+  /** Ollama answered — after the app tried to start it when it did not. */
+  reachable: boolean
+  baseUrl: string
+  extractionModel: string
+  /** False when the chosen extraction model is not pulled on this server. */
+  extractionInstalled: boolean
+  embedModel: string
+  embed: "ready" | "pulling" | "missing" | "failed" | "unknown"
+  /** Ollama's own words when the embedder failed, e.g. an unsupported runtime. */
+  embedError?: string
 }

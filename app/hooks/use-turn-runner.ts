@@ -107,7 +107,7 @@ export function useTurnRunner({
   setFailures: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
   setMemoryNotices: React.Dispatch<
     React.SetStateAction<
-      Record<string, { changes: MemoryChange[]; compacted?: boolean }>
+      Record<string, { changes: MemoryChange[] }>
     >
   >
   patchLocal: (id: string, patch: Partial<SessionMeta>) => void

@@ -262,7 +262,9 @@ export function useAgentConfig({
           providerPickRef.current = ""
           if (next) persistAgent({ model: next })
         }
-        if (data.error) toast.error(data.error)
+        // An unavailable backend is a state, not a failure: say it once, in
+        // the warning tone, and let the picker's own badge carry it after.
+        if (data.error) toast.warning(data.error, { id: `models-${providerId}` })
       })
       .catch((err: unknown) => {
         if (!cancelled) toast.error(errorMessage(err, "Could not load models"))
