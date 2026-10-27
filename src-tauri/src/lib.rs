@@ -280,6 +280,15 @@ fn start_app_server(
         .env(LAUNCH_TOKEN_ENV, &token)
         .spawn()?;
 
+    // Explicit kills cover a quit; this covers everything else. The NSIS
+    // installer and the updater end the shell with TerminateProcess, which
+    // runs no exit handler, and an orphaned node.exe then holds its own file
+    // open — the next install fails with "Error opening file for writing".
+    #[cfg(windows)]
+    if let Some(job) = kill_on_close::tie_to_shell(child.pid()) {
+        app.manage(job);
+    }
+
     app.state::<Sidecar>().store(child);
 
     // The sidecar event channel is bounded: leaving it unread would stall the
@@ -473,4 +482,73 @@ fn show_failure(window: &WebviewWindow, port: Option<u16>, detail: &str) {
     }
     let _ = window.show();
     let _ = window.set_focus();
+}
+
+/// Windows: the sidecar dies with the shell, however the shell dies.
+///
+/// The process is put in a job object with `KILL_ON_JOB_CLOSE`, and the only
+/// handle to that job is held by the shell until it exits — at which point
+/// Windows closes it and terminates what is inside. That includes the
+/// `TerminateProcess` an installer or updater ends the shell with, where no
+/// `RunEvent::Exit` ever runs.
+///
+/// `SILENT_BREAKAWAY_OK` keeps the job to Node alone: what *Node* starts — an
+/// agent CLI, `ollama serve` — is not placed in it, so their lifetimes stay
+/// exactly what the app server already decides they are.
+#[cfg(windows)]
+mod kill_on_close {
+    use std::ffi::c_void;
+    use std::mem::{size_of, zeroed};
+
+    use windows_sys::Win32::Foundation::{CloseHandle, HANDLE};
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK,
+    };
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, PROCESS_SET_QUOTA, PROCESS_TERMINATE,
+    };
+
+    /// Held in managed state for the life of the app; never closed by hand.
+    /// The handle is never read — holding it open is its whole purpose.
+    #[allow(dead_code)]
+    pub struct Job(HANDLE);
+
+    // A job handle is a kernel handle: usable from any thread.
+    unsafe impl Send for Job {}
+    unsafe impl Sync for Job {}
+
+    pub fn tie_to_shell(pid: u32) -> Option<Job> {
+        // SAFETY: plain Win32 calls on handles this function owns; every
+        // failure path closes what it opened.
+        unsafe {
+            let job = CreateJobObjectW(std::ptr::null(), std::ptr::null());
+            if job.is_null() {
+                return None;
+            }
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = zeroed();
+            limits.BasicLimitInformation.LimitFlags =
+                JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK;
+            let configured = SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                &limits as *const _ as *const c_void,
+                size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            );
+            let process = OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, 0, pid);
+            let assigned = !process.is_null()
+                && configured != 0
+                && AssignProcessToJobObject(job, process) != 0;
+            if !process.is_null() {
+                CloseHandle(process);
+            }
+            if assigned {
+                Some(Job(job))
+            } else {
+                CloseHandle(job);
+                None
+            }
+        }
+    }
 }

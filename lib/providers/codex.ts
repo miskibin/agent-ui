@@ -7,7 +7,20 @@ import {
   translateCodexNotification,
   usageFromNotification,
 } from "@/lib/codex-protocol"
+import {
+  OLLAMA_SOURCE,
+  codexProviderOverrides,
+  splitCodexModel,
+} from "@/lib/codex-providers"
 import { hasCodexBinary, hasCodexCredentials } from "@/lib/codex-runtime"
+import { joinModelId } from "@/lib/model-providers/ids"
+import {
+  enabledModelSources,
+  listSourceModels,
+  type ModelSource,
+} from "@/lib/model-providers/server"
+import { hostedEffortModels } from "@/lib/model-reasoning"
+import { fetchOllamaModels, normalizeBaseUrl } from "@/lib/providers/ollama-api"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import type {
   AgentProvider,
@@ -15,7 +28,7 @@ import type {
   AgentStreamEvent,
   PermissionMode,
 } from "@/lib/providers/types"
-import type { CodexSettings } from "@/lib/settings/schema"
+import type { AppSettings, CodexSettings } from "@/lib/settings/schema"
 import { formatUserRequestInput, USER_REQUEST_WAITING } from "@/lib/turn-requests"
 
 export const CODEX_PROVIDER_ID = "codex"
@@ -92,22 +105,81 @@ async function fetchCodexModels(binPath: string, workspace: string): Promise<Mod
   } finally { client.close() }
 }
 
-export function createCodexProvider(settings: CodexSettings): AgentProvider {
+/** The app's sources' models, as Codex runs them: grouped, composite ids. */
+async function sourceModels(sources: ModelSource[], ollamaBaseUrl: string): Promise<ModelOption[]> {
+  const [local, remote] = await Promise.all([
+    ollamaBaseUrl ? fetchOllamaModels(ollamaBaseUrl).catch(() => []) : Promise.resolve([]),
+    Promise.all(
+      sources.map(async (source) => ({
+        source,
+        // One unreachable endpoint must not empty the whole picker.
+        models: await listSourceModels(source).catch(() => []),
+      }))
+    ),
+  ])
+  return [
+    ...local.map((model) => ({
+      id: joinModelId(OLLAMA_SOURCE, model.id),
+      name: model.name,
+      group: OLLAMA_SOURCE,
+    })),
+    ...remote.flatMap(({ source, models }) =>
+      models.map((model) => ({
+        id: joinModelId(source.slug, model.id),
+        name: model.name,
+        group: source.slug,
+      }))
+    ),
+  ]
+}
+
+/** The picker's heading for Codex's own models, beside the app's sources. */
+const CODEX_GROUP = "codex"
+
+export function createCodexProvider(
+  settings: CodexSettings,
+  appSettings?: AppSettings
+): AgentProvider {
   const binPath = settings.binPath.trim()
   const workspace = settings.workspace.trim() || process.cwd()
   const detected = () => settings.enabled && hasCodexBinary(binPath)
+  // The app's model providers, handed to Codex as its own (`lib/codex-providers`).
+  const sources = appSettings ? enabledModelSources(appSettings) : []
+  const ollamaBaseUrl =
+    appSettings?.providers.ollama.enabled
+      ? normalizeBaseUrl(appSettings.providers.ollama.baseUrl)
+      : ""
+  const hasSources = sources.length > 0 || !!ollamaBaseUrl
+
+  const listModels = async (): Promise<ModelOption[]> => {
+    if (!detected()) return []
+    const extra = hasSources ? sourceModels(sources, ollamaBaseUrl) : Promise.resolve([])
+    if (!hasCodexCredentials()) return extra
+    if (!hasSources) return listCodexModels(binPath, workspace)
+    const [own, more] = await Promise.all([
+      // Codex's own listing failing (signed out mid-session, a broken
+      // install) must not hide the providers that do not depend on it.
+      listCodexModels(binPath, workspace).catch(() => []),
+      extra,
+    ])
+    return [...own.map((model) => ({ ...model, group: CODEX_GROUP })), ...more]
+  }
 
   return {
     async info() {
       // Never spawn app-server here. `/api/providers` runs on every boot, and
       // `account/read` is what logs Windows Codex users out in a loop.
       const present = detected()
-      const signedOut = present && !hasCodexCredentials()
+      // Signed out only matters when there is nothing else to run on: a
+      // configured model provider needs no ChatGPT login.
+      const signedOut = present && !hasCodexCredentials() && !hasSources
       const available = present && !signedOut
       return {
         id: CODEX_PROVIDER_ID,
         name: "Codex",
-        description: `OpenAI Codex app-server with tools in ${workspace}.`,
+        description: hasSources
+          ? `OpenAI Codex app-server with tools in ${workspace} — on its own models or your model providers.`
+          : `OpenAI Codex app-server with tools in ${workspace}.`,
         capabilities: {
           tools: true,
           resume: true,
@@ -122,15 +194,42 @@ export function createCodexProvider(settings: CodexSettings): AgentProvider {
       }
     },
 
-    async listModels(): Promise<ModelOption[]> {
-      if (!detected() || !hasCodexCredentials()) return []
-      return listCodexModels(binPath, workspace)
-    },
+    listModels,
+
+    ...(hasSources
+      ? {
+          async listModelGroups() {
+            return [
+              ...(hasCodexCredentials() ? [{ id: CODEX_GROUP, label: "Codex" }] : []),
+              ...(ollamaBaseUrl ? [{ id: OLLAMA_SOURCE, label: "Ollama" }] : []),
+              ...sources.map((source) => ({ id: source.slug, label: source.name })),
+            ]
+          },
+
+          /**
+           * Codex's own models all reason; a source's model is read off its
+           * id, like every other hosted catalog in the app.
+           */
+          async effortModels() {
+            const models = await listModels()
+            const composite = models.filter((model) => model.group && model.group !== CODEX_GROUP)
+            return [
+              ...models.filter((model) => !model.group || model.group === CODEX_GROUP).map((model) => model.id),
+              ...hostedEffortModels(composite.map((model) => model.id)),
+            ]
+          },
+        }
+      : null),
 
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       if (options.signal.aborted) return
       const cwd = options.cwd?.trim() || workspace
-      const client = CodexClient.spawn(binPath, cwd)
+      const picked = splitCodexModel(options.model || "", sources, !!ollamaBaseUrl)
+      const client = CodexClient.spawn(
+        binPath,
+        cwd,
+        hasSources ? codexProviderOverrides(sources, ollamaBaseUrl) : undefined
+      )
       const startedAt = Date.now()
       let threadId = options.sessionId
       let turnId: string | undefined
@@ -147,7 +246,10 @@ export function createCodexProvider(settings: CodexSettings): AgentProvider {
         const mode = options.permissionMode ?? settings.permissionMode
         const approvalPolicy = mode === "edits" ? "on-request" : "never"
         const threadParams = {
-          model: options.model || null,
+          model: picked.model || null,
+          // Only for a model from the app's providers: absent, the thread
+          // runs on whatever the user's Codex is configured with.
+          ...(picked.provider ? { modelProvider: picked.provider } : null),
           cwd,
           approvalPolicy,
           approvalsReviewer: "user" as const,
@@ -165,7 +267,7 @@ export function createCodexProvider(settings: CodexSettings): AgentProvider {
         const turn = await client.request("turn/start", {
           threadId,
           input: [{ type: "text", text: withPromptContext(options.prompt, options), text_elements: [] }],
-          model: options.model || null,
+          model: picked.model || null,
           effort: options.effort || null,
           cwd,
           approvalPolicy,

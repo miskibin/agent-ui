@@ -250,6 +250,16 @@ one interface:
   `askUser`. Unknown server requests fail explicitly. Images are not advertised.
   File updates become one `ApplyPatch` tool per path so file cards and handoff
   journals use the existing component contracts.
+  Codex runs on the app's model providers too (`lib/codex-providers.ts`): every enabled
+  source, and the local Ollama, is declared at spawn as
+  `-c model_providers.agentui-<slug>={ name, base_url, wire_api = "responses", env_key }` with
+  the key in the child's environment (never argv), and a composite `<slug>/<model>` pick sets
+  `modelProvider` on `thread/start`/`thread/resume`. Startup overrides rather than the
+  per-thread `config` field, which app-server is known to hang turns on; namespaced ids so an
+  app source named `openai` cannot shadow Codex's built-in login; the user's `config.toml` is
+  never written. Codex accepts only the Responses wire API, so a chat-completions-only endpoint
+  fails the turn with Codex's own error. A configured source also makes Codex available while
+  signed out of ChatGPT.
   New backend = one file in `lib/providers/` + a `registry.ts` entry + settings schema wiring.
   Picking a model is a three-step choice — harness, then model provider, then model — and a
   provider that runs its own agent loop (`pi`) or streams tool-less chat directly
@@ -787,6 +797,14 @@ one interface:
   permissions follow the same line: `capabilities/default.json` names the dev server alone,
   and `grant_remote_origin` re-reads it at launch to grant the shell's commands to the one
   resolved `http://127.0.0.1:<port>` origin rather than to every loopback port.
+  On Windows the sidecar is also put in a kill-on-close job object (`kill_on_close` in
+  `src-tauri/src/lib.rs`, `SILENT_BREAKAWAY_OK` so only Node itself is in it): the installer and
+  the updater end the shell with `TerminateProcess`, which runs no exit handler, and an orphaned
+  `node.exe` used to hold its own file open so the next install failed with "Error opening file
+  for writing". `src-tauri/windows/installer-hooks.nsh` handles installs over a build that
+  predates the job: it *renames* a locked `node.exe` aside (Windows allows that for a running
+  image) and deletes it at reboot — deliberately no process killing, which antivirus heuristics
+  flag an installer for.
   Auto-update rides the same bridge: `tauri-plugin-updater` +
   `tauri-plugin-process` are registered in `src-tauri`, `lib/desktop.ts` wraps
   `check / downloadAndInstall / relaunch`, and `components/desktop-updater.tsx` (mounted in

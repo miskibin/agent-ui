@@ -50,11 +50,24 @@ export class CodexClient {
     child.once("error", (error) => this.finish(error))
   }
 
-  static spawn(binPath: string, cwd: string) {
+  /**
+   * `extra.args` follow `app-server` (its `-c key=value` overrides), and
+   * `extra.env` joins the environment — where a provider's key travels,
+   * rather than on the command line (`lib/codex-providers`).
+   */
+  static spawn(
+    binPath: string,
+    cwd: string,
+    extra?: { args?: string[]; env?: Record<string, string> }
+  ) {
     const command = resolveCodexCommand(binPath)
-    const child = spawn(command.cmd, [...command.args, "app-server"], {
+    const env =
+      command.env || extra?.env
+        ? { ...process.env, ...command.env, ...extra?.env }
+        : process.env
+    const child = spawn(command.cmd, [...command.args, "app-server", ...(extra?.args ?? [])], {
       cwd,
-      env: command.env ? { ...process.env, ...command.env } : process.env,
+      env,
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],
       ...detachedSpawnOptions,
