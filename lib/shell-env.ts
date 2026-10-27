@@ -262,7 +262,7 @@ export function readWindowsEnv(
   ]
   for (const shell of WINDOWS_SHELLS) {
     try {
-      const output = execFile(shell, args, {
+      const output = execFile(/*turbopackIgnore: true*/ shell, args, {
         encoding: "utf8",
         timeout: SHELL_TIMEOUT_MS,
         windowsHide: true,

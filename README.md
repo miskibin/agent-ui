@@ -122,13 +122,13 @@ for the protocol used by this integration.
 
 ## Quick start
 
-Requires Node.js 20.9 or newer.
+Requires Node.js 20.9 or newer and [bun](https://bun.sh) (the package manager).
 
 ```bash
 git clone https://github.com/miskibin/agent-ui.git
 cd agent-ui
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000). The mock backend works
@@ -139,8 +139,8 @@ For the native app, install the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then run:
 
 ```bash
-npm run desktop:dev
-npm run desktop:build
+bun run desktop:dev
+bun run desktop:build
 ```
 
 `desktop:build` creates an installer for the current platform. Signed Windows
@@ -240,11 +240,11 @@ files here byte-for-byte.
 ## Development
 
 ```bash
-npm run lint
-npm run typecheck
-npm run test
-npm run vendor:check
-npm run build
+bun run lint
+bun run typecheck
+bun run test
+bun run vendor:check
+bun run build
 ```
 
 ## License

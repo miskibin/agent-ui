@@ -23,7 +23,7 @@ component is needed:
    `cp ../chat-components/components/ui/<file>.tsx components/ui/`
    or via the registry:
    `npx shadcn@latest add https://chat-input-azure.vercel.app/r/<item>.json --overwrite`
-4. Re-verify here (`npm run lint && npm run typecheck && npm run build`).
+4. Re-verify here (`bun run lint && bun run typecheck && bun run build`).
 
 Need app-specific behavior a generic component shouldn't carry? Compose around the component
 (wrap it, use its `data-slot` attributes and `className` overrides) in app-local code — never
@@ -32,7 +32,7 @@ upstream component needs a new prop or slot: go through steps 1–4.
 
 ### The copies must never drift
 
-`npm run vendor:check` (`scripts/check-vendored.mjs`) diffs every vendored file against a
+`bun run vendor:check` (`scripts/check-vendored.mjs`) diffs every vendored file against a
 sibling `../chat-components` checkout — override with `--repo <path>` or `CHAT_COMPONENTS_DIR`
 — and fails on any byte that differs, on a file in `components/ui` with no upstream twin, and
 on one upstream has that this app has lost. It skips silently when the checkout is absent, so
@@ -883,28 +883,41 @@ one interface:
 ## Commands
 
 ```bash
-npm run dev          # web dev server
-npm run lint         # eslint (CI)
-npm run typecheck    # tsc --noEmit (CI)
-npm run test         # node --test over tests/*.test.ts (no runner dependency:
+bun run dev          # web dev server
+bun run lint         # eslint (CI)
+bun run typecheck    # tsc --noEmit (CI)
+bun run test         # node --test over tests/*.test.ts (no runner dependency:
                      #   Node strips the types, tests/register.mjs resolves `@/`)
-npm run build        # next build, standalone output (CI)
+bun run build        # next build, standalone output (CI)
 
-AGENT_UI_BUILD_DIR=.next-review npm run build  # same build into .next-review/ instead
+AGENT_UI_BUILD_DIR=.next-review bun run build  # same build into .next-review/ instead
 
-npm run desktop:dev                            # Tauri shell; stages the Node sidecar if missing
-npm run desktop:build                          # platform installer
+bun run desktop:dev                            # Tauri shell; stages the Node sidecar if missing
+bun run desktop:build                          # platform installer
 ```
 
 CI: `ci.yml` (lint + typecheck + test + build) and `desktop.yml` (`cargo check` of src-tauri) run on
 every push. `release.yml` builds Win/macOS/Linux installers on `v*` tags.
+
+The package manager is **bun** (`bun.lock`; `bunfig.toml` pins the hoisted linker that Next's
+standalone tracing expects), as in chat-components. Scripts still run on Node — `bun run` only
+launches them, and the desktop sidecar is Node. `@pierre/diffs` carries the same patch as upstream
+(`patches/@pierre%2Fdiffs@1.6.2.patch`, applied through bun's `patchedDependencies`): copy it from
+chat-components whenever that repo regenerates it.
+
+**Every dynamic filesystem path in server code carries `/*turbopackIgnore: true*/`.** Turbopack
+answers a `path.resolve(userInput)` it cannot scope by tracing the *whole project* into the
+standalone bundle, and since Next 16.4 `outputFileTracingExcludes` no longer trims that trace — one
+unmarked call put `src-tauri/target` (gigabytes) into the desktop payload. `next build` names each
+offender as "Dynamic filesystem access causes tracing of the whole project"; a build that prints
+that warning is not done.
 
 ## Definition of done
 
 `lint`, `typecheck`, `test`, `build` clean — plus `vendor:check` whenever `components/ui/**`
 or a shared `lib/` module was touched. Build with `AGENT_UI_BUILD_DIR=.next-review` (it is
 `distDir`, and `tests/e2e/server.mjs` reads the same variable) whenever the user's desktop app
-is running out of `.next/`: a plain `npm run build` overwrites the server under it. And for
+is running out of `.next/`: a plain `bun run build` overwrites the server under it. And for
 anything user-visible, run the app
 (`AGENT_UI_DIR=/tmp/agent-ui-test node .next/standalone/server.js` after a build) and exercise
 the flow for real; there is a Playwright-style flow suite precedent in the repo history. If the
