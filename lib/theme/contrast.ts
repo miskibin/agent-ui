@@ -10,11 +10,11 @@
  *    the background (fine), and some are a near-white slab in dark mode
  *    (`notebook`: `accent` oklch(0.907) under a foreground of oklch(0.895) —
  *    a 1.04:1 pair, i.e. white on white). So the app derives the accent itself:
- *    a tint of the theme's *own* primary over its *own* background. It stays
- *    the theme's colour — warmer themes stay warm, `graphite` stays grey —
- *    but it is now the same shape everywhere, always reads against the
- *    foreground, and carries more of the theme's hue than most of the
- *    originals did.
+ *    a few percent of the theme's *own* ink over its *own* surface — the
+ *    neutral highlight T3 Code uses, where a hover is a shade of the page
+ *    rather than a colour. It is the same shape in every theme, reads against
+ *    the foreground by construction, and leaves the theme's hue to `primary`,
+ *    which is the one place a colour means something.
  *
  * 2. **Contrast repair.** Settings → Appearance exposes three levels. `high`
  *    holds every text pair to WCAG AAA, `standard` to AA, and `soft` relaxes
@@ -253,13 +253,12 @@ export function contrastRatio(a: Oklch, b: Oklch): number {
 /* -------------------------------------------------------------------------- */
 
 /**
- * How much primary goes into the accent. Dark mode takes more because a tint
- * of a dark background has far less room to separate itself than a tint of a
- * light one.
+ * How much ink goes into the accent. Dark mode takes more because a shade of a
+ * dark surface has far less room to separate itself than one of a light one.
  */
-const ACCENT_TINT = { light: 0.15, dark: 0.24 }
+const ACCENT_TINT = { light: 0.05, dark: 0.07 }
 /** The sidebar tint is a touch stronger — a selected chat should be obvious. */
-const SIDEBAR_TINT = { light: 0.18, dark: 0.3 }
+const SIDEBAR_TINT = { light: 0.055, dark: 0.085 }
 
 /**
  * How readable the surface's own ink has to stay on the tint. Fixed at AA
@@ -270,58 +269,56 @@ const SIDEBAR_TINT = { light: 0.18, dark: 0.3 }
  */
 const ACCENT_MIN_RATIO = 4.5
 /** Below this the "tint" is just the background again. */
-const MIN_TINT = 0.04
+const MIN_TINT = 0.02
 
 export type Scheme = "light" | "dark"
 
 /**
- * `primary` over `surface`, weakened until `ink` reads on it. Weakening always
+ * `source` over `surface`, weakened until `ink` reads on it. Weakening always
  * helps: every step moves the tint back toward the surface, and the surface is
  * where `ink` already has its full contrast.
  */
 function readableTint(
-  primary: Oklch,
+  source: Oklch,
   surface: Oklch,
   ink: Oklch,
   tint: number
 ): Oklch {
   let amount = tint
-  let color = mixOklch(primary, surface, amount)
+  let color = mixOklch(source, surface, amount)
   while (
     amount > MIN_TINT &&
     contrastRatio(ink, color) < ACCENT_MIN_RATIO
   ) {
-    amount -= 0.01
-    color = mixOklch(primary, surface, amount)
+    amount -= 0.005
+    color = mixOklch(source, surface, amount)
   }
   return color
 }
 
 /**
- * Accent and sidebar-accent, rebuilt from the theme's own primary. Returns
- * only what it can compute; an unparseable primary or background leaves the
- * theme's own values in place.
+ * Accent and sidebar-accent, rebuilt as a shade of each surface's own ink.
+ * Returns only what it can compute; an unparseable foreground or background
+ * leaves the theme's own values in place.
  */
-export function vividAccents(vars: Vars, scheme: Scheme): Vars {
+export function neutralAccents(vars: Vars, scheme: Scheme): Vars {
   const out: Vars = {}
-  const primary = parseOklch(vars.primary)
   const foreground = parseOklch(vars.foreground)
 
   const background = parseOklch(vars.background)
-  if (primary && background && foreground) {
+  if (background && foreground) {
     out.accent = formatOklch(
-      readableTint(primary, background, foreground, ACCENT_TINT[scheme])
+      readableTint(foreground, background, foreground, ACCENT_TINT[scheme])
     )
     out["accent-foreground"] = formatOklch(foreground)
   }
 
   const sidebar = parseOklch(vars.sidebar ?? vars.background)
-  const sidebarPrimary = parseOklch(vars["sidebar-primary"] ?? vars.primary)
   const sidebarForeground = parseOklch(vars["sidebar-foreground"] ?? vars.foreground)
-  if (sidebarPrimary && sidebar && sidebarForeground) {
+  if (sidebar && sidebarForeground) {
     out["sidebar-accent"] = formatOklch(
       readableTint(
-        sidebarPrimary,
+        sidebarForeground,
         sidebar,
         sidebarForeground,
         SIDEBAR_TINT[scheme]
@@ -497,5 +494,5 @@ export function contrastFixes(vars: Vars, level: ContrastLevel): Vars {
 
 /** Base vars for one mode, with the accent already harmonised. */
 export function tunedVars(vars: Vars, scheme: Scheme): Vars {
-  return { ...vars, ...vividAccents(vars, scheme) }
+  return { ...vars, ...neutralAccents(vars, scheme) }
 }

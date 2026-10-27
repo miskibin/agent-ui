@@ -8,6 +8,11 @@ import {
   type AskQuestionItem,
   type AskQuestionResult,
 } from "@/components/ui/ask-question"
+import {
+  ComposerBanner,
+  ComposerBannerBody,
+  type ComposerBannerVariant,
+} from "@/components/ui/composer-banner"
 import type { UserRequest, UserRequestAnswer } from "@/lib/turn-requests"
 import { cn } from "@/lib/utils"
 
@@ -25,26 +30,37 @@ import { cn } from "@/lib/utils"
  * for itself.
  */
 
-/** The shell both forms sit in, so the two read as one surface. */
+/**
+ * The shell both forms sit in, so the two read as one surface: a drawer
+ * pulled out of the composer's top edge (handed to `ChatInput`'s `banners`),
+ * amber when the agent is asking for permission rather than for an opinion.
+ */
 function PendingShell({
   label,
+  variant = "default",
   children,
 }: {
   label: string
+  variant?: ComposerBannerVariant
   children: React.ReactNode
 }) {
   return (
-    <section
-      data-slot="pending-question"
+    <ComposerBanner
+      role="region"
       aria-label={label}
-      className="mx-auto w-full max-w-3xl px-3 pb-2 sm:px-4"
+      variant={variant}
+      data-slot="pending-question"
+      className="px-0 pt-0"
     >
-      <div className="max-h-[min(calc(45dvh/var(--ui-scale,1)),24rem)] overflow-y-auto overscroll-contain rounded-lg border bg-background shadow-sm">
+      <ComposerBannerBody className="max-h-[min(calc(45dvh/var(--ui-scale,1)),24rem)] p-0">
         {children}
-      </div>
-    </section>
+      </ComposerBannerBody>
+    </ComposerBanner>
   )
 }
+
+/** The vendored form brings its own card; inside the drawer it is the drawer. */
+const FORM_IN_DRAWER = "my-0 rounded-none border-0 bg-transparent"
 
 export const PendingQuestion = React.memo(function PendingQuestion({
   messageId,
@@ -76,7 +92,7 @@ export const PendingQuestion = React.memo(function PendingQuestion({
     <PendingShell label="Question awaiting your answer">
       <AskQuestion
         {...question}
-        className="my-0 border-0"
+        className={FORM_IN_DRAWER}
         disabled={sent}
         onSubmit={handleSubmit}
       />
@@ -145,7 +161,10 @@ export const PendingUserRequest = React.memo(function PendingUserRequest({
     )
   }
   return (
-    <PendingShell label="The agent is waiting for your answer">
+    <PendingShell
+      label="The agent is waiting for your answer"
+      variant={request.kind === "permission" ? "warning" : "default"}
+    >
       <UserRequestChoice request={request} disabled={sending} onAnswer={answer} />
     </PendingShell>
   )
@@ -191,7 +210,7 @@ function UserRequestChoice({
             : "The agent needs an answer"
         }
         questions={questions}
-        className="my-0 border-0"
+        className={FORM_IN_DRAWER}
         disabled={disabled}
         hideOther
         skipLabel={request.kind === "permission" ? "Deny" : "Cancel"}

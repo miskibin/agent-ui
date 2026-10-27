@@ -24,8 +24,11 @@ import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
 import { MemoryNotice } from "@/components/memory-notice"
 import { MessageActions } from "@/components/message-actions"
-import { PermissionPicker } from "@/components/permission-picker"
 import { PendingQuestion, PendingUserRequest } from "@/components/pending-question"
+import {
+  PermissionMenuItems,
+  PermissionPicker,
+} from "@/components/permission-picker"
 import { PlanPanel } from "@/components/plan-panel"
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
@@ -41,6 +44,7 @@ import {
 import { TodoPanel } from "@/components/ui/todo-list"
 import { providerSessionHints } from "@/lib/handoff/types"
 import type { StoredMessage } from "@/lib/store/types"
+import type { UserRequest } from "@/lib/turn-requests"
 import { CACHE_ACTIVE_KEY, CACHE_INDEX_KEY, writeCache } from "@/lib/ui-cache"
 import { cn } from "@/lib/utils"
 
@@ -478,6 +482,57 @@ export default function ChatPage() {
      takes the boolean and stays off the per-token render path. */
   const hasPendingAsk = pendingRequest?.kind === "ask"
 
+  /* The same request, docked to the composer's top edge as a drawer. Keyed on
+     what the request *says* rather than on the object, for the reason above:
+     the form is rebuilt when the question changes, never per token. */
+  const askMessageId =
+    pendingRequest?.kind === "ask" ? pendingRequest.messageId : undefined
+  const askToolId =
+    pendingRequest?.kind === "ask" ? pendingRequest.toolId : undefined
+  const askInput =
+    pendingRequest?.kind === "ask" ? pendingRequest.input : undefined
+  const requestJson =
+    pendingRequest && pendingRequest.kind !== "ask"
+      ? JSON.stringify(pendingRequest.request)
+      : undefined
+  const pendingBanner = React.useMemo(() => {
+    if (askMessageId && askToolId) {
+      /* Answerable while the turn generates, which is when it matters most: a
+         harness that cannot block on its own ask tool keeps going, so answering
+         stops the turn rather than waiting for it (`handleAskAnswer`). */
+      return (
+        <PendingQuestion
+          key={`${activeId}:${askMessageId}:${askToolId}`}
+          messageId={askMessageId}
+          toolId={askToolId}
+          input={askInput}
+          onAnswer={handleAskAnswer}
+        />
+      )
+    }
+    if (requestJson) {
+      /* Deliberately *not* disabled while generating: a running turn blocked
+         on this answer is the only time it exists. */
+      const request = JSON.parse(requestJson) as UserRequest
+      return (
+        <PendingUserRequest
+          key={`${activeId}:${request.id}`}
+          request={request}
+          onAnswer={handleRequestAnswer}
+        />
+      )
+    }
+    return null
+  }, [
+    activeId,
+    askInput,
+    askMessageId,
+    askToolId,
+    handleAskAnswer,
+    handleRequestAnswer,
+    requestJson,
+  ])
+
   const {
     sessionItems,
     pinnedItems,
@@ -642,6 +697,7 @@ export default function ChatPage() {
         skills={skillCatalog.skills}
         slashCommands={skillCatalog.slashCommands}
         commandsMustStartMessage
+        banners={pendingBanner}
         isGenerating={isGenerating}
         placeholder={
           isGenerating
@@ -658,6 +714,15 @@ export default function ChatPage() {
           "transition-[padding] duration-300 ease-out",
           isEmptyChat && "pb-0 sm:pb-0"
         )}
+        toolsMenu={
+          permissionModes.length > 0 && effectivePermission ? (
+            <PermissionMenuItems
+              modes={permissionModes}
+              value={effectivePermission}
+              onChange={choosePermission}
+            />
+          ) : undefined
+        }
         tools={
           <>
             <ProviderPicker
@@ -740,6 +805,7 @@ export default function ChatPage() {
       lastTurnFinishedAt,
       model,
       models,
+      pendingBanner,
       permissionModes,
       pickerGroups,
       providerId,
@@ -1030,27 +1096,6 @@ export default function ChatPage() {
                       items={todos}
                       running={isGenerating}
                     />
-                    {pendingRequest?.kind === "ask" ? (
-                      /* Answerable while the turn generates, which is when it
-                         matters most: a harness that cannot block on its own
-                         ask tool keeps going, so answering stops the turn
-                         rather than waiting for it (`handleAskAnswer`). */
-                      <PendingQuestion
-                        key={`${activeId}:${pendingRequest.messageId}:${pendingRequest.toolId}`}
-                        messageId={pendingRequest.messageId}
-                        toolId={pendingRequest.toolId}
-                        input={pendingRequest.input}
-                        onAnswer={handleAskAnswer}
-                      />
-                    ) : pendingRequest ? (
-                      /* Deliberately *not* disabled while generating: a running
-                         turn blocked on this answer is the only time it exists. */
-                      <PendingUserRequest
-                        key={`${activeId}:${pendingRequest.request.id}`}
-                        request={pendingRequest.request}
-                        onAnswer={handleRequestAnswer}
-                      />
-                    ) : null}
                     <PendingLineComments />
                     {composer}
                     {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
