@@ -516,9 +516,18 @@ function callDetails(
     !TOOL_NAME_PREFIX.test(title) &&
     !(raw && typeof raw === "object" && ("command" in raw || "cmd" in raw))
   ) {
-    details.command = title.replace(/^`+|`+$/g, "")
+    details.command = trimChar(title, "`")
   }
   return details
+}
+
+/** `value` without any run of `char` at either end — no regex, no backtracking. */
+function trimChar(value: string, char: string): string {
+  let start = 0
+  let end = value.length
+  while (start < end && value[start] === char) start++
+  while (end > start && value[end - 1] === char) end--
+  return value.slice(start, end)
 }
 
 /* -------------------------------------------------------------------------- */

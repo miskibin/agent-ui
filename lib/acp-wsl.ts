@@ -39,7 +39,7 @@ export function wslSpawn(input: {
   inheritedWslEnv?: string
 }): WslSpawn {
   const distro = input.distro?.trim()
-  const names = Object.keys(input.env).filter((name) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name))
+  const names = Object.keys(input.env).filter((name) => /^[A-Za-z_]\w*$/.test(name))
   const forwarded = [
     ...(input.inheritedWslEnv ?? "").split(":").filter(Boolean),
     ...names.map((name) => `${name}/u`),
@@ -75,8 +75,12 @@ export function wslSpawn(input: {
 export function windowsToWslPath(value: string): string {
   const drive = /^([A-Za-z]):(?:[\\/](.*))?$/.exec(value)
   if (drive) {
-    const rest = (drive[2] ?? "").replace(/\\/g, "/").replace(/\/+$/, "")
-    return `/mnt/${drive[1].toLowerCase()}${rest ? `/${rest}` : ""}`
+    const rest = (drive[2] ?? "")
+      .split(/[\\/]/)
+      .filter(Boolean)
+      .join("/")
+    const mount = `/mnt/${drive[1].toLowerCase()}`
+    return rest ? `${mount}/${rest}` : mount
   }
   const share = /^[\\/]{2}(?:wsl\.localhost|wsl\$)[\\/][^\\/]+(?:[\\/](.*))?$/i.exec(value)
   if (share) return `/${(share[1] ?? "").replace(/\\/g, "/")}`

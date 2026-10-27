@@ -581,13 +581,14 @@ type HostPool = Map<string, Promise<AcpHost>>
 const POOL_KEY = Symbol.for("agent-ui.acp-hosts")
 function hostPool(): HostPool {
   const holder = globalThis as unknown as Record<symbol, HostPool | undefined>
-  return (holder[POOL_KEY] ??= new Map())
+  holder[POOL_KEY] ??= new Map()
+  return holder[POOL_KEY]
 }
 
 /** Everything that makes two processes different — and nothing else. */
 function hostKey(spec: AcpSpawnSpec, canWriteFiles: boolean, terminal: boolean) {
   const env = Object.keys(spec.env)
-    .sort()
+    .sort((a, b) => a.localeCompare(b))
     .map((name) => [name, spec.env[name]])
   return JSON.stringify([
     spec.command,

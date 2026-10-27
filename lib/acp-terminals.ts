@@ -41,7 +41,7 @@ type Terminal = {
 }
 
 export class AcpTerminals {
-  private terminals = new Map<string, Terminal>()
+  private readonly terminals = new Map<string, Terminal>()
   private nextId = 0
 
   /**

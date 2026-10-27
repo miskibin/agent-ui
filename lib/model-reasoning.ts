@@ -38,7 +38,7 @@ const REASONING_PATTERNS: RegExp[] = [
   /deepseek-(reasoner|r1)/,
   /deepseek-v3\.[1-9]/,
   /deepseek-v[4-9]/,
-  /(^|[^a-z])r1([^0-9]|$)/,
+  /(^|[^a-z])r1(\D|$)/,
   /qwq/,
   /magistral/,
   /thinking/,

@@ -78,50 +78,51 @@ export function tinyagentTurn(input: {
   const env: Record<string, string> = {}
   if (input.ollamaBaseUrl) env.OLLAMA_HOST = input.ollamaBaseUrl
 
-  const model = input.model?.trim() ?? ""
-  if (model && model !== TINYAGENT_DEFAULT_MODEL) {
-    const slash = model.indexOf("/")
-    const slug = slash > 0 ? model.slice(0, slash) : ""
-    const name = slash > 0 ? model.slice(slash + 1) : model
-    if (slug === "ollama") {
-      if (!input.ollamaBaseUrl) {
-        return { args, env, error: "No Ollama base URL set — pick another model or set one in Settings." }
-      }
-      args.push("-m", model)
-    } else {
-      const source = input.sources.find((entry) => entry.slug === slug)
-      if (!source) {
-        return {
-          args,
-          env,
-          error: `Model provider "${slug || model}" is disabled or missing — pick another model.`,
-        }
-      }
-      const native = NATIVE[slug]
-      if (native) {
-        args.push("-m", model)
-        if (source.apiKey) env[native.keyEnv] = source.apiKey
-        if (native.baseUrlEnv && source.baseUrl && source.baseUrl !== native.defaultBaseUrl) {
-          env[native.baseUrlEnv] =
-            slug === "anthropic" ? source.baseUrl.replace(/\/v1$/, "") : source.baseUrl
-        }
-      } else {
-        // Any other OpenAI-compatible endpoint is tinyagent's `openai`
-        // provider at that URL, over Chat Completions — the one transport
-        // every compatible server (LiteLLM, vLLM, Groq, …) implements.
-        args.push("-m", `openai/${name}`, "--openai-api", "chat")
-        env.OPENAI_BASE_URL = source.baseUrl
-        // tinyagent refuses to start its openai provider with no key at all;
-        // a proxy that needs none accepts any.
-        env.OPENAI_API_KEY = source.apiKey || "none"
-      }
-    }
-  }
+  const picked = modelFlags(input.model?.trim() ?? "", input.sources, input.ollamaBaseUrl)
+  if ("error" in picked) return { args, env, error: picked.error }
+  args.push(...picked.args)
+  Object.assign(env, picked.env)
 
   const effort = input.effort ? EFFORT[input.effort] : undefined
   if (effort) args.push("--reasoning-effort", effort)
   if (input.permissionMode === "read-only") args.push("--read-only")
   return { args, env }
+}
+
+type ModelFlags = { args: string[]; env: Record<string, string> } | { error: string }
+
+/** `-m` and whatever environment the picked model's source needs. */
+function modelFlags(model: string, sources: ModelSource[], ollamaBaseUrl: string): ModelFlags {
+  if (!model || model === TINYAGENT_DEFAULT_MODEL) return { args: [], env: {} }
+  const slash = model.indexOf("/")
+  const slug = slash > 0 ? model.slice(0, slash) : ""
+  if (slug === "ollama") {
+    return ollamaBaseUrl
+      ? { args: ["-m", model], env: {} }
+      : { error: "No Ollama base URL set — pick another model or set one in Settings." }
+  }
+  const source = sources.find((entry) => entry.slug === slug)
+  if (!source) {
+    return { error: `Model provider "${slug || model}" is disabled or missing — pick another model.` }
+  }
+  const native = NATIVE[slug]
+  if (!native) {
+    // Any other OpenAI-compatible endpoint is tinyagent's `openai` provider
+    // at that URL, over Chat Completions — the one transport every
+    // compatible server (LiteLLM, vLLM, Groq, …) implements. tinyagent
+    // refuses to start that provider with no key at all; a proxy that needs
+    // none accepts any.
+    return {
+      args: ["-m", `openai/${model.slice(slash + 1)}`, "--openai-api", "chat"],
+      env: { OPENAI_BASE_URL: source.baseUrl, OPENAI_API_KEY: source.apiKey || "none" },
+    }
+  }
+  const env: Record<string, string> = {}
+  if (source.apiKey) env[native.keyEnv] = source.apiKey
+  if (native.baseUrlEnv && source.baseUrl && source.baseUrl !== native.defaultBaseUrl) {
+    env[native.baseUrlEnv] = slug === "anthropic" ? source.baseUrl.replace(/\/v1$/, "") : source.baseUrl
+  }
+  return { args: ["-m", model], env }
 }
 
 /** tinyagent's own read-only flag, as the user may have put it in args. */

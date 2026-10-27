@@ -740,7 +740,7 @@ const ACP_PERMISSION_MODES: AcpPermissionMode[] = [
   "auto-approve-reads",
   "reject-all",
 ]
-const ACP_AGENT_KINDS: AcpAgentKind[] = ["dsh", "tinyagent", "generic"]
+const ACP_AGENT_KINDS = new Set<AcpAgentKind>(["dsh", "tinyagent", "generic"])
 
 const DSH_SANDBOX_MODES: DshSandboxMode[] = [
   "read-only",
@@ -793,7 +793,7 @@ function normalizeAcpAgent(
   return {
     enabled: typeof value.enabled === "boolean" ? value.enabled : fallback.enabled,
     name: asString(value.name) ?? fallback.name,
-    kind: ACP_AGENT_KINDS.includes(value.kind as AcpAgentKind)
+    kind: ACP_AGENT_KINDS.has(value.kind as AcpAgentKind)
       ? (value.kind as AcpAgentKind)
       : fallback.kind,
     command: asString(value.command) ?? fallback.command,
