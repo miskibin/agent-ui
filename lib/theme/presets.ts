@@ -1,28 +1,52 @@
 /**
- * Theme presets — thin accessors over the vendored tweakcn registry items in
- * `lib/theme/themes/generated.ts`.
+ * Theme presets.
  *
- * There is deliberately no hand-written palette here any more: a preset *is*
- * its registry item, and everything the app shows (colors, radius, fonts,
- * shadows, tracking) comes from that item's `cssVars`. Adding a theme is one
- * entry in `scripts/import-tweakcn.mjs` plus a rerun.
+ * Modern Minimal and Claude are registry items (`themes/generated.ts`) and
+ * stay verbatim — they already look right. Ink, Grove and Dusk are
+ * hand-tuned in `themes/authored.ts` for this app's surfaces. Adding another
+ * means a new entry there, checked in both modes, not another tweakcn fetch.
  */
 
 import { tunedVars } from "./contrast"
 import { firstFontFamily } from "./fonts"
+import { AUTHORED_THEMES } from "./themes/authored"
 import { TWEAKCN_THEMES } from "./themes/generated"
 import type { TweakcnTheme, TweakcnVars } from "./themes/types"
 
 export type ThemePreset = TweakcnTheme
 export type ThemeScheme = "light" | "dark"
 
-export const THEME_PRESETS: ThemePreset[] = TWEAKCN_THEMES
+export const THEME_PRESETS: ThemePreset[] = [
+  ...TWEAKCN_THEMES,
+  ...AUTHORED_THEMES,
+]
 
 export const DEFAULT_PRESET = THEME_PRESETS[0]
 
-/** Unknown / retired ids (older settings.json files) fall back to the default. */
+/**
+ * Ids the old catalog stored in settings.json, pointed at the closest theme
+ * that replaced them. Anything else unknown still falls back to the default.
+ */
+export const RETIRED_THEMES: Record<string, string> = {
+  graphite: "ink",
+  vercel: "ink",
+  notebook: "ink",
+  supabase: "grove",
+  "ocean-breeze": "grove",
+  perpetuity: "grove",
+  "mocha-mousse": "claude",
+  tangerine: "claude",
+  "t3-chat": "claude",
+  catppuccin: "dusk",
+  "cosmic-night": "dusk",
+  "amethyst-haze": "dusk",
+  "bold-tech": "dusk",
+}
+
+/** Unknown / retired ids (older settings.json files) resolve to a live preset. */
 export function findPreset(id: string | undefined): ThemePreset {
-  return THEME_PRESETS.find((preset) => preset.id === id) ?? DEFAULT_PRESET
+  const resolved = (id && RETIRED_THEMES[id]) || id
+  return THEME_PRESETS.find((preset) => preset.id === resolved) ?? DEFAULT_PRESET
 }
 
 /**

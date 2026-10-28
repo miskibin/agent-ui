@@ -4,8 +4,8 @@
  * The stylesheet we own (`<style id="agent-ui-theme">`) carries *every* preset
  * at once, keyed by the `data-theme` attribute on <html>:
  *
- *   :root[data-theme="graphite"] { --background: … --radius: … --font-sans: … }
- *   .dark[data-theme="graphite"] { --background: … }
+ *   :root[data-theme="ink"] { --background: … --radius: … --font-sans: … }
+ *   .dark[data-theme="ink"] { --background: … }
  *
  * Both selectors outrank the `:root` / `.dark` blocks in `app/globals.css`, and
  * the `.dark` half composes with next-themes, which owns the mode class. So
@@ -33,7 +33,7 @@ import {
 } from "./contrast"
 import { fontStack, fontStackMap } from "./font-options"
 import { withLoadedFont } from "./fonts"
-import { THEME_PRESETS, findPreset, presetVars } from "./presets"
+import { RETIRED_THEMES, THEME_PRESETS, findPreset, presetVars } from "./presets"
 
 /** Id of the stylesheet rendered in <head> by `app/layout.tsx`. */
 export const THEME_STYLE_ID = "agent-ui-theme"
@@ -172,9 +172,11 @@ export function themePresetCss(): string {
  */
 export const APPEARANCE_BOOTSTRAP_SCRIPT = `try{var d=document.documentElement,s=localStorage,v=JSON.parse(s.getItem(${JSON.stringify(
   APPEARANCE_STORAGE_KEY
-)})||"{}");d.setAttribute("data-theme",typeof v.theme==="string"?v.theme:${JSON.stringify(
+)})||"{}");var retired=${JSON.stringify(
+  RETIRED_THEMES
+)};var raw=typeof v.theme==="string"?v.theme:${JSON.stringify(
   DEFAULT_SETTINGS.appearance.theme
-)});d.setAttribute("data-contrast",${JSON.stringify(
+)};d.setAttribute("data-theme",retired[raw]||raw);d.setAttribute("data-contrast",${JSON.stringify(
   CONTRAST_LEVELS
 )}.indexOf(v.contrast)<0?${JSON.stringify(DEFAULT_CONTRAST)}:v.contrast);if(typeof v.radiusOverride==="number"&&v.radiusOverride>=${MIN_RADIUS}&&v.radiusOverride<=${MAX_RADIUS})d.style.setProperty("--radius",v.radiusOverride+"rem");if(typeof v.zoom==="number"&&v.zoom>=${MIN_ZOOM}&&v.zoom<=${MAX_ZOOM}&&v.zoom!==${DEFAULT_ZOOM}){d.style.setProperty("--ui-scale",String(Math.round(v.zoom*10)/10))}var f=${JSON.stringify(
   {
