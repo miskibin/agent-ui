@@ -2,6 +2,11 @@
 
 import * as React from "react"
 
+import {
+  contextBreakdown,
+  type ContextSegmentId,
+} from "@/lib/context-breakdown"
+import type { ContextWindowSource } from "@/lib/model-context"
 import { estimateTokens } from "@/lib/token-estimate"
 import { formatCost } from "@/lib/model-pricing"
 import type { DiscoveredCommand } from "@/lib/skills"
@@ -78,9 +83,9 @@ export function useDraftStore(): DraftStore {
  * can see. Until a turn has reported one there is nothing but the estimate,
  * which is why the meter reads low on a brand-new chat.
  */
-export type TurnUsage = { input: number; output: number }
+export type TurnUsage = { input: number; output: number; cached: number }
 
-const NO_USAGE: TurnUsage = { input: 0, output: 0 }
+const NO_USAGE: TurnUsage = { input: 0, output: 0, cached: 0 }
 
 /**
  * Cheap enough to run on every render — it stops at the first turn that
@@ -92,9 +97,13 @@ export function contextTurnUsage(messages: StoredMessage[]): TurnUsage {
   for (let index = messages.length - 1; index >= 0; index--) {
     const { metadata } = messages[index]
     if (!metadata) continue
-    const { inputTokens, outputTokens } = metadata
+    const { inputTokens, outputTokens, cachedInputTokens } = metadata
     if (inputTokens == null && outputTokens == null) continue
-    return { input: inputTokens ?? 0, output: outputTokens ?? 0 }
+    return {
+      input: inputTokens ?? 0,
+      output: outputTokens ?? 0,
+      cached: cachedInputTokens ?? 0,
+    }
   }
   return NO_USAGE
 }
@@ -165,10 +174,37 @@ export function shouldOfferResumeCompaction({
   return now - settled >= RESUME_COMPACTION_MINUTES * 60_000
 }
 
+/**
+ * The bar's colours. Semantic tokens only, so every theme draws it: the
+ * conversation in the theme's own primary, what the backend sends unseen in a
+ * neutral, the answer and the draft as lighter steps of the primary.
+ */
+const SEGMENT_COLOR: Record<ContextSegmentId, string> = {
+  setup: "bg-muted-foreground/55",
+  messages: "bg-primary",
+  draft: "bg-primary/35",
+}
+
+const SOURCE_NOTE: Record<ContextWindowSource, string> = {
+  reported: "Window as the backend reported it.",
+  catalog: "Window from the model list.",
+  published: "Window as published for this model family — the backend has not reported one yet.",
+}
+
+function percent(part: number, whole: number) {
+  if (whole <= 0) return "0%"
+  const value = (part / whole) * 100
+  if (value > 0 && value < 0.1) return "<0.1%"
+  return `${value < 10 && value > 0 ? value.toFixed(1) : Math.round(value)}%`
+}
+
 export function ContextUsage({
   store,
   input,
   output,
+  cached = 0,
+  conversation = 0,
+  source,
   total,
   cost,
   sessionId = "",
@@ -182,6 +218,12 @@ export function ContextUsage({
   input: number
   /** Tokens that turn generated. */
   output: number
+  /** Of `input`, what the backend served from its prompt cache. */
+  cached?: number
+  /** The transcript that prompt carried, estimated (`transcriptTokens`). */
+  conversation?: number
+  /** Where `total` came from — said under the breakdown. */
+  source?: ContextWindowSource
   /** The selected model's window; falsy hides the meter entirely. */
   total: number | undefined
   /** Dollars the chat has spent so far, per `lib/usage`; null = unknown. */
@@ -288,8 +330,15 @@ export function ContextUsage({
   if (!total) return hint
 
   const drafted = estimateTokens(draft)
-  const used = input + output + drafted
   const measured = input > 0 || output > 0
+  const breakdown = contextBreakdown({
+    prompt: input,
+    output,
+    conversation,
+    draft: drafted,
+    total,
+  })
+  const used = breakdown.used
 
   return (
     <>
@@ -301,39 +350,74 @@ export function ContextUsage({
               up once you are in trouble is not a gauge. */}
           <ContextMeter interactive used={used} total={total} showFrom={0} />
         </PopoverTrigger>
-        <PopoverContent align="end" side="top" className="w-60 text-[12px]">
-          <p className="mb-2 text-[13px] font-medium">Context window</p>
-          <dl className="grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
-            <Row label="Used" value={used} />
-            <Row label="Free" value={Math.max(0, total - used)} />
-            <Row label="Window" value={total} />
-          </dl>
+        <PopoverContent
+          align="end"
+          side="top"
+          data-slot="context-breakdown"
+          className="w-72 text-[12px]"
+        >
+          <div className="mb-1.5 flex items-baseline justify-between gap-2">
+            <p className="text-[13px] font-medium">Context</p>
+            <p className="tabular-nums text-muted-foreground">
+              {formatTokens(used)} / {formatTokens(total)}
+            </p>
+          </div>
+          <p className="mb-2 text-[11px] text-muted-foreground tabular-nums">
+            {percent(used, total)} used
+          </p>
+          <div
+            data-slot="context-breakdown-bar"
+            role="img"
+            aria-label={`${percent(used, total)} of the context window used`}
+            className="mb-3 flex h-1.5 w-full gap-px overflow-hidden rounded-full bg-muted"
+          >
+            {breakdown.segments.map((segment) => (
+              <span
+                key={segment.id}
+                data-segment={segment.id}
+                className={cn("h-full", SEGMENT_COLOR[segment.id])}
+                style={{ width: `${(segment.tokens / total) * 100}%` }}
+              />
+            ))}
+          </div>
+          <ul className="grid gap-1 tabular-nums">
+            {breakdown.segments.map((segment) => (
+              <BreakdownRow
+                key={segment.id}
+                color={SEGMENT_COLOR[segment.id]}
+                label={segment.label}
+                tokens={segment.tokens}
+                share={percent(segment.tokens, total)}
+                approximate={segment.estimated}
+              />
+            ))}
+            <BreakdownRow
+              color="bg-muted ring-1 ring-inset ring-border"
+              label="Free space"
+              tokens={breakdown.free}
+              share={percent(breakdown.free, total)}
+            />
+          </ul>
           {measured ? (
-            <>
-              <p className="mt-3 mb-1 text-muted-foreground">Last turn</p>
-              <dl className="grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
-                <Row label="Prompt" value={input} />
-                <Row label="Reply" value={output} />
-              </dl>
-            </>
-          ) : null}
-          {drafted > 0 ? (
-            <dl className="mt-1 grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
-              <Row label="Draft" value={drafted} approximate />
-            </dl>
+            <p className="mt-3 text-[11px] leading-snug text-muted-foreground tabular-nums">
+              Last turn: {formatTokens(input)} prompt
+              {cached > 0 ? ` (${formatTokens(cached)} cached)` : ""} ·{" "}
+              {formatTokens(output)} reply
+            </p>
           ) : null}
           {cost != null ? (
-            <dl className="mt-3 grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
+            <dl className="mt-2 grid grid-cols-[1fr_auto] gap-y-1 tabular-nums">
               <dt className="text-muted-foreground">Spent so far</dt>
               <dd className="text-right" title="Estimated from list prices">
                 ≈ {formatCost(cost)}
               </dd>
             </dl>
           ) : null}
-          <p className="mt-3 text-[11px] leading-snug text-muted-foreground">
+          <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
             {measured
-              ? "The prompt is what the backend counted; the draft is estimated at four characters per token."
-              : "No turn has reported its tokens yet, so this is the draft estimate alone."}
+              ? "The total is what the backend counted for the last turn. Messages and draft are estimated at four characters per token; System & tools is the rest: the system prompt, tool schemas, memory and skills the harness sends that no transcript shows."
+              : "No turn has reported its tokens yet, so this is an estimate of the messages and the draft."}
+            {source ? ` ${SOURCE_NOTE[source]}` : ""}
           </p>
           {compactable ? (
             /* One ordinary turn, sent through the composer's own path — the
@@ -356,22 +440,28 @@ export function ContextUsage({
   )
 }
 
-function Row({
+function BreakdownRow({
+  color,
   label,
-  value,
+  tokens,
+  share,
   approximate = false,
 }: {
+  color: string
   label: string
-  value: number
+  tokens: number
+  share: string
   approximate?: boolean
 }) {
   return (
-    <>
-      <dt className="text-muted-foreground">{label}</dt>
-      <dd className="text-right">
+    <li className="grid grid-cols-[auto_1fr_auto_3rem] items-center gap-2">
+      <span aria-hidden className={cn("size-2.5 rounded-[3px]", color)} />
+      <span className="truncate text-muted-foreground">{label}</span>
+      <span className="text-right">
         {approximate ? "~" : ""}
-        {formatTokens(value)}
-      </dd>
-    </>
+        {formatTokens(tokens)}
+      </span>
+      <span className="text-right font-medium">{share}</span>
+    </li>
   )
 }

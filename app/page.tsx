@@ -469,6 +469,8 @@ export default function ChatPage() {
     plan,
     contextTurn,
     contextTotal,
+    contextSource,
+    contextConversation,
     activeCost,
     lastTurnFinishedAt,
     usage,
@@ -778,6 +780,9 @@ export default function ChatPage() {
               store={draftStore}
               input={contextTurn.input}
               output={contextTurn.output}
+              cached={contextTurn.cached}
+              conversation={contextConversation}
+              source={contextSource}
               total={contextTotal}
               cost={activeCost}
               sessionId={activeId}
@@ -808,6 +813,9 @@ export default function ChatPage() {
       contextTotal,
       contextTurn.input,
       contextTurn.output,
+      contextTurn.cached,
+      contextConversation,
+      contextSource,
       discardStash,
       draftStore,
       effectivePermission,

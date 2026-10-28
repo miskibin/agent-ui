@@ -97,6 +97,8 @@ export function createOpenAiChatProvider(settings: AppSettings): AgentProvider {
           id: joinModelId(source.slug, model.id),
           name: model.name,
           group: source.slug,
+          // Only when the host's catalog states it (`lib/model-context`).
+          ...(model.contextLength ? { contextLength: model.contextLength } : null),
         }))
       )
     },

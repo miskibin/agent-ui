@@ -1,5 +1,6 @@
 import "server-only"
 
+import { catalogContextLength } from "@/lib/model-context"
 import {
   MODEL_PROVIDER_PRESETS,
   RESERVED_MODEL_PROVIDER_SLUGS,
@@ -27,8 +28,11 @@ export type ModelSource = {
 }
 
 type ModelsResponse = {
-  data?: Array<{ id?: unknown; name?: unknown }>
+  data?: Array<{ id?: unknown; name?: unknown } & Record<string, unknown>>
 }
+
+/** One entry of a source's catalog — the window only when the host states it. */
+export type SourceModel = { id: string; name: string; contextLength?: number }
 
 /**
  * Enabled entries that have somewhere to talk to, presets in their shipped
@@ -74,7 +78,7 @@ export function enabledModelSources(settings: AppSettings): ModelSource[] {
  */
 export async function listSourceModels(
   source: ModelSource
-): Promise<Array<{ id: string; name: string }>> {
+): Promise<SourceModel[]> {
   if (source.models.length > 0) {
     return dedupeById(source.models.map((id) => ({ id, name: id })))
   }
@@ -114,18 +118,19 @@ export async function listSourceModels(
       const id = typeof entry.id === "string" ? entry.id.trim() : ""
       if (!id) return null
       const name = typeof entry.name === "string" ? entry.name.trim() : ""
-      return { id, name: name || id }
+      const contextLength = catalogContextLength(entry)
+      return { id, name: name || id, ...(contextLength ? { contextLength } : null) }
     })
-    .filter((model): model is { id: string; name: string } => model !== null)
+    .filter((model): model is SourceModel => model !== null)
   return dedupeById(models)
 }
 
-function dedupeById(models: Array<{ id: string; name: string }>) {
-  const byId = new Map<string, { id: string; name: string }>()
+function dedupeById(models: SourceModel[]) {
+  const byId = new Map<string, SourceModel>()
   for (const model of models) {
     const id = model.id.trim()
     if (!id || byId.has(id)) continue
-    byId.set(id, { id, name: model.name || id })
+    byId.set(id, { ...model, id, name: model.name || id })
   }
   return [...byId.values()].sort((a, b) => a.id.localeCompare(b.id))
 }

@@ -6,6 +6,11 @@ import { collectChatChanges } from "@/components/chat-changes"
 import { contextTurnUsage } from "@/components/context-usage"
 import type { ModelOption } from "@/components/ui/model-picker"
 import { findPendingRequest, isInternalMessage } from "@/lib/ask-tools"
+import { transcriptTokens } from "@/lib/context-breakdown"
+import {
+  publishedContextWindow,
+  type ContextWindowSource,
+} from "@/lib/model-context"
 import type { StoredMessage } from "@/lib/store/types"
 import { latestTodos, livePlan } from "@/lib/todo-plan"
 import { chatUsage } from "@/lib/usage"
@@ -178,11 +183,37 @@ export function useThreadView({
    * rebuilt while one is streaming.
    */
   const contextTurn = contextTurnUsage(messages)
-  const contextTotal = React.useMemo(
+  /**
+   * The window, from the best source there is — see `lib/model-context`. Two
+   * primitives rather than an object, for the memoized composer's sake.
+   */
+  const contextWindow = React.useMemo((): {
+    total: number | undefined
+    source: ContextWindowSource | undefined
+  } => {
+    const reported = reportedContextWindow(deferredMessages)
+    if (reported) return { total: reported, source: "reported" }
+    const listed = models.find((option) => option.id === model)?.contextLength
+    if (listed) return { total: listed, source: "catalog" }
+    const published = publishedContextWindow(model)
+    return published
+      ? { total: published, source: "published" }
+      : { total: undefined, source: undefined }
+  }, [deferredMessages, model, models])
+  const contextTotal = contextWindow.total
+  const contextSource = contextWindow.source
+  /**
+   * The messages half of the ring's breakdown, over the *settled* transcript:
+   * a streaming answer grows every frame, and leaving it out keeps this number
+   * — which is all the memoized composer sees — still until the turn ends. A
+   * sum of string lengths, so recounting it per frame costs next to nothing.
+   */
+  const contextConversation = React.useMemo(
     () =>
-      reportedContextWindow(deferredMessages) ??
-      models.find((option) => option.id === model)?.contextLength,
-    [deferredMessages, model, models]
+      transcriptTokens(
+        isGenerating ? deferredMessages.slice(0, -1) : deferredMessages
+      ),
+    [deferredMessages, isGenerating]
   )
   /**
    * What the chat has spent so far: the composer's context ring takes the
@@ -302,6 +333,8 @@ export function useThreadView({
     plan,
     contextTurn,
     contextTotal,
+    contextSource,
+    contextConversation,
     activeCost,
     lastTurnFinishedAt,
     usage,

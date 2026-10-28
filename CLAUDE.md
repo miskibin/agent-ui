@@ -750,7 +750,17 @@ one interface:
   reaches a model; selecting text in an answer offers "Quote", which drops a blockquote at the
   caret. Global keys are one listener in `lib/app-shortcuts.ts` — ⌘N, ⌘B, ⌘⇧[ / ⌘⇧], ⌘1…9,
   ⌘O, and type-to-focus — bound from an effect because the handlers read refs. The context
-  meter (`components/context-usage.tsx`) carries the one action that belongs to the *window*
+  meter (`components/context-usage.tsx`) needs a window to measure against, and takes it from
+  the best source there is (`lib/model-context.ts`): what the backend reported for the last
+  turn, else what the provider's catalog states (Ollama's served `num_ctx`, a hosted
+  `/models` entry's `context_length` and its spellings — `catalogContextLength`), else the
+  window the model's maker publishes for its family. A model none of those know gets *no*
+  ring rather than a guessed one, and a local Ollama tag is never answered from the table.
+  Opened, it splits the window the way Claude Code's own panel does (`lib/context-breakdown.ts`,
+  pure): the last turn's measured prompt plus reply, with the transcript's four-characters
+  estimate carved out of it as Messages and the remainder labelled System & tools — the part
+  no transcript shows — then the draft and the free space, each estimate marked `~`, and the
+  popover says where the window came from. It also carries the one action that belongs to the *window*
   rather than to the app: "Compact context" sends the harness's own `/compact` as an ordinary
   turn, offered only where that command exists (`claude-code` always, anything else only when
   the scan found it). A `claude-code` chat reopened after 70 minutes with more than 100k of
