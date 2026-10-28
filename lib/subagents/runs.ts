@@ -10,8 +10,15 @@ import {
   seedAssistantMessage,
 } from "@/lib/message-stream"
 import { getProvider, listProviders } from "@/lib/providers/registry"
-import { createSession, getSession } from "@/lib/store/sessions"
+import { createSession, getSession, readMessages } from "@/lib/store/sessions"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
+import {
+  createProgress,
+  digestProgress,
+  finishProgress,
+  trackEvent,
+  type RunProgress,
+} from "@/lib/subagents/progress"
 import type {
   SubagentBusEvent,
   SubagentRunSummary,
@@ -50,6 +57,18 @@ type Run = SubagentRunSummary & {
   listeners: Set<Listener>
   abort: AbortController
   settled: Promise<void>
+  settle: () => void
+  /** The stream folded into counters — what an orchestrator is told. */
+  progress: RunProgress
+  /** Set when `timeout_seconds` ran out; the run ends as an error, not a cancel. */
+  timedOut?: number
+}
+
+/** How much of a run a description carries — `lib/subagents/mcp`'s `ViewArgs`. */
+export type RunView = {
+  detail?: "brief" | "full"
+  sinceStep?: number
+  maxAnswerChars?: number
 }
 
 const MAX_FINISHED = 50
@@ -109,6 +128,27 @@ export function activeRuns(): SubagentRunSummary[] {
     .map(summary)
 }
 
+/** `list_subagents`: one compact row per run, the digest's counters only. */
+export function listRunRows(parentId?: string): Record<string, unknown>[] {
+  const now = Date.now()
+  return [...store.runs.values()]
+    .filter((run) => parentId === undefined || run.parentId === parentId)
+    .sort((a, b) => b.startedAt - a.startedAt)
+    .map((run) => ({
+      run_id: run.runId,
+      session_id: run.sessionId,
+      harness: run.harness,
+      title: run.title,
+      status: run.status,
+      phase: run.progress.phase,
+      steps: run.progress.stepCount,
+      ...(run.progress.edited.size ? { files_edited: run.progress.edited.size } : null),
+      ...(run.progress.waiting ? { waiting_on_user: true } : null),
+      elapsed_seconds:
+        run.status === "queued" ? 0 : seconds(run.startedAt, run.finishedAt ?? now),
+    }))
+}
+
 export function listRuns(parentId?: string): SubagentRunSummary[] {
   return [...store.runs.values()]
     .filter((run) => parentId === undefined || run.parentId === parentId)
@@ -148,42 +188,136 @@ function finalAnswer(message: StoredMessage): string {
   return message.content.trim()
 }
 
-/** What an agent polling a run is told about it. */
-export function describeRun(runId: string): Record<string, unknown> {
-  const run = store.runs.get(runId)
-  if (!run) throw new Error(`No subagent run "${runId}" (runs are forgotten when the app restarts).`)
-  const tools = run.assistant.tools ?? []
-  const base: Record<string, unknown> = {
+/** The answer, capped — the tail is cut, since a report leads with its point. */
+function cappedAnswer(answer: string, max = 4000): Record<string, unknown> {
+  if (!answer) return {}
+  if (answer.length <= max) return { answer }
+  return {
+    answer: `${answer.slice(0, max)}…`,
+    answer_truncated: { shown: max, total: answer.length },
+  }
+}
+
+function seconds(from: number, to: number) {
+  return Math.max(0, Math.round((to - from) / 1000))
+}
+
+function describe(run: Run, view: RunView = {}): Record<string, unknown> {
+  const now = Date.now()
+  const finished = run.status !== "running" && run.status !== "queued"
+  return {
     run_id: run.runId,
     session_id: run.sessionId,
     harness: run.harness,
-    model: run.model,
+    ...(run.model ? { model: run.model } : null),
     title: run.title,
     status: run.status,
-    elapsed_seconds: Math.round(((run.finishedAt ?? Date.now()) - run.startedAt) / 1000),
-    tool_calls: tools.length,
-  }
-  if (run.status === "running") {
-    const partial = run.assistant.content.trim()
-    return {
-      ...base,
-      ...(partial ? { latest_output: partial.slice(-1500) } : null),
-      note: "Still running. Call get_subagent again with wait_seconds to wait for it.",
-    }
-  }
-  return {
-    ...base,
-    answer: finalAnswer(run.assistant),
+    elapsed_seconds:
+      run.status === "queued" ? 0 : seconds(run.startedAt, run.finishedAt ?? now),
+    ...digestProgress(run.progress, now, {
+      detail: view.detail,
+      sinceStep: view.sinceStep,
+      output: run.assistant.content,
+    }),
+    ...(finished ? cappedAnswer(finalAnswer(run.assistant), view.maxAnswerChars) : null),
     ...(run.error ? { error: run.error } : null),
   }
 }
 
-export async function waitForRun(runId: string, seconds: number): Promise<void> {
+/** What an agent polling a run is told about it. */
+export function describeRun(runId: string, view: RunView = {}): Record<string, unknown> {
   const run = store.runs.get(runId)
-  if (!run || run.status !== "running" || seconds <= 0) return
+  if (!run) {
+    throw new Error(
+      `No subagent run "${runId}" — runs are forgotten when the app restarts. Pass session_id instead to read that chat's latest turn.`
+    )
+  }
+  return describe(run, view)
+}
+
+/** The newest run on a chat, if this process still holds one. */
+function latestRunFor(sessionId: string): Run | undefined {
+  let latest: Run | undefined
+  for (const run of store.runs.values()) {
+    if (run.sessionId !== sessionId) continue
+    if (!latest || run.startedAt >= latest.startedAt) latest = run
+  }
+  return latest
+}
+
+/**
+ * A chat's latest turn read back from disk: what `get_subagent` answers for a
+ * `session_id` when the registry no longer has a run for it — the app
+ * restarted, or the run aged out. The digest is rebuilt from the stored tool
+ * calls, so it says the same things a live one would, minus the timing.
+ */
+export async function describeSession(
+  sessionId: string,
+  view: RunView = {}
+): Promise<Record<string, unknown>> {
+  const live = latestRunFor(sessionId)
+  if (live) return describe(live, view)
+  const session = await getSession(sessionId)
+  if (!session) throw new Error(`No chat "${sessionId}".`)
+  const messages = await readMessages(sessionId)
+  const last = [...messages].reverse().find((message) => message.sender === "assistant")
+  const base = {
+    session_id: sessionId,
+    harness: session.providerId,
+    ...(session.model ? { model: session.model } : null),
+    title: session.title,
+  }
+  if (!last) return { ...base, status: "idle", note: "This chat has no answer yet." }
+  const at = last.createdAt ?? session.updatedAt
+  const progress = createProgress(at)
+  for (const tool of last.tools ?? []) {
+    const status = tool.status === "error" ? "error" : "done"
+    trackEvent(
+      progress,
+      {
+        type: "tool",
+        id: tool.id,
+        name: tool.name,
+        status,
+        ...(tool.input ? { input: tool.input } : null),
+        ...(tool.output ? { output: tool.output } : null),
+      },
+      at
+    )
+  }
+  finishProgress(progress, at)
+  return {
+    ...base,
+    status: "done",
+    note: "Read from the saved chat — the live run is no longer held, so timing and the step log's clock are not known.",
+    ...digestProgress(progress, at, { detail: view.detail, sinceStep: view.sinceStep }),
+    ...cappedAnswer(finalAnswer(last), view.maxAnswerChars),
+  }
+}
+
+export async function waitForRun(runId: string, seconds: number): Promise<void> {
+  await waitForRuns([runId], "any", seconds)
+}
+
+/**
+ * Waits for the first (`any`) or the last (`all`) of these runs to finish, or
+ * for `seconds`, whichever is sooner. Unknown ids and finished runs count as
+ * finished, so an `any` over a list holding one returns at once.
+ */
+export async function waitForRuns(
+  runIds: string[],
+  mode: "any" | "all",
+  seconds: number
+): Promise<void> {
+  const pending = runIds
+    .map((id) => store.runs.get(id))
+    .filter((run): run is Run => !!run && (run.status === "running" || run.status === "queued"))
+  if (seconds <= 0 || pending.length === 0) return
+  if (mode === "any" && pending.length < runIds.length) return
   let timer: ReturnType<typeof setTimeout> | undefined
+  const settled = pending.map((run) => run.settled)
   await Promise.race([
-    run.settled,
+    mode === "any" ? Promise.race(settled) : Promise.all(settled),
     new Promise<void>((resolve) => {
       timer = setTimeout(resolve, seconds * 1000)
     }),
@@ -191,9 +325,29 @@ export async function waitForRun(runId: string, seconds: number): Promise<void> 
   clearTimeout(timer)
 }
 
+/** The runs a caller has in flight — what an empty `wait_subagents` waits on. */
+export function inFlightRuns(parentId?: string): string[] {
+  return [...store.runs.values()]
+    .filter(
+      (run) =>
+        (run.status === "running" || run.status === "queued") &&
+        (parentId === undefined || run.parentId === parentId)
+    )
+    .map((run) => run.runId)
+}
+
 export function cancelRun(runId: string): boolean {
   const run = store.runs.get(runId)
-  if (!run || run.status !== "running") return false
+  if (!run) return false
+  if (run.status === "queued") {
+    // Never started: nothing to abort, and the page never heard of it.
+    run.status = "cancelled"
+    run.finishedAt = Date.now()
+    finishProgress(run.progress, run.finishedAt)
+    run.settle()
+    return true
+  }
+  if (run.status !== "running") return false
   run.abort.abort()
   return true
 }
@@ -220,7 +374,7 @@ export async function harnessModels(harness: string) {
 
 function prune() {
   const finished = [...store.runs.values()]
-    .filter((run) => run.status !== "running")
+    .filter((run) => run.status !== "running" && run.status !== "queued")
     .sort((a, b) => (a.finishedAt ?? 0) - (b.finishedAt ?? 0))
   for (const run of finished.slice(0, Math.max(0, finished.length - MAX_FINISHED))) {
     store.runs.delete(run.runId)
@@ -239,6 +393,13 @@ export type StartRunInput = {
   sessionId?: string
   parentId?: string
   permissionMode?: string
+  /** Stop the run after this many seconds; it ends as an error, work kept. */
+  timeoutSeconds?: number
+  /**
+   * Queue behind this run of the same chat instead of refusing because the
+   * chat is busy: the new run is `queued` until that one settles.
+   */
+  after?: string
 }
 
 export async function startRun(input: StartRunInput): Promise<SubagentRunSummary> {
@@ -259,10 +420,20 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
   if (input.sessionId) {
     session = await getSession(input.sessionId)
     if (!session) throw new Error(`No chat "${input.sessionId}" to continue.`)
-    const busy = [...store.runs.values()].some(
-      (run) => run.sessionId === session!.id && run.status === "running"
-    )
-    if (busy) throw new Error("That subagent is still running — wait for it first.")
+    // A caller that named a run to queue behind has chosen to wait its turn;
+    // the chain (`after` is always the newest) keeps the follow-ups in order.
+    const busy =
+      !input.after &&
+      [...store.runs.values()].some(
+        (run) =>
+          run.sessionId === session!.id &&
+          (run.status === "running" || run.status === "queued")
+      )
+    if (busy) {
+      throw new Error(
+        "That subagent is still running. Use message_subagent to queue a follow-up or interrupt it."
+      )
+    }
   }
 
   let model = input.model ?? (session?.providerId === input.harness ? session.model : "")
@@ -286,7 +457,10 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
     })
   }
 
+  const ahead = input.after ? store.runs.get(input.after) : undefined
+  const queued = !!ahead && (ahead.status === "running" || ahead.status === "queued")
   let settle!: () => void
+  const now = Date.now()
   const run: Run = {
     // Unguessable: a run id is all `/api/subagents/<id>/stream` asks for.
     runId: `r${randomBytes(9).toString("base64url")}`,
@@ -297,8 +471,8 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
     title: session.title,
     prompt: input.prompt,
     ...(cwd ? { cwd } : null),
-    status: "running",
-    startedAt: Date.now(),
+    status: queued ? "queued" : "running",
+    startedAt: now,
     userMessageId: newId(),
     assistantMessageId: newId(),
     frames: [],
@@ -308,13 +482,89 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
     settled: new Promise<void>((resolve) => {
       settle = resolve
     }),
+    settle: () => settle(),
+    progress: createProgress(now, queued ? "queued" : "starting"),
   }
   run.assistant = seedAssistantMessage(run.assistantMessageId)
   store.runs.set(run.runId, run)
-  publish({ type: "run-started", run: summary(run), session })
 
-  void pump(run, input, settle)
+  const launch = () => {
+    // Cancelled while it waited its turn: there is nothing to start.
+    if (run.status === "cancelled") return
+    run.status = "running"
+    run.startedAt = Date.now()
+    run.progress = createProgress(run.startedAt)
+    publish({ type: "run-started", run: summary(run), session: session! })
+    void pump(run, input, settle)
+  }
+  if (queued) void ahead.settled.then(launch)
+  else launch()
   return summary(run)
+}
+
+export type MessageInput = {
+  origin: string
+  runId?: string
+  sessionId?: string
+  message: string
+  interrupt: boolean
+  parentId?: string
+  permissionMode?: string
+  timeoutSeconds?: number
+}
+
+/**
+ * A follow-up into a subagent's chat. Idle, it is simply the next turn; busy,
+ * it either waits its turn (`queued`) or stops the turn in flight and goes now
+ * — the stop is awaited, because the chat route is still writing the dying
+ * turn's last frame until it settles.
+ */
+export async function messageSubagent(input: MessageInput): Promise<SubagentRunSummary> {
+  const named = input.runId ? store.runs.get(input.runId) : undefined
+  if (input.runId && !named && !input.sessionId) {
+    throw new Error(
+      `No subagent run "${input.runId}" — runs are forgotten when the app restarts. Pass session_id instead.`
+    )
+  }
+  const sessionId = named?.sessionId ?? input.sessionId!
+  const session = await getSession(sessionId)
+  if (!session) throw new Error(`No chat "${sessionId}".`)
+  if (input.parentId && session.parentId && session.parentId !== input.parentId) {
+    throw new Error("That chat belongs to another orchestrator.")
+  }
+
+  // The newest unfinished run of the chat is what a follow-up lines up behind.
+  const busy = [...store.runs.values()]
+    .filter(
+      (run) =>
+        run.sessionId === sessionId && (run.status === "running" || run.status === "queued")
+    )
+    .sort((a, b) => b.startedAt - a.startedAt)
+  let after: string | undefined
+  if (busy.length && input.interrupt) {
+    for (const run of busy) cancelRun(run.runId)
+    let timer: ReturnType<typeof setTimeout> | undefined
+    await Promise.race([
+      Promise.all(busy.map((run) => run.settled)),
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 10_000)
+      }),
+    ])
+    clearTimeout(timer)
+  } else if (busy.length) {
+    after = busy[0].runId
+  }
+
+  return startRun({
+    origin: input.origin,
+    harness: session.providerId,
+    prompt: input.message,
+    sessionId,
+    parentId: input.parentId ?? session.parentId,
+    permissionMode: input.permissionMode,
+    timeoutSeconds: input.timeoutSeconds,
+    after,
+  })
 }
 
 function emit(run: Run, frame: string) {
@@ -332,11 +582,19 @@ function absorb(run: Run, data: string) {
   emit(run, data)
   if (!parsed || parsed.type === "turn-state") return
   const event = parsed as AgentStreamEvent
-  if (event.type === "error") run.error = event.message
+  trackEvent(run.progress, event, Date.now())
+  if (event.type === "error") run.error = run.timedOut ? run.error : event.message
   else run.assistant = applyStreamEvent(run.assistant, event)
 }
 
 async function pump(run: Run, input: StartRunInput, settle: () => void) {
+  const timeout = input.timeoutSeconds
+    ? setTimeout(() => {
+        run.timedOut = input.timeoutSeconds
+        run.error = `Timed out after ${input.timeoutSeconds}s — stopped; its chat and partial work are kept.`
+        run.abort.abort()
+      }, input.timeoutSeconds * 1000)
+    : undefined
   try {
     const res = await fetch(new URL("/api/chat", input.origin), {
       method: "POST",
@@ -394,7 +652,7 @@ async function pump(run: Run, input: StartRunInput, settle: () => void) {
     if (buffer.trim()) lines.push(buffer.trim())
     flushEvent()
   } catch (err) {
-    if (!run.abort.signal.aborted) {
+    if (!run.abort.signal.aborted && !run.timedOut) {
       absorb(
         run,
         JSON.stringify({
@@ -404,8 +662,16 @@ async function pump(run: Run, input: StartRunInput, settle: () => void) {
       )
     }
   } finally {
-    run.status = run.abort.signal.aborted ? "cancelled" : run.error ? "error" : "done"
+    clearTimeout(timeout)
+    run.status = run.timedOut
+      ? "error"
+      : run.abort.signal.aborted
+        ? "cancelled"
+        : run.error
+          ? "error"
+          : "done"
     run.finishedAt = Date.now()
+    finishProgress(run.progress, run.finishedAt)
     for (const listener of run.listeners) listener(null)
     run.listeners.clear()
     settle()

@@ -2,7 +2,8 @@ import type { SessionMeta } from "@/lib/store/types"
 
 /** Shared by the server's run registry and the page that watches it. */
 
-export type SubagentStatus = "running" | "done" | "error" | "cancelled"
+/** `queued`: a follow-up waiting for the chat's current turn to end. */
+export type SubagentStatus = "queued" | "running" | "done" | "error" | "cancelled"
 
 export type SubagentRunSummary = {
   runId: string

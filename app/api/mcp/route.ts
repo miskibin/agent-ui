@@ -14,11 +14,15 @@ import {
 import {
   cancelRun,
   describeRun,
+  describeSession,
   harnessList,
   harnessModels,
-  listRuns,
+  inFlightRuns,
+  listRunRows,
+  messageSubagent,
   startRun,
   waitForRun,
+  waitForRuns,
 } from "@/lib/subagents/runs"
 import { isValidSessionId } from "@/lib/store/sessions"
 import {
@@ -84,33 +88,57 @@ export async function POST(req: Request) {
         sessionId: args.sessionId,
         parentId,
         permissionMode,
+        timeoutSeconds: args.timeoutSeconds,
       })
-      if (args.background) {
-        return {
-          run_id: run.runId,
-          session_id: run.sessionId,
-          status: run.status,
-          note: "Started in the background. Collect it with get_subagent.",
+      if (!args.background) await waitForRun(run.runId, args.waitSeconds)
+      return describeRun(run.runId, args.view)
+    },
+    async message(args) {
+      const run = await messageSubagent({
+        origin,
+        runId: args.runId,
+        sessionId: args.sessionId,
+        message: args.message,
+        interrupt: args.interrupt,
+        parentId,
+        permissionMode,
+        timeoutSeconds: args.timeoutSeconds,
+      })
+      if (!args.background) await waitForRun(run.runId, args.waitSeconds)
+      return describeRun(run.runId, args.view)
+    },
+    async status(ref, waitSeconds, view) {
+      if (ref.runId) {
+        await waitForRun(ref.runId, waitSeconds)
+        try {
+          return describeRun(ref.runId, view)
+        } catch (err) {
+          // A run id the registry lost (an app restart) still names a chat
+          // when the caller passed both; fall back to reading that.
+          if (!ref.sessionId) throw err
         }
       }
-      await waitForRun(run.runId, args.waitSeconds)
-      return describeRun(run.runId)
+      return describeSession(ref.sessionId!, view)
     },
-    async status(runId, waitSeconds) {
-      await waitForRun(runId, waitSeconds)
-      return describeRun(runId)
+    async wait(args) {
+      const ids = args.runIds.length ? args.runIds : inFlightRuns(parentId)
+      if (ids.length === 0) return { runs: [], note: "Nothing in flight." }
+      await waitForRuns(ids, args.mode, args.waitSeconds)
+      const runs = ids.map((id) => {
+        try {
+          return describeRun(id, args.view)
+        } catch (err) {
+          return { run_id: id, status: "unknown", error: err instanceof Error ? err.message : String(err) }
+        }
+      })
+      const open = runs.filter((run) => run.status === "running" || run.status === "queued").length
+      return { runs, ...(open ? { still_running: open } : null) }
     },
     async cancel(runId) {
       return { run_id: runId, cancelled: cancelRun(runId) }
     },
     async list() {
-      return listRuns(parentId).map((run) => ({
-        run_id: run.runId,
-        session_id: run.sessionId,
-        harness: run.harness,
-        title: run.title,
-        status: run.status,
-      }))
+      return listRunRows(parentId)
     },
   }
 

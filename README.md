@@ -137,8 +137,21 @@ run yourself:
 ```bash
 node bin/agent-ui.mjs harnesses
 node bin/agent-ui.mjs run pi --model ollama/qwen3:8b "Summarize lib/handoff"
+node bin/agent-ui.mjs send <run-id> --interrupt "Stop — do X instead"
+node bin/agent-ui.mjs status <run-id> --full
 node bin/agent-ui.mjs mcp-config   # prints the `claude mcp add` line
 ```
+
+An orchestrating agent stays in control without reading transcripts. It can:
+
+- start runs in the background, then wait for any or all of them;
+- check a short status for each: what the run is doing now, how long it has
+  been idle, whether it is waiting on you, and which files, commands, test runs
+  and errors it has produced so far;
+- read only the log lines it has not seen yet;
+- send a follow-up that queues behind the current turn, or interrupt it;
+- set a time limit on a run;
+- pick a chat back up by its id after the app restarts.
 
 Chats started that way have no chat in the app to sit under, so they collect on
 a folded **Agents** shelf below your folders instead of mixing into them. The

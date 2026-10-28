@@ -11,6 +11,7 @@ import { joinModelId, splitModelId } from "@/lib/model-providers/ids"
 import {
   enabledModelSources,
   listSourceModels,
+  type SourceModel,
   type ModelSource,
 } from "@/lib/model-providers/server"
 import { sniffImageMimeType } from "@/lib/attachments"
@@ -144,8 +145,8 @@ export function createPiProvider(
           : Promise.resolve<Record<string, number>>({}),
       ])
       await writeModelsConfig(configDir, baseUrl, models, remote, vision, contexts)
-      // Only the local ones: a hosted source does not tell us its window, and
-      // guessing one would put a confidently wrong number under the composer.
+      // A hosted source's window only when its own catalog states one —
+      // guessing would put a confidently wrong number under the composer.
       return [
         ...models.map((model) => ({
           ...toModelOption(model, contexts[model.id]),
@@ -157,6 +158,8 @@ export function createPiProvider(
             id: joinModelId(source.slug, model.id),
             name: model.name,
             group: source.slug,
+          // Only when the host's catalog states it (`lib/model-context`).
+          ...(model.contextLength ? { contextLength: model.contextLength } : null),
           }))
         ),
       ]
@@ -338,7 +341,7 @@ const TEXT_AND_IMAGE = ["text", "image"]
 
 type SourceModels = {
   source: ModelSource
-  models: Array<{ id: string; name: string }>
+  models: SourceModel[]
 }
 
 /** How the harness describes what it is pointed at, for the picker's subtitle. */

@@ -31,9 +31,23 @@ export const MCP_PROTOCOL_VERSIONS = [
 
 export const MCP_SERVER_NAME = "agent-ui"
 
-/** What a blocking `run_subagent` waits by default before it answers anyway. */
-export const DEFAULT_WAIT_SECONDS = 600
-export const MAX_WAIT_SECONDS = 3600
+/**
+ * The longest any one call blocks. A call that waits longer than this is
+ * answered "still running" and the caller asks again — because the clients
+ * give up first: Node's `fetch`, which `agent-ui mcp` proxies through, drops a
+ * request that has sent no headers after 300s and reports only "fetch failed",
+ * so a 900s wait came back as "Agent UI is not reachable" while the app was
+ * fine. Every wait in this vocabulary is therefore a *slice*, and a long wait
+ * is a loop of them.
+ */
+export const MAX_WAIT_SECONDS = 240
+/** What a blocking call waits by default — one whole slice. */
+export const DEFAULT_WAIT_SECONDS = MAX_WAIT_SECONDS
+/** Characters of a final answer returned unless the caller asks for more. */
+export const DEFAULT_ANSWER_CHARS = 4000
+/** Per run, in a `wait_subagents` answer — it can hold many runs at once. */
+export const DEFAULT_WAIT_ANSWER_CHARS = 1500
+export const MAX_ANSWER_CHARS = 100_000
 
 export type JsonRpcId = string | number
 
@@ -58,6 +72,13 @@ export type ToolResult = {
   isError?: boolean
 }
 
+/** How much a digest says — see `lib/subagents/progress`. */
+export type ViewArgs = {
+  detail: "brief" | "full"
+  sinceStep?: number
+  maxAnswerChars: number
+}
+
 export type RunSubagentArgs = {
   harness: string
   prompt: string
@@ -68,6 +89,30 @@ export type RunSubagentArgs = {
   sessionId?: string
   background: boolean
   waitSeconds: number
+  /** Stop the run after this long; its chat and partial work are kept. */
+  timeoutSeconds?: number
+  view: ViewArgs
+}
+
+/** A run or a chat, named either way — a chat id survives an app restart. */
+export type SubagentRef = { runId?: string; sessionId?: string }
+
+export type MessageSubagentArgs = SubagentRef & {
+  message: string
+  /** Stop the turn in flight and send this now, instead of after it. */
+  interrupt: boolean
+  background: boolean
+  waitSeconds: number
+  timeoutSeconds?: number
+  view: ViewArgs
+}
+
+export type WaitSubagentsArgs = {
+  /** Empty: every run this caller has in flight. */
+  runIds: string[]
+  mode: "any" | "all"
+  waitSeconds: number
+  view: ViewArgs
 }
 
 /** What the tool handlers need from the server; injected so tests can fake it. */
@@ -75,22 +120,46 @@ export type SubagentTools = {
   listHarnesses(): Promise<Record<string, unknown>[]>
   listModels(harness: string): Promise<Record<string, unknown>[]>
   run(args: RunSubagentArgs): Promise<Record<string, unknown>>
-  status(runId: string, waitSeconds: number): Promise<Record<string, unknown>>
+  message(args: MessageSubagentArgs): Promise<Record<string, unknown>>
+  status(ref: SubagentRef, waitSeconds: number, view: ViewArgs): Promise<Record<string, unknown>>
+  wait(args: WaitSubagentsArgs): Promise<Record<string, unknown>>
   cancel(runId: string): Promise<Record<string, unknown>>
   list(): Promise<Record<string, unknown>[]>
 }
+
+/*
+ * Every description below is paid for in the orchestrator's context on every
+ * turn it holds these tools, so they say what a call does and what to pass,
+ * and stop.
+ */
+const VIEW_PROPERTIES = {
+  detail: {
+    type: "string",
+    enum: ["brief", "full"],
+    description: "brief (default): status and counters. full: adds the step log and the latest output.",
+  },
+  since_step: {
+    type: "number",
+    description: "Return only log steps after this number — pass the `steps` value from your last check.",
+  },
+  max_answer_chars: {
+    type: "number",
+    description: `Cap on the final answer (default ${DEFAULT_ANSWER_CHARS}).`,
+  },
+} as const
+
+const WAIT_DESCRIPTION = `Seconds to block before answering anyway (max ${MAX_WAIT_SECONDS}; call again to keep waiting).`
 
 export const TOOL_DEFINITIONS = [
   {
     name: "list_harnesses",
     description:
-      "Lists the agent harnesses this app can run as subagents (e.g. pi, codex, cursor, ollama, tinyagent and other ACP agents), with whether each is available right now. Call this before run_subagent to pick a harness id.",
+      "Agent harnesses this app can run as subagents (pi, codex, cursor, ollama, ACP agents…) and whether each is available. Call before run_subagent.",
     inputSchema: { type: "object", properties: {} },
   },
   {
     name: "list_models",
-    description:
-      "Lists the models one harness offers. Model ids are passed to run_subagent as `model`; omit it there to use the harness's default.",
+    description: "Models one harness offers, for run_subagent's `model`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -102,34 +171,29 @@ export const TOOL_DEFINITIONS = [
   {
     name: "run_subagent",
     description:
-      "Runs a prompt on another agent harness as a subagent. The subagent is a full chat in the user's app (listed under this chat, streaming live, resumable later) working in the same folder as you unless `cwd` says otherwise. By default this blocks until the subagent finishes and returns its final answer. Set `background: true` to start several in parallel and collect them with get_subagent. Pass `session_id` from an earlier result to continue that subagent's conversation.",
+      "Runs a task on another harness as a subagent: a real chat in the user's app, in your folder unless `cwd` says otherwise. Blocks until done and returns the answer plus a digest (files edited, commands, test runs, errors). `background: true` returns a run_id at once — start several, then wait_subagents.",
     inputSchema: {
       type: "object",
       properties: {
         harness: { type: "string", description: "Harness id from list_harnesses." },
         prompt: {
           type: "string",
-          description:
-            "The complete task. The subagent sees nothing of your conversation, so include every detail it needs.",
+          description: "The complete task. The subagent sees none of your conversation.",
         },
-        model: { type: "string", description: "Model id from list_models. Optional." },
-        cwd: {
-          type: "string",
-          description: "Absolute working folder. Defaults to this chat's folder.",
-        },
-        title: { type: "string", description: "Short name for the subagent chat." },
+        model: { type: "string", description: "Model id from list_models." },
+        cwd: { type: "string", description: "Absolute working folder." },
+        title: { type: "string", description: "Short name for the chat." },
         session_id: {
           type: "string",
-          description: "Continue this earlier subagent chat instead of starting a new one.",
+          description: "Continue this subagent chat instead of starting a new one.",
         },
-        background: {
-          type: "boolean",
-          description: "Return immediately with a run_id instead of waiting.",
-        },
-        wait_seconds: {
+        background: { type: "boolean", description: "Return a run_id immediately." },
+        wait_seconds: { type: "number", description: WAIT_DESCRIPTION },
+        timeout_seconds: {
           type: "number",
-          description: `How long to wait before answering with the run still in progress (default ${DEFAULT_WAIT_SECONDS}, max ${MAX_WAIT_SECONDS}). Ignored with background.`,
+          description: "Stop the run after this long. Its chat and partial work are kept.",
         },
+        ...VIEW_PROPERTIES,
       },
       required: ["harness", "prompt"],
     },
@@ -137,19 +201,59 @@ export const TOOL_DEFINITIONS = [
   {
     name: "get_subagent",
     description:
-      "Status of a subagent run: running, done, error or cancelled, its final answer once done, and the latest output while it runs. `wait_seconds` waits up to that long for it to finish first.",
+      "A subagent's status. Running: phase, what it is doing now, idle_seconds (a stall shows here), waiting_on_user, files edited, commands, test runs, errors. Finished: the answer too. Pass `since_step` to get only new log lines.",
     inputSchema: {
       type: "object",
       properties: {
         run_id: { type: "string" },
-        wait_seconds: { type: "number" },
+        session_id: {
+          type: "string",
+          description: "Instead of run_id: the chat's latest turn (works after an app restart).",
+        },
+        wait_seconds: { type: "number", description: WAIT_DESCRIPTION },
+        ...VIEW_PROPERTIES,
       },
-      required: ["run_id"],
+    },
+  },
+  {
+    name: "wait_subagents",
+    description:
+      "Blocks until any (default) or all of the given runs finish, then returns a brief status for each. No run_ids: every run you have in flight.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run_ids: { type: "array", items: { type: "string" } },
+        mode: { type: "string", enum: ["any", "all"] },
+        wait_seconds: { type: "number", description: WAIT_DESCRIPTION },
+        max_answer_chars: {
+          type: "number",
+          description: `Cap on each run's answer (default ${DEFAULT_WAIT_ANSWER_CHARS}); get_subagent reads one in full.`,
+        },
+      },
+    },
+  },
+  {
+    name: "message_subagent",
+    description:
+      "Sends a follow-up to a subagent's chat: steer it, correct it, or give it the next task. If it is still running the message is queued behind the current turn, or sent at once with `interrupt: true` (the turn in flight is stopped, its work kept). Blocks like run_subagent unless `background`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        run_id: { type: "string" },
+        session_id: { type: "string" },
+        message: { type: "string" },
+        interrupt: { type: "boolean" },
+        background: { type: "boolean" },
+        wait_seconds: { type: "number", description: WAIT_DESCRIPTION },
+        timeout_seconds: { type: "number" },
+        ...VIEW_PROPERTIES,
+      },
+      required: ["message"],
     },
   },
   {
     name: "cancel_subagent",
-    description: "Stops a running subagent. Its chat and partial work are kept.",
+    description: "Stops a running or queued subagent run. Its chat and partial work are kept.",
     inputSchema: {
       type: "object",
       properties: { run_id: { type: "string" } },
@@ -158,7 +262,7 @@ export const TOOL_DEFINITIONS = [
   },
   {
     name: "list_subagents",
-    description: "Subagent runs started from this chat, newest first.",
+    description: "Your subagent runs, newest first, one compact row each.",
     inputSchema: { type: "object", properties: {} },
   },
 ] as const
@@ -181,6 +285,28 @@ function seconds(value: unknown, fallback: number): number {
   return Math.min(Math.floor(n), MAX_WAIT_SECONDS)
 }
 
+function positive(value: unknown, max: number): number | undefined {
+  const n = typeof value === "number" ? value : Number(value)
+  if (!Number.isFinite(n) || n <= 0) return undefined
+  return Math.min(Math.floor(n), max)
+}
+
+/** Reads `detail`, `since_step` and `max_answer_chars`. */
+export function parseView(raw: unknown): ViewArgs {
+  const args = record(raw)
+  const step = Number(args.since_step ?? args.sinceStep)
+  return {
+    detail: args.detail === "full" ? "full" : "brief",
+    ...(Number.isFinite(step) && step >= 0 ? { sinceStep: Math.floor(step) } : null),
+    maxAnswerChars:
+      positive(args.max_answer_chars ?? args.maxAnswerChars, MAX_ANSWER_CHARS) ??
+      DEFAULT_ANSWER_CHARS,
+  }
+}
+
+/** A day: long enough for any real task, short enough to never be forever. */
+const MAX_TIMEOUT_SECONDS = 86_400
+
 /** Validates `run_subagent`'s arguments; a string is the reason they fail. */
 export function parseRunArgs(raw: unknown): RunSubagentArgs | string {
   const args = record(raw)
@@ -188,6 +314,7 @@ export function parseRunArgs(raw: unknown): RunSubagentArgs | string {
   if (!harness) return "`harness` is required — call list_harnesses for the ids."
   const prompt = text(args.prompt)
   if (!prompt) return "`prompt` is required."
+  const timeoutSeconds = positive(args.timeout_seconds ?? args.timeoutSeconds, MAX_TIMEOUT_SECONDS)
   return {
     harness,
     prompt,
@@ -197,11 +324,63 @@ export function parseRunArgs(raw: unknown): RunSubagentArgs | string {
     sessionId: text(args.session_id ?? args.sessionId, 64),
     background: args.background === true,
     waitSeconds: seconds(args.wait_seconds ?? args.waitSeconds, DEFAULT_WAIT_SECONDS),
+    ...(timeoutSeconds ? { timeoutSeconds } : null),
+    view: parseView(args),
   }
 }
 
+function parseRef(args: Record<string, unknown>): SubagentRef | string {
+  const runId = text(args.run_id ?? args.runId, 64)
+  const sessionId = text(args.session_id ?? args.sessionId, 64)
+  if (!runId && !sessionId) return "`run_id` or `session_id` is required."
+  return { ...(runId ? { runId } : null), ...(sessionId ? { sessionId } : null) }
+}
+
+export function parseMessageArgs(raw: unknown): MessageSubagentArgs | string {
+  const args = record(raw)
+  const ref = parseRef(args)
+  if (typeof ref === "string") return ref
+  const message = text(args.message ?? args.prompt)
+  if (!message) return "`message` is required."
+  const timeoutSeconds = positive(args.timeout_seconds ?? args.timeoutSeconds, MAX_TIMEOUT_SECONDS)
+  return {
+    ...ref,
+    message,
+    interrupt: args.interrupt === true,
+    background: args.background === true,
+    waitSeconds: seconds(args.wait_seconds ?? args.waitSeconds, DEFAULT_WAIT_SECONDS),
+    ...(timeoutSeconds ? { timeoutSeconds } : null),
+    view: parseView(args),
+  }
+}
+
+export function parseWaitArgs(raw: unknown): WaitSubagentsArgs {
+  const args = record(raw)
+  const ids = Array.isArray(args.run_ids ?? args.runIds)
+    ? ((args.run_ids ?? args.runIds) as unknown[])
+    : []
+  return {
+    runIds: ids
+      .map((id) => text(id, 64))
+      .filter((id): id is string => !!id)
+      .slice(0, 50),
+    mode: args.mode === "all" ? "all" : "any",
+    waitSeconds: seconds(args.wait_seconds ?? args.waitSeconds, DEFAULT_WAIT_SECONDS),
+    view: {
+      detail: "brief",
+      maxAnswerChars:
+        positive(args.max_answer_chars ?? args.maxAnswerChars, MAX_ANSWER_CHARS) ??
+        DEFAULT_WAIT_ANSWER_CHARS,
+    },
+  }
+}
+
+/**
+ * The text half is compact JSON: indentation is a tenth of the tokens of a
+ * digest and the model reads it no better for it.
+ */
 export function toolResult(data: unknown, isError = false): ToolResult {
-  const body = typeof data === "string" ? data : JSON.stringify(data, null, 2)
+  const body = typeof data === "string" ? data : JSON.stringify(data)
   return {
     content: [{ type: "text", text: body }],
     ...(data && typeof data === "object" && !Array.isArray(data)
@@ -233,11 +412,21 @@ export async function callTool(
         const result = await tools.run(parsed)
         return toolResult(result, result.status === "error")
       }
-      case "get_subagent": {
-        const runId = text(args.run_id ?? args.runId, 64)
-        if (!runId) return toolResult("`run_id` is required.", true)
-        return toolResult(await tools.status(runId, seconds(args.wait_seconds, 0)))
+      case "message_subagent": {
+        const parsed = parseMessageArgs(args)
+        if (typeof parsed === "string") return toolResult(parsed, true)
+        const result = await tools.message(parsed)
+        return toolResult(result, result.status === "error")
       }
+      case "get_subagent": {
+        const ref = parseRef(args)
+        if (typeof ref === "string") return toolResult(ref, true)
+        return toolResult(
+          await tools.status(ref, seconds(args.wait_seconds ?? args.waitSeconds, 0), parseView(args))
+        )
+      }
+      case "wait_subagents":
+        return toolResult(await tools.wait(parseWaitArgs(args)))
       case "cancel_subagent": {
         const runId = text(args.run_id ?? args.runId, 64)
         if (!runId) return toolResult("`run_id` is required.", true)
@@ -252,6 +441,9 @@ export async function callTool(
     return toolResult(err instanceof Error ? err.message : String(err), true)
   }
 }
+
+const SUBAGENT_INSTRUCTIONS =
+  "Run other agent harnesses as subagents; each run is a chat in the user's Agent UI app that they can watch live. Call list_harnesses first. For parallel work start runs with background: true and collect them with wait_subagents; poll get_subagent with since_step for only what is new; steer a run with message_subagent."
 
 function ok(id: JsonRpcId | null, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result }
@@ -295,8 +487,8 @@ export async function handleRpc(
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: MCP_SERVER_NAME, version },
         instructions: memory
-          ? "Run other agent harnesses as subagents (each run is a chat in the user's Agent UI app that they can watch live; call list_harnesses first), and keep the user's persistent memory with the memory_* tools."
-          : "Run other agent harnesses as subagents. Each run is a chat in the user's Agent UI app that they can watch live. Call list_harnesses first.",
+          ? `${SUBAGENT_INSTRUCTIONS} Keep the user's persistent memory with the memory_* tools.`
+          : SUBAGENT_INSTRUCTIONS,
       })
     }
     case "ping":
