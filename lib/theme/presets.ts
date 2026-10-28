@@ -2,9 +2,10 @@
  * Theme presets.
  *
  * Modern Minimal and Claude are registry items (`themes/generated.ts`) and
- * stay verbatim — they already look right. Ink, Grove and Dusk are
- * hand-tuned in `themes/authored.ts` for this app's surfaces. Adding another
- * means a new entry there, checked in both modes, not another tweakcn fetch.
+ * stay verbatim — they already look right. The rest are hand-tuned in
+ * `themes/authored.ts`: Ink, Grove and Dusk stay quiet, Ember, Rose and Iris
+ * are the louder primaries. Adding another means a new entry there, checked
+ * in both modes, not another tweakcn fetch.
  */
 
 import { tunedVars } from "./contrast"
@@ -35,12 +36,12 @@ export const RETIRED_THEMES: Record<string, string> = {
   "ocean-breeze": "grove",
   perpetuity: "grove",
   "mocha-mousse": "claude",
-  tangerine: "claude",
+  tangerine: "ember",
   "t3-chat": "claude",
   catppuccin: "dusk",
-  "cosmic-night": "dusk",
+  "cosmic-night": "iris",
   "amethyst-haze": "dusk",
-  "bold-tech": "dusk",
+  "bold-tech": "iris",
 }
 
 /** Unknown / retired ids (older settings.json files) resolve to a live preset. */

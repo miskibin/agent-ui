@@ -5,7 +5,7 @@
  *   node scripts/import-tweakcn.mjs
  *
  * CURATED is only Modern Minimal and Claude. The rest of the tweakcn catalog
- * does not hold up in this app; Ink, Grove and Dusk are hand-tuned in
+ * does not hold up in this app; the others are hand-tuned in
  * `lib/theme/themes/authored.ts` and must not be added back here.
  *
  * A registry item is stored verbatim (`cssVars.theme` / `.light` / `.dark`).
@@ -26,7 +26,7 @@ const REGISTRY = "https://tweakcn.com/r/themes"
 /**
  * The registry pair. `id` is the item name and the value stored in
  * settings.json; `name` / `description` are what the settings page shows.
- * Ink, Grove and Dusk are not in this list — see `lib/theme/themes/authored.ts`.
+ * Anything else lives in `lib/theme/themes/authored.ts`, not in this list.
  */
 const CURATED = [
   {
@@ -105,7 +105,7 @@ const banner = `/**
  * Regenerate: node scripts/import-tweakcn.mjs
  *
  * Only Modern Minimal and Claude are taken from the registry — they are the
- * two that hold up in this app. Ink, Grove and Dusk are hand-tuned in
+ * two that hold up in this app. The others are hand-tuned in
  * ./authored.ts and must not be folded back into this file.
  *
  * Registry items are stored verbatim: \`cssVars.theme\` carries fonts, radius

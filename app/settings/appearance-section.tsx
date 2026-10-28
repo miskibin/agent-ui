@@ -302,7 +302,7 @@ export function AppearanceSection() {
     >
       <SettingsRow
         title="Theme"
-        description="Five themes tuned for this app — colors, type and radius — each one checked in light and dark."
+        description="Eight themes tuned for this app — colors, type and radius — each one checked in light and dark."
       >
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {THEME_PRESETS.map((item) => (
