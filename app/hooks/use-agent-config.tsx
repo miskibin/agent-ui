@@ -3,10 +3,15 @@
 import * as React from "react"
 import { toast } from "sonner"
 
-import { ProviderLogo } from "@/components/provider-logo"
+import {
+  ProviderLogo,
+  SourceLogo,
+  hasProviderLogo,
+} from "@/components/provider-logo"
 import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker"
 import * as api from "@/lib/api-client"
 import { errorMessage, pickProvider } from "@/lib/chat-helpers"
+import { harnessBrand, modelBrand } from "@/lib/model-brand"
 import { joinModelId } from "@/lib/model-providers/ids"
 import type {
   PermissionMode,
@@ -310,10 +315,26 @@ export function useAgentConfig({
     () =>
       modelGroups.map((group) => ({
         ...group,
-        icon: <ProviderLogo slug={group.id} className="size-3.5" />,
+        icon: <SourceLogo source={group.id} className="size-3.5" />,
       })),
     [modelGroups]
   )
+
+  /**
+   * Each model carries its family's mark — `qwen/qwen3-coder` and `qwen3:8b`
+   * are both Qwen — else its source's, else the harness's own, for a CLI whose
+   * bare ids (`auto`, `composer-1`) name no family. Same once-per-catalog rule
+   * as the groups above.
+   */
+  const pickerModels = React.useMemo<ModelOption[]>(() => {
+    const harness = harnessBrand(providerId, activeProviderName)
+    return models.map((option) => {
+      const slug = modelBrand(option.id, option.group) ?? harness
+      return slug && hasProviderLogo(slug)
+        ? { ...option, icon: <ProviderLogo slug={slug} className="size-3.5" /> }
+        : option
+    })
+  }, [models, providerId, activeProviderName])
 
   /**
    * Settings can enable a backend or change a model source, and this hook read
@@ -359,5 +380,6 @@ export function useAgentConfig({
     showEfforts,
     activeProviderName,
     pickerGroups,
+    pickerModels,
   }
 }

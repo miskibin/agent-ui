@@ -3,7 +3,7 @@
 import { Check, ChevronDown, Plug } from "lucide-react"
 import * as React from "react"
 
-import { ProviderLogo, hasProviderLogo } from "@/components/provider-logo"
+import { HarnessLogo } from "@/components/provider-logo"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,21 +12,9 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import type { ProviderSessionHint } from "@/lib/handoff/types"
+import { harnessBrand } from "@/lib/model-brand"
 import type { ProviderInfo } from "@/lib/providers/types"
 import { cn } from "@/lib/utils"
-
-/**
- * Mirrored from `lib/providers/acp` (server-only, so it cannot be imported
- * here): configured ACP agents live under `acp:<key>` ids.
- */
-const ACP_PROVIDER_PREFIX = "acp:"
-
-/** Provider ids (or ACP agent keys) whose brand slug is not the id itself. */
-const LOGO_SLUGS: Record<string, string> = {
-  cursorAgent: "cursor",
-  codex: "openai",
-  dsh: "deepseek",
-}
 
 /**
  * "4m ago" / "yesterday" — coarse on purpose: the row says which agent has
@@ -41,15 +29,6 @@ function relativeTime(at: number, now = Date.now()) {
   if (hours < 24) return `${hours}h ago`
   const days = Math.round(hours / 24)
   return days === 1 ? "yesterday" : `${days}d ago`
-}
-
-/** Brand-mark slug for a provider id; empty when no mark exists. */
-function providerLogoSlug(providerId: string): string {
-  const key = providerId.startsWith(ACP_PROVIDER_PREFIX)
-    ? providerId.slice(ACP_PROVIDER_PREFIX.length)
-    : providerId
-  const slug = LOGO_SLUGS[key] ?? key
-  return hasProviderLogo(slug) ? slug : ""
 }
 
 export type ProviderPickerProps = {
@@ -83,7 +62,7 @@ export const ProviderPicker = React.memo(function ProviderPicker({
   className,
 }: ProviderPickerProps) {
   const current = providers.find((provider) => provider.id === value)
-  const currentSlug = current ? providerLogoSlug(current.id) : ""
+  const hasMark = current ? harnessBrand(current.id, current.name) !== null : false
   const [open, setOpen] = React.useState(false)
 
   return (
@@ -101,8 +80,12 @@ export const ProviderPicker = React.memo(function ProviderPicker({
             className
           )}
         >
-          {currentSlug ? (
-            <ProviderLogo slug={currentSlug} className="size-3.5" />
+          {current && hasMark ? (
+            <HarnessLogo
+              providerId={current.id}
+              name={current.name}
+              className="size-3.5"
+            />
           ) : (
             <Plug className="size-3.5" />
           )}
@@ -132,7 +115,6 @@ export const ProviderPicker = React.memo(function ProviderPicker({
             Boolean(onConfigure) &&
             !provider.available &&
             Boolean(provider.configureBinary)
-          const slug = providerLogoSlug(provider.id)
           const session = sessions?.[provider.id]
 
           return (
@@ -154,9 +136,11 @@ export const ProviderPicker = React.memo(function ProviderPicker({
                 />
                 <span className="min-w-0 flex-1">
                   <span className="flex min-w-0 items-center gap-1.5">
-                    {slug ? (
-                      <ProviderLogo slug={slug} className="size-3.5" />
-                    ) : null}
+                    <HarnessLogo
+                      providerId={provider.id}
+                      name={provider.name}
+                      className="size-3.5"
+                    />
                     <span className="min-w-0 truncate text-[13px] text-foreground">
                       {provider.name}
                     </span>

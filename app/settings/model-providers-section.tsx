@@ -7,7 +7,7 @@ import { toast } from "sonner"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { ProviderLogo } from "@/components/provider-logo"
+import { SourceLogo } from "@/components/provider-logo"
 import { probeModelProvider } from "@/lib/api-client"
 import {
   MODEL_PROVIDER_PRESETS,
@@ -173,7 +173,7 @@ function ModelProviderRow({
     <SettingsRow
       title={
         <span className="flex items-center gap-2">
-          <ProviderLogo slug={slug} className="size-4" />
+          <SourceLogo source={slug} className="size-4" />
           {entry.name || slug}
         </span>
       }
