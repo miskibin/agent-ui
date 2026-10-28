@@ -39,12 +39,21 @@ const WINDOWS_SCAN = [
 let cached: { at: number; procs: ProcInfo[] } | null = null
 let inFlight: Promise<ProcInfo[]> | null = null
 
+/**
+ * Windows: started with no console at all (`detached` is `DETACHED_PROCESS`).
+ * `windowsHide` alone still gives a console program a hidden console host,
+ * and one started on a timer while another app has focus can take the
+ * keyboard from it. Safe here because this program starts no console
+ * children of its own, which would otherwise open a visible window.
+ */
+const NO_CONSOLE = process.platform === "win32" ? { detached: true } : {}
+
 function run(cmd: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
     execFile(
       cmd,
       args,
-      { timeout: SCAN_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true },
+      { timeout: SCAN_TIMEOUT_MS, maxBuffer: MAX_BUFFER, windowsHide: true, ...NO_CONSOLE },
       (error, stdout) => (error ? reject(error) : resolve(stdout))
     )
   })

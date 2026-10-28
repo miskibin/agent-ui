@@ -3,6 +3,7 @@
 import * as React from "react"
 import { toast } from "sonner"
 
+import { pollable } from "@/components/folder-status"
 import * as api from "@/lib/api-client"
 import { errorMessage } from "@/lib/chat-helpers"
 
@@ -64,7 +65,10 @@ export function useBackgroundProcesses({
   const watching = rows.length > 0 || open
   React.useEffect(() => {
     if (!watching) return
-    const timer = setInterval(refresh, POLL_MS)
+    // Only while the user is in this window — see `pollable`.
+    const timer = setInterval(() => {
+      if (pollable()) refresh()
+    }, POLL_MS)
     window.addEventListener("focus", refresh)
     return () => {
       clearInterval(timer)
