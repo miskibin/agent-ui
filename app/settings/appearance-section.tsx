@@ -25,6 +25,7 @@ import {
 } from "@/lib/theme/font-options"
 import {
   THEME_PRESETS,
+  findPreset,
   presetFontName,
   presetRadius,
   presetVars,
@@ -301,7 +302,7 @@ export function AppearanceSection() {
     >
       <SettingsRow
         title="Theme"
-        description="Complete shadcn themes from the tweakcn registry — colors, fonts, radius and shadows, tuned separately for light and dark."
+        description="Eight themes tuned for this app — colors, type and radius — each one checked in light and dark."
       >
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {THEME_PRESETS.map((item) => (
@@ -309,7 +310,7 @@ export function AppearanceSection() {
               key={item.id}
               preset={item}
               scheme={scheme}
-              selected={item.id === appearance.theme}
+              selected={item.id === findPreset(appearance.theme).id}
               onSelect={() => setAppearance({ theme: item.id })}
             />
           ))}
