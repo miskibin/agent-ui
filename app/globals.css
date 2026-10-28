@@ -265,6 +265,22 @@
   transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
+/* Generated content sits on quiet surfaces; internal hierarchy comes from
+   spacing and typography instead of a box around every piece. */
+[data-slot="generative-view-card"],
+[data-slot="generative-view-form"] {
+  border-color: transparent;
+  background: color-mix(in oklab, var(--background) 96%, var(--foreground));
+}
+
+[data-slot="generative-view-card-body"] [data-slot="generative-view-form"] {
+  background: transparent;
+}
+
+[data-slot="generative-view-list"] > li + li {
+  border-top: 0;
+}
+
 /* ---------------------------------------------------------------------------
  * Desktop chrome, reserved before hydration. `data-desktop` is stamped by the
  * pre-paint guard from a localStorage flag the header wrote on a previous run,

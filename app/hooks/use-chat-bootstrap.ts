@@ -14,10 +14,9 @@ import type { LoadThread } from "./use-threads"
 /**
  * First paint, then first fetch.
  *
- * The three requests go out together and are read in one place because the
- * order they are applied in matters: the settings decide which harness the
- * providers fall back to, and the chat being reopened adopts its *own* agent
- * over that fallback — so it has to be applied last.
+ * Restore the index and transcript independently of provider probes. Once
+ * configuration arrives, the currently open chat adopts its own agent over
+ * the settings fallback.
  */
 export function useChatBootstrap({
   seedFromCache,
@@ -26,6 +25,8 @@ export function useChatBootstrap({
   adoptAgent,
   setSessionsLoaded,
   loadThread,
+  activeIdRef,
+  sessionsRef,
 }: {
   seedFromCache: (
     cachedActive: string | null,
@@ -47,6 +48,8 @@ export function useChatBootstrap({
   ) => void
   setSessionsLoaded: (loaded: boolean) => void
   loadThread: LoadThread
+  activeIdRef: React.RefObject<string>
+  sessionsRef: React.RefObject<SessionMeta[]>
 }) {
   React.useEffect(() => {
     let cancelled = false
@@ -64,12 +67,25 @@ export function useChatBootstrap({
     })
 
     void (async () => {
-      const [settingsResult, providersResult, sessionsResult] =
-        await Promise.allSettled([
-          api.fetchSettings(),
-          api.fetchProviders(),
-          api.fetchSessions(),
-        ])
+      const config = Promise.allSettled([api.fetchSettings(), api.fetchProviders()])
+      const sessionsResult = await Promise.allSettled([api.fetchSessions()]).then(([result]) => result)
+      if (cancelled) return
+
+      let restoredSession: SessionMeta | undefined
+      let restoredId = ""
+      setSessionsLoaded(true)
+      if (sessionsResult.status === "fulfilled") {
+        hydrateSessions(sessionsResult.value, cachedActive, (session, restored) => {
+          restoredSession = session
+          restoredId = restored
+          adoptAgent(session, [])
+          if (restored) void loadThread(restored)
+        })
+      } else {
+        toast.error("Could not load your chats")
+      }
+
+      const [settingsResult, providersResult] = await config
       if (cancelled) return
 
       const { providers: providerList, fallback: fallbackProvider } =
@@ -87,16 +103,11 @@ export function useChatBootstrap({
         toast.error("Could not load providers")
       }
 
-      setSessionsLoaded(true)
-      if (sessionsResult.status === "fulfilled") {
-        hydrateSessions(sessionsResult.value, cachedActive, (session, restored) => {
-          // Last, so the reopened chat's own agent wins over the settings default.
-          adoptAgent(session, providerList, fallbackProvider)
-          if (restored) void loadThread(restored)
-        })
-      } else {
-        toast.error("Could not load your chats")
-      }
+      // The user may have navigated while the providers were being probed.
+      const currentId = activeIdRef.current || restoredId
+      const current = sessionsRef.current.find((session) => session.id === currentId)
+        ?? (currentId === restoredId ? restoredSession : undefined)
+      adoptAgent(current, providerList, fallbackProvider)
     })()
 
     return () => {
@@ -104,10 +115,12 @@ export function useChatBootstrap({
     }
   }, [
     adoptAgent,
+    activeIdRef,
     hydrateConfig,
     hydrateSessions,
     loadThread,
     seedFromCache,
+    sessionsRef,
     setSessionsLoaded,
   ])
 }

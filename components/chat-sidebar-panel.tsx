@@ -302,6 +302,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
       }}
     >
       <ChatSidebar
+        className="border-r-0 bg-[color-mix(in_oklab,var(--sidebar)_94%,var(--sidebar-foreground))]"
         collapsed={isDesktop ? collapsed : false}
         onCollapsedChange={(next) =>
           isDesktop ? onCollapsedChange(next) : onCloseDrawer()

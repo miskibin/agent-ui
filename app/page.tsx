@@ -592,6 +592,8 @@ export default function ChatPage() {
     adoptAgent,
     setSessionsLoaded,
     loadThread,
+    activeIdRef: refs.activeIdRef,
+    sessionsRef: refs.sessionsRef,
   })
 
   useAttention({
