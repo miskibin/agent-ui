@@ -9,7 +9,9 @@
  *   node scripts/import-brand-marks.mjs
  *
  * The package tarball is fetched from the npm registry and read in memory —
- * no subprocess, no temporary folder, nothing added to the app's dependencies. Adding a mark is one slug in CURATED
+ * no subprocess, no temporary folder, nothing added to the app's dependencies.
+ * The version and its sha512 are pinned below, so a rerun reproduces the file
+ * byte for byte; moving to a newer release is bumping both. Adding a mark is one slug in CURATED
  * plus a rerun; which model or harness resolves to it lives in
  * `lib/model-brand.ts`.
  *
@@ -21,6 +23,7 @@
  * becomes `currentColor` — black ink on a dark theme is no mark at all.
  */
 
+import { createHash } from "node:crypto"
 import { writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -29,7 +32,11 @@ import { gunzipSync } from "node:zlib"
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(ROOT, "components/brand-marks.ts")
 const PACKAGE = "@lobehub/icons-static-svg"
-const REGISTRY = "https://registry.npmjs.org"
+const VERSION = "1.101.0"
+/** `dist.integrity` of that version on the registry. */
+const INTEGRITY =
+  "sha512-Ob6WJOjXauLP/A1qZ9OlPlrncPNbwsIGH+ToFdxWt3APtaaMKtbIBGqJ0/LY2eBeUwTQuG7GpUw9LwPiv7OTdg=="
+const TARBALL = `https://registry.npmjs.org/${PACKAGE}/-/icons-static-svg-${VERSION}.tgz`
 
 /** Model families, then model sources, then harnesses. */
 const CURATED = [
@@ -152,12 +159,12 @@ function untar(archive) {
 }
 
 async function fetchPackage() {
-  const meta = await fetch(`${REGISTRY}/${PACKAGE}/latest`)
-  if (!meta.ok) throw new Error(`${PACKAGE}: registry answered ${meta.status}`)
-  const { version, dist } = await meta.json()
-  const tarball = await fetch(dist.tarball)
-  if (!tarball.ok) throw new Error(`${PACKAGE}: tarball answered ${tarball.status}`)
-  return { version, files: untar(gunzipSync(Buffer.from(await tarball.arrayBuffer()))) }
+  const response = await fetch(TARBALL)
+  if (!response.ok) throw new Error(`${PACKAGE}: tarball answered ${response.status}`)
+  const tarball = Buffer.from(await response.arrayBuffer())
+  const digest = `sha512-${createHash("sha512").update(tarball).digest("base64")}`
+  if (digest !== INTEGRITY) throw new Error(`${PACKAGE}@${VERSION}: integrity mismatch`)
+  return { version: VERSION, files: untar(gunzipSync(tarball)) }
 }
 
 {
