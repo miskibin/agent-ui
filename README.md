@@ -140,6 +140,12 @@ node bin/agent-ui.mjs run pi --model ollama/qwen3:8b "Summarize lib/handoff"
 node bin/agent-ui.mjs mcp-config   # prints the `claude mcp add` line
 ```
 
+Chats started that way have no chat in the app to sit under, so they collect on
+a folded **Agents** shelf below your folders instead of mixing into them. The
+shelf header pulses while one is running, and a run waiting for your answer
+stays visible while the shelf is folded. Type into one, or drag it onto its
+folder, and it becomes one of your own chats.
+
 ## Quick start
 
 Requires Node.js 20.9 or newer and [bun](https://bun.sh) (the package manager).

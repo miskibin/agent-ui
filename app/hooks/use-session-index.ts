@@ -57,7 +57,7 @@ export function useSessionIndex() {
       const restored =
         cachedActive && cachedSessions.some((s) => s.id === cachedActive)
           ? cachedActive
-          : cachedSessions[0].id
+          : firstOwnChat(cachedSessions)
       setActiveId(restored)
       onSeeded(cachedSessions.find((s) => s.id === restored))
     },
@@ -76,7 +76,7 @@ export function useSessionIndex() {
       const restored =
         cachedActive && list.some((session) => session.id === cachedActive)
           ? cachedActive
-          : (list[0]?.id ?? "")
+          : firstOwnChat(list)
       setActiveId(restored)
       onRestored(
         list.find((session) => session.id === restored),
@@ -156,4 +156,13 @@ export function useSessionIndex() {
     togglePin,
     regenerateTitle,
   }
+}
+
+/**
+ * The chat a cold start opens: the first one the user started, so a window
+ * opened after a batch of CLI runs lands on their own work rather than on
+ * whichever outside agent wrote last (`SessionMeta.external`).
+ */
+function firstOwnChat(list: SessionMeta[]) {
+  return (list.find((session) => !session.external) ?? list[0])?.id ?? ""
 }

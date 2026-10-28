@@ -5,6 +5,7 @@ import {
   AlarmClockOff,
   Archive,
   ArchiveRestore,
+  FolderInput,
   Pencil,
   Pin,
   PinOff,
@@ -38,6 +39,7 @@ import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import { errorMessage } from "@/lib/chat-helpers"
 import {
+  AGENTS_SHELF_ID,
   PINNED_GROUP_ID,
   SETTLED_SHELF_ID,
   SNOOZED_SHELF_ID,
@@ -58,7 +60,7 @@ function noop() {}
 
 /**
  * The whole left pane: the rail, the nav rows, the pinned group, one section
- * per working folder, and the Snoozed and Settled shelves under them.
+ * per working folder, and the Agents, Snoozed and Settled shelves under them.
  *
  * Memoized, and given nothing but already-derived lists and stable callbacks —
  * the chat list only moves when a session does, so keeping it out of the render
@@ -68,11 +70,13 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   sessionItems,
   pinnedItems,
   folderGroups,
+  agentsShelf,
   snoozedShelf,
   settledShelf,
   onShelfShowMore,
   onSettle,
   onWake,
+  onAdopt,
   activeId,
   sessionsLoaded,
   sessionsRef,
@@ -100,7 +104,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   sessionItems: ChatSidebarItemData[]
   pinnedItems: ChatSidebarItemData[]
   folderGroups: SessionGroup[]
-  /** The two shelves — see `lib/session-groups`. Absent = neither renders. */
+  /** The shelves — see `lib/session-groups`. Absent = that one does not render. */
+  agentsShelf?: SessionShelf
   snoozedShelf?: SessionShelf
   settledShelf?: SessionShelf
   onShelfShowMore?: (id: string) => void
@@ -108,6 +113,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   onSettle?: (id: string, settled: boolean) => void
   /** What a drag off the Snoozed shelf means. */
   onWake?: (id: string) => void
+  /** What a drag off the Agents shelf into the chat's folder means. */
+  onAdopt?: (id: string) => void
   activeId: string
   sessionsLoaded: boolean
   /** Read on drop only: the drag indices are per-list, the ids are not. */
@@ -178,6 +185,12 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
             icon: <ArchiveRestore aria-hidden className="size-3" />,
           }
         }
+        if (fromListId === AGENTS_SHELF_ID) {
+          return {
+            label: "Move here",
+            icon: <FolderInput aria-hidden className="size-3" />,
+          }
+        }
         if (fromListId === SNOOZED_SHELF_ID) {
           return {
             label: "Wake",
@@ -209,6 +222,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
         // and a drag has none to give. The row action's popover is the only
         // way in, and dragging back out is the way to undo it.
         if (to === SNOOZED_SHELF_ID) return false
+        // Only an outside agent puts a chat on the Agents shelf.
+        if (to === AGENTS_SHELF_ID) return false
         if (to === PINNED_GROUP_ID) return true
         if (to === SETTLED_SHELF_ID) return !!onSettle
         // Off a shelf or out of the pinned group, back to where the chat
@@ -220,6 +235,9 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           from === SNOOZED_SHELF_ID
         ) {
           return to === folderListOf(itemId)
+        }
+        if (from === AGENTS_SHELF_ID) {
+          return !!onAdopt && to === folderListOf(itemId)
         }
         return false
       }}
@@ -250,6 +268,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
               onSettle?.(drop.itemId, false)
             } else if (wasSnoozed) {
               onWake?.(drop.itemId)
+            } else if (drop.fromListId === AGENTS_SHELF_ID) {
+              onAdopt?.(drop.itemId)
             } else if (drop.fromListId === PINNED_GROUP_ID) {
               onTogglePin(drop.itemId, false)
             }
@@ -406,8 +426,9 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
 
         {/* The shelves come last and start folded: what is not in play should
             be reachable, not in the way. Their fold key is inverted — see
-            `shelfOpenKey`. */}
-        {[snoozedShelf, settledShelf].map((shelf) =>
+            `shelfOpenKey`. Agents leads them, since what is on it may still
+            be running. */}
+        {[agentsShelf, snoozedShelf, settledShelf].map((shelf) =>
           shelf && shelf.total > 0 && onShelfShowMore ? (
             <SidebarShelfSection
               key={shelf.id}

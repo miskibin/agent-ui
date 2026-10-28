@@ -339,6 +339,25 @@ export function useChatActions({
   )
 
   /**
+   * Take over a chat an outside agent started (`SessionMeta.external`): it
+   * leaves the Agents shelf for its folder's section and stays there. A no-op
+   * for any other chat, so `send` can call it on every turn.
+   */
+  const adoptChat = React.useCallback(
+    (id: string) => {
+      const session = sessionsRef.current.find((entry) => entry.id === id)
+      if (!session?.external) return
+      patchLocal(id, { external: undefined })
+      void api
+        .patchSession(id, { external: false })
+        .catch((err: unknown) =>
+          toast.error(errorMessage(err, "Could not move the chat"))
+        )
+    },
+    [patchLocal, sessionsRef]
+  )
+
+  /**
    * "Seen" — pressing the Woke pill, or simply opening the chat.
    *
    * A no-op unless there is actually a wake notice to clear, because this
@@ -726,6 +745,7 @@ export function useChatActions({
     settleChat,
     snoozeChat,
     wakeChat,
+    adoptChat,
     markVisited,
     removeSession,
     removeSessions,
