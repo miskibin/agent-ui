@@ -81,6 +81,8 @@ export async function PATCH(req: Request, ctx: Ctx) {
     // "" clears it — the chat falls back to the harness's configured policy.
     permissionMode:
       typeof body.permissionMode === "string" ? body.permissionMode : undefined,
+    // Taking over a chat an outside agent started; there is no way back in.
+    external: body.external === false ? false : undefined,
   })
   if (!session) {
     return NextResponse.json({ error: "Session not found" }, { status: 404 })

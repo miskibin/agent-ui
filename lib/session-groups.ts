@@ -24,6 +24,16 @@ import type { SessionMeta } from "@/lib/store/types"
  * header, paged, with the folder sections left holding only live work. What
  * lands where is `lib/session-lifecycle`'s call, not this file's.
  *
+ * A third shelf, Agents, holds the chats an agent *outside* the app started
+ * through the bridge (`SessionMeta.external` — `agent-ui run`, or a Claude
+ * Code session on `agent-ui mcp`). Those arrive unannounced and in bulk, and
+ * nobody here asked for them, so they must not reshuffle the folders the user
+ * is working in. The shelf sits right under the folders rather than with the
+ * history, because what is on it may well be running: its header carries the
+ * live dot while folded, and a chat on it waiting for an answer keeps its row.
+ * Taking one over — typing into it, pinning it, dragging it to its folder —
+ * clears the flag, and the chat becomes an ordinary one in its folder.
+ *
  * Pure and display-only: nothing here reads a repository or touches the store.
  */
 
@@ -34,6 +44,7 @@ export const PINNED_GROUP_ID = "pinned"
 /** List ids of the two shelves. */
 export const SNOOZED_SHELF_ID = "shelf:snoozed"
 export const SETTLED_SHELF_ID = "shelf:settled"
+export const AGENTS_SHELF_ID = "shelf:agents"
 
 /** Rows a shelf shows before "Show more", and how many each press adds. */
 export const SHELF_PAGE_SIZE = 10
@@ -85,11 +96,14 @@ export type SessionShelf = {
   items: ChatSidebarItemData[]
   total: number
   hidden: number
+  /** A chat on the shelf is streaming — counted over all of it, paged or not. */
+  running: boolean
 }
 
 export type SessionGroups = {
   pinned: ChatSidebarItemData[]
   folders: SessionGroup[]
+  agents: SessionShelf
   snoozed: SessionShelf
   settled: SessionShelf
 }
@@ -103,20 +117,28 @@ export type GroupOptions = {
    * settled conversation and finding no row to un-settle is a dead end.
    */
   keepVisible?: readonly string[]
+  /**
+   * Chats that need the user — waiting on an answer — which the Agents shelf
+   * shows even folded: an outside agent's question is still a question.
+   */
+  attention?: readonly string[]
+  agentsOpen?: boolean
   snoozedOpen?: boolean
   settledOpen?: boolean
   /** How many rows each shelf is currently paged to. */
+  agentsVisible?: number
   snoozedVisible?: number
   settledVisible?: number
 }
 
 function emptyShelf(id: string, label: string): SessionShelf {
-  return { id, label, items: [], total: 0, hidden: 0 }
+  return { id, label, items: [], total: 0, hidden: 0, running: false }
 }
 
 const EMPTY_GROUPS: SessionGroups = {
   pinned: [],
   folders: [],
+  agents: emptyShelf(AGENTS_SHELF_ID, "Agents"),
   snoozed: emptyShelf(SNOOZED_SHELF_ID, "Snoozed"),
   settled: emptyShelf(SETTLED_SHELF_ID, "Settled"),
 }
@@ -188,6 +210,7 @@ export function sidebarListId(session: SessionMeta, now = Date.now()) {
   const section = sessionSection(session, now)
   if (section === "snoozed") return SNOOZED_SHELF_ID
   if (section === "settled") return SETTLED_SHELF_ID
+  if (section === "active" && session.external) return AGENTS_SHELF_ID
   return groupIdForSession(session)
 }
 
@@ -207,6 +230,7 @@ export function groupSessions(
   const keep = new Set(options.keepVisible ?? [])
   const byId = new Map(items.map((item) => [item.id, item]))
   const pinned: ChatSidebarItemData[] = []
+  const agents: Entry[] = []
   const snoozed: Entry[] = []
   const settled: Entry[] = []
   const buckets = new Map<string, { cwd: string; entries: Entry[] }>()
@@ -226,6 +250,10 @@ export function groupSessions(
     }
     if (section === "pinned") {
       pinned.push(item)
+      continue
+    }
+    if (session.external) {
+      agents.push(entry)
       continue
     }
     // Keyed by identity, labelled by the first spelling seen — two chats that
@@ -275,6 +303,17 @@ export function groupSessions(
   return {
     pinned,
     folders: widenCollisions(folders),
+    // Newest first, like a folder — an agent's chat is live work, not history.
+    agents: shelf(
+      AGENTS_SHELF_ID,
+      "Agents",
+      [...agents].sort((a, b) => b.meta.updatedAt - a.meta.updatedAt),
+      {
+        open: options.agentsOpen === true,
+        visible: options.agentsVisible ?? SHELF_PAGE_SIZE,
+        keep: new Set([...keep, ...(options.attention ?? [])]),
+      }
+    ),
     // Soonest wake first: "what comes back next" is the shelf's question.
     snoozed: shelf(SNOOZED_SHELF_ID, "Snoozed", sortByWake(snoozed), {
       open: options.snoozedOpen === true,
@@ -363,5 +402,6 @@ function shelf(
     items: page.map((entry) => entry.item),
     total: entries.length,
     hidden: entries.length - page.length,
+    running: entries.some((entry) => entry.item.status === "streaming"),
   }
 }

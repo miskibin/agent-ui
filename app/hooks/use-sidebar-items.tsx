@@ -5,7 +5,9 @@ import {
   CornerDownRight,
   Archive,
   ArchiveRestore,
+  Bot,
   ExternalLink,
+  FolderInput,
   FolderOpen,
   Pin,
   PinOff,
@@ -34,7 +36,9 @@ import {
 import * as api from "@/lib/api-client"
 import { findPendingAsk } from "@/lib/ask-tools"
 import { errorMessage } from "@/lib/chat-helpers"
+import { folderName } from "@/lib/folder"
 import {
+  AGENTS_SHELF_ID,
   SHELF_PAGE_SIZE,
   SHELF_PAGE_STEP,
   SETTLED_SHELF_ID,
@@ -78,8 +82,8 @@ const EMPTY_SECTIONS: Record<string, boolean> = {}
 
 /**
  * The sidebar's view model: one row per chat, then the pinned group, one
- * section per working folder, and the two shelves — Snoozed and Settled —
- * that hold what is not in play.
+ * section per working folder, and the three shelves — Agents, for the chats
+ * an outside agent started, then Snoozed and Settled for what is not in play.
  *
  * The live labels are components rather than strings, so a running turn ticks
  * its own "Working · 12s" (written straight to the DOM by the vendored
@@ -104,6 +108,7 @@ export function useSidebarItems({
   onSnooze,
   onWake,
   onMarkVisited,
+  onAdopt,
 }: {
   refs: ChatRefs
   sessions: SessionMeta[]
@@ -129,6 +134,8 @@ export function useSidebarItems({
   onSnooze?: (id: string, until: number) => void
   onWake?: (id: string) => void
   onMarkVisited?: (id: string) => void
+  /** Takes an outside agent's chat over — off the Agents shelf, into its folder. */
+  onAdopt?: (id: string) => void
 }) {
   const { orderedIdsRef, sessionsRef } = refs
 
@@ -207,6 +214,11 @@ export function useSidebarItems({
                 <>
                   {/* Filed under the chat whose agent started it. */}
                   {session.parentId ? "Subagent · " : null}
+                  {/* On the Agents shelf there is no folder header above the
+                      row, so the row names the folder itself. */}
+                  {session.external && session.cwd
+                    ? `${folderName(session.cwd)} · `
+                    : null}
                   <AgentLabel
                     providerId={session.providerId}
                     providerName={providerName(session.providerId)}
@@ -236,11 +248,18 @@ export function useSidebarItems({
           status,
           // A subagent chat sits right under its parent (`nestUnderParents`);
           // the corner says so wherever no status dot needs the slot.
+          // A chat an outside agent started gets the robot in the same slot.
           leading:
             session.parentId && !status ? (
               <CornerDownRight
                 aria-hidden
                 data-slot="sidebar-subagent-mark"
+                className="size-3 text-muted-foreground/70"
+              />
+            ) : session.external && !status ? (
+              <Bot
+                aria-hidden
+                data-slot="sidebar-external-mark"
                 className="size-3 text-muted-foreground/70"
               />
             ) : undefined,
@@ -297,10 +316,11 @@ export function useSidebarItems({
     }))
   }, [])
 
-  /** Pinned chats, one section per working folder, then the two shelves. */
+  /** Pinned chats, one section per working folder, then the three shelves. */
   const {
     pinned: pinnedItems,
     folders: folderGroups,
+    agents: agentsShelf,
     snoozed: snoozedShelf,
     settled: settledShelf,
   } = React.useMemo(
@@ -310,12 +330,25 @@ export function useSidebarItems({
         // The open chat is never a row that is not there — not behind a fold
         // and not behind "Show more".
         keepVisible: activeId ? [activeId] : [],
+        // An outside agent's question still needs an answer: its row stays
+        // out even while the Agents shelf is folded.
+        attention: [...awaiting],
+        agentsOpen: !!closedSections[shelfOpenKey(AGENTS_SHELF_ID)],
+        agentsVisible: shelfPages[AGENTS_SHELF_ID],
         snoozedOpen: !!closedSections[shelfOpenKey(SNOOZED_SHELF_ID)],
         settledOpen: !!closedSections[shelfOpenKey(SETTLED_SHELF_ID)],
         snoozedVisible: shelfPages[SNOOZED_SHELF_ID],
         settledVisible: shelfPages[SETTLED_SHELF_ID],
       }),
-    [activeId, closedSections, now, sessionItems, sessions, shelfPages]
+    [
+      activeId,
+      awaiting,
+      closedSections,
+      now,
+      sessionItems,
+      sessions,
+      shelfPages,
+    ]
   )
 
   /**
@@ -363,10 +396,12 @@ export function useSidebarItems({
     orderedIdsRef.current = [
       ...pinnedItems,
       ...folderGroups.flatMap((group) => group.items),
+      ...agentsShelf.items,
       ...snoozedShelf.items,
       ...settledShelf.items,
     ].map((item) => item.id)
   }, [
+    agentsShelf.items,
     folderGroups,
     orderedIdsRef,
     pinnedItems,
@@ -462,6 +497,17 @@ export function useSidebarItems({
           onSelect: () => regenerateTitle(item.id),
         },
       ]
+      if (onAdopt && session?.external) {
+        actions.push({
+          id: "adopt",
+          label: session.cwd
+            ? `Move to ${folderName(session.cwd)}`
+            : "Move to my chats",
+          icon: <FolderInput className="size-3.5" />,
+          onSelect: () => onAdopt(item.id),
+          separatorBefore: true,
+        })
+      }
       const settled = !!session && isSettled(session)
       if (onSettle) {
         actions.push({
@@ -516,13 +562,14 @@ export function useSidebarItems({
       }
       return actions
     },
-    [onSettle, onWake, regenerateTitle, sessionsRef]
+    [onAdopt, onSettle, onWake, regenerateTitle, sessionsRef]
   )
 
   return {
     sessionItems,
     pinnedItems: jumpLabelled.pinned,
     folderGroups: jumpLabelled.folders,
+    agentsShelf,
     snoozedShelf,
     settledShelf,
     showMoreOnShelf,
