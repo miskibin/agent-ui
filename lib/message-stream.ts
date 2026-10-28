@@ -28,6 +28,18 @@ export function toolsFromParts(parts: MessagePart[]) {
   return tools
 }
 
+/** Preserve harness arguments while supplying the file-card contract's path. */
+function fileToolInput(input: string | undefined): string | undefined {
+  if (!input) return input
+  try {
+    const args = JSON.parse(input)
+    if (args && typeof args === "object" && typeof args.file_path === "string" && !args.path) {
+      return JSON.stringify({ ...args, path: args.file_path })
+    }
+  } catch { /* Partial JSON and plain command inputs pass through. */ }
+  return input
+}
+
 /**
  * Appends to the tail text part when there is one. Local-image detection only
  * runs when a chunk can actually close a markdown target; ordinary token
@@ -125,7 +137,7 @@ export function applyStreamEvent(
         id: event.id,
         name: event.name,
         status: event.status,
-        input: event.input,
+        input: fileToolInput(event.input),
         output: event.output,
       })
     return { ...message, parts: nextParts, tools: toolsFromParts(nextParts) }

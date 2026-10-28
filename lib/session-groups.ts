@@ -236,6 +236,8 @@ export function groupSessions(
   const buckets = new Map<string, { cwd: string; entries: Entry[] }>()
 
   for (const session of sessions) {
+    // App-created children live in their parent's Running tasks panel only.
+    if (session.parentId) continue
     const item = byId.get(session.id)
     if (!item) continue
     const entry = { meta: session, item }

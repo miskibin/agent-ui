@@ -41,7 +41,6 @@ import {
   SHELF_PAGE_SIZE,
   SHELF_PAGE_STEP,
   SETTLED_SHELF_ID,
-  SNOOZED_SHELF_ID,
   groupSessions,
   shelfOpenKey,
 } from "@/lib/session-groups"
@@ -80,9 +79,9 @@ const subscribeNever = () => () => {}
 const EMPTY_SECTIONS: Record<string, boolean> = {}
 
 /**
- * The sidebar's view model: one row per chat, then the pinned group, one
- * section per working folder, and the three shelves — Agents, for the chats
- * an outside agent started, then Snoozed and Settled for what is not in play.
+ * The sidebar's view model: a flat list with pins first, snoozed rows,
+ * outside Agents, and Settled history. App-created children stay with their
+ * parent in Running tasks.
  *
  * The live labels are components rather than strings, so a running turn ticks
  * its own "Working · 12s" (written straight to the DOM by the vendored
@@ -173,7 +172,7 @@ export function useSidebarItems({
 
   const sessionItems = React.useMemo<ChatSidebarItemData[]>(
     () =>
-      sessions.map((session) => {
+      sessions.filter((session) => !session.parentId).map((session) => {
         const run = runs[session.id]
         const section = sessionSection(session, now)
         const woke = wokeAt(session, now)
@@ -323,9 +322,9 @@ export function useSidebarItems({
         attention: [...awaiting],
         agentsOpen: !!closedSections[shelfOpenKey(AGENTS_SHELF_ID)],
         agentsVisible: shelfPages[AGENTS_SHELF_ID],
-        snoozedOpen: !!closedSections[shelfOpenKey(SNOOZED_SHELF_ID)],
+        snoozedOpen: true,
         settledOpen: !!closedSections[shelfOpenKey(SETTLED_SHELF_ID)],
-        snoozedVisible: shelfPages[SNOOZED_SHELF_ID],
+        snoozedVisible: Number.MAX_SAFE_INTEGER,
         settledVisible: shelfPages[SETTLED_SHELF_ID],
       }),
     [
@@ -349,53 +348,32 @@ export function useSidebarItems({
     () => /Mac|iPhone|iPad|iPod/.test(navigator.platform),
     () => false
   )
+  const activeItems = React.useMemo(() => {
+    const byId = new Map(sessions.map((session) => [session.id, session]))
+    return folderGroups.flatMap((group) => group.items).sort(
+      (a, b) => (byId.get(b.id)?.updatedAt ?? 0) - (byId.get(a.id)?.updatedAt ?? 0)
+    )
+  }, [folderGroups, sessions])
   const jumpLabelled = React.useMemo(() => {
     const label = (item: ChatSidebarItemData, position: number) =>
       position < 9
-        ? {
-            ...item,
-            jumpLabel: apple ? `⌥${position + 1}` : `Alt ${position + 1}`,
-          }
+        ? { ...item, jumpLabel: apple ? `⌥${position + 1}` : `Alt ${position + 1}` }
         : item
-    // Where each folder's rows start in the one sequence the shortcuts count.
-    const starts = folderGroups.reduce<number[]>(
-      (acc, group, i) => [
-        ...acc,
-        i === 0
-          ? pinnedItems.length
-          : acc[i - 1] + folderGroups[i - 1].items.length,
-      ],
-      []
-    )
     return {
-      pinned: pinnedItems.map((item, i) => label(item, i)),
-      folders: folderGroups.map((group, g) =>
-        starts[g] >= 9
-          ? group
-          : {
-              ...group,
-              items: group.items.map((item, i) => label(item, starts[g] + i)),
-            }
-      ),
+      pinned: pinnedItems.map(label),
+      active: activeItems.map((item, i) => label(item, pinnedItems.length + i)),
     }
-  }, [apple, folderGroups, pinnedItems])
+  }, [apple, activeItems, pinnedItems])
 
   React.useEffect(() => {
     orderedIdsRef.current = [
       ...pinnedItems,
-      ...folderGroups.flatMap((group) => group.items),
-      ...agentsShelf.items,
+      ...activeItems,
       ...snoozedShelf.items,
+      ...agentsShelf.items,
       ...settledShelf.items,
     ].map((item) => item.id)
-  }, [
-    agentsShelf.items,
-    folderGroups,
-    orderedIdsRef,
-    pinnedItems,
-    settledShelf.items,
-    snoozedShelf.items,
-  ])
+  }, [activeItems, agentsShelf.items, orderedIdsRef, pinnedItems, settledShelf.items, snoozedShelf.items])
 
   /**
    * The row's own controls, in the slot the timestamp holds at rest: put the
@@ -556,7 +534,7 @@ export function useSidebarItems({
   return {
     sessionItems,
     pinnedItems: jumpLabelled.pinned,
-    folderGroups: jumpLabelled.folders,
+    activeItems: jumpLabelled.active,
     agentsShelf,
     snoozedShelf,
     settledShelf,

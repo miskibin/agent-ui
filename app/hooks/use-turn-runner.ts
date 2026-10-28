@@ -138,6 +138,7 @@ export function useTurnRunner({
   return React.useCallback<RunPrompt>(
     async (args) => {
       const { sessionId, prompt, prior, attach } = args
+      const subagent = !!attach || !!sessionsRef.current.find((session) => session.id === sessionId)?.parentId
       const startedAt = attach?.startedAt ?? nowMs()
       const assistantId = attach?.assistantMessageId ?? newId()
       const userMessage: StoredMessage = {
@@ -272,6 +273,7 @@ export function useTurnRunner({
         kind: "completion" | "question" | "error",
         body?: string
       ) => {
+        if (kind === "completion" && subagent) return
         if (!(settingsRef.current?.chat.desktopNotifications ?? true)) return
         const title =
           sessionsRef.current.find((item) => item.id === sessionId)?.title ?? ""
@@ -433,7 +435,7 @@ export function useTurnRunner({
           if (event.sessionId) {
             patchLocal(sessionId, { providerSessionId: event.sessionId })
           }
-          if ((notificationSounds ?? true) && !failed && !needsAttention) {
+          if (!subagent && (notificationSounds ?? true) && !failed && !needsAttention) {
             playAgentNotificationSound("completion")
           }
           if (!failed) {

@@ -218,8 +218,8 @@ export type SessionMeta = {
   permissionMode?: string
   /**
    * The chat whose agent started this one as a subagent, through the app's
-   * MCP bridge (`lib/subagents`). The sidebar files it under that chat, and a
-   * chat with no `parentId` is an ordinary one — including a subagent run
+   * MCP bridge (`lib/subagents`). It appears in that chat's Running tasks,
+   * outside the sidebar. A chat with no `parentId` is ordinary — including a run
    * started from outside the app, which has no chat to hang under.
    */
   parentId?: string

@@ -19,7 +19,7 @@ type ServerFrame = SubagentBusEvent | { type: "snapshot"; runs: SubagentRunSumma
  * `/api/subagents/events` — a snapshot on connect, then every run that starts
  * — and attaches the ordinary turn runner to each one. From there a subagent
  * chat is indistinguishable from one the user is driving: it joins the
- * sidebar, says Working, streams into the transcript through the same
+ * parent's Running tasks panel, streams into the transcript through the same
  * reducer, notifies when it ends, and Stop stops it. A reload re-attaches to
  * whatever is still running, because the snapshot names it.
  */
@@ -34,6 +34,7 @@ export function useSubagents({
   loadThread: LoadThread
   setSessions: React.Dispatch<React.SetStateAction<SessionMeta[]>>
 }) {
+  const [agentRuns, setAgentRuns] = React.useState<Record<string, SubagentRunSummary>>({})
   const { abortsRef } = refs
   // Read through refs: the subscription is opened once, and a reconnect must
   // not be the price of a new `runPrompt` identity.
@@ -50,12 +51,18 @@ export function useSubagents({
     const attached = new Set<string>()
 
     const attach = async (run: SubagentRunSummary) => {
+      if (run.status !== "running" && run.status !== "queued") return
       if (attached.has(run.runId)) return
       attached.add(run.runId)
       // A turn the user is running in that chat already owns it.
       if (abortsRef.current.has(run.sessionId)) return
-      const prior: StoredMessage[] =
-        (await loadThreadRef.current(run.sessionId)) ?? []
+      let prior: StoredMessage[]
+      try {
+        prior = (await loadThreadRef.current(run.sessionId)) ?? []
+      } catch {
+        attached.delete(run.runId)
+        return
+      }
       void runPromptRef.current({
         sessionId: run.sessionId,
         prompt: run.prompt,
@@ -80,9 +87,11 @@ export function useSubagents({
         return
       }
       if (frame.type === "snapshot") {
+        setAgentRuns(Object.fromEntries(frame.runs.map((run) => [run.sessionId, run])))
         for (const run of frame.runs) void attach(run)
         return
       }
+      setAgentRuns((previous) => ({ ...previous, [frame.run.sessionId]: frame.run }))
       if (frame.type === "run-started") {
         const { session } = frame
         setSessions((prev) =>
@@ -97,4 +106,5 @@ export function useSubagents({
     }
     return () => source.close()
   }, [abortsRef, setSessions])
+  return agentRuns
 }

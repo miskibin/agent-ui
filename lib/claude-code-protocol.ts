@@ -1,5 +1,6 @@
 import type { AgentStreamEvent, AgentTokenUsage } from "@/lib/cursor-agent-types"
 import { exitCodeFrom } from "@/lib/providers/exit-code"
+import { NATIVE_AGENT_TOOL, type NativeAgentSnapshot } from "@/lib/subagents/native"
 import type { McpServerConfig, PermissionMode } from "@/lib/providers/types"
 import {
   applyUsageLimitsUpdate,
@@ -633,6 +634,7 @@ export class ClaudeCodeTranslator {
   translate(event: ClaudeCodeCliEvent): AgentStreamEvent[] {
     const out: AgentStreamEvent[] = []
     if (this.finished) return out
+    this.captureNative(event, out)
 
     if (
       !this.sessionEmitted &&
@@ -680,10 +682,81 @@ export class ClaudeCodeTranslator {
     if (this.finished) return []
     this.finished = true
     const out: AgentStreamEvent[] = []
+    for (const [id, child] of this.nativeChildren) {
+      if (!child.closed) {
+        child.closed = true
+        out.push(this.nativeFrame(id, "error"))
+      }
+    }
     // "Done" is only honest when the CLI itself said the turn succeeded.
     this.closeOpenTools(out, ok && this.sawResult)
     this.currentMessageId = undefined
     return out
+  }
+
+  private readonly nativeChildren = new Map<string, {
+    translator: ClaudeCodeTranslator
+    snapshot: NativeAgentSnapshot
+    closed: boolean
+  }>()
+
+  private nativeFrame(id: string, status: "running" | "done" | "error"): AgentStreamEvent {
+    return {
+      type: "tool", id: `native:${id}`, name: NATIVE_AGENT_TOOL, status,
+      output: JSON.stringify(this.nativeChildren.get(id)!.snapshot),
+    }
+  }
+
+  private captureNative(event: ClaudeCodeCliEvent, out: AgentStreamEvent[]) {
+    const id = event.parent_tool_use_id
+    const block = event.type === "stream_event" && event.event?.type === "content_block_start"
+      ? event.event.content_block : undefined
+    if (!id && block?.type === "tool_use" && block.id && ["Agent", "Task"].includes(block.name ?? "") && !this.nativeChildren.has(block.id)) {
+      this.nativeChildren.set(block.id, {
+        translator: new ClaudeCodeTranslator(this.now),
+        snapshot: { parentToolId: block.id, text: "", tools: [] }, closed: false,
+      })
+      out.push(this.nativeFrame(block.id, "running"))
+    }
+    if (!id && event.type === "assistant") {
+      for (const block of event.message?.content ?? []) {
+        if (block.type !== "tool_use" || !block.id || !["Agent", "Task"].includes(block.name ?? "") || this.nativeChildren.has(block.id)) continue
+        this.nativeChildren.set(block.id, {
+          translator: new ClaudeCodeTranslator(this.now),
+          snapshot: { parentToolId: block.id, text: "", tools: [] }, closed: false,
+        })
+        out.push(this.nativeFrame(block.id, "running"))
+      }
+    }
+    if (id) {
+      let child = this.nativeChildren.get(id)
+      if (!child) {
+        child = { translator: new ClaudeCodeTranslator(this.now), snapshot: { parentToolId: id, text: "", tools: [] }, closed: false }
+        this.nativeChildren.set(id, child)
+      }
+      const events = child.translator.translate({ ...event, parent_tool_use_id: null, session_id: undefined })
+      for (const item of events) {
+        if (item.type === "text") child.snapshot.text = (child.snapshot.text + item.text).slice(-64_000)
+        if (item.type === "tool") {
+          const index = child.snapshot.tools.findIndex((tool) => tool.id === item.id)
+          const tool = { id: item.id, name: item.name, status: item.status, input: item.input, output: item.output?.slice(-8000) }
+          if (index < 0) child.snapshot.tools.push(tool)
+          else child.snapshot.tools[index] = { ...child.snapshot.tools[index], ...tool, input: item.input ?? child.snapshot.tools[index].input }
+          child.snapshot.tools = child.snapshot.tools.slice(-100)
+        }
+      }
+      child.snapshot.model = child.translator.model
+      if (events.length || event.type === "assistant") out.push(this.nativeFrame(id, "running"))
+    }
+    if (!id && event.type === "user") {
+      for (const block of event.message?.content ?? []) {
+        const child = block.tool_use_id && this.nativeChildren.get(block.tool_use_id)
+        if (block.type !== "tool_result" || !child || !block.tool_use_id) continue
+        if (!child.snapshot.text) child.snapshot.text = (formatToolResult(block.content, event.tool_use_result) ?? "").slice(-64_000)
+        child.closed = true
+        out.push(this.nativeFrame(block.tool_use_id, block.is_error ? "error" : "done"))
+      }
+    }
   }
 
   private systemLine(event: ClaudeCodeCliEvent, out: AgentStreamEvent[]) {

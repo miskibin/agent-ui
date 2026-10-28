@@ -1,6 +1,6 @@
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { rememberOrigin, requestOrigin } from "@/lib/subagents/bridge"
-import { activeRuns, watchSubagents } from "@/lib/subagents/runs"
+import { listRuns, watchSubagents } from "@/lib/subagents/runs"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
           closed = true
         }
       }
-      send(`data: ${JSON.stringify({ type: "snapshot", runs: activeRuns() })}\n\n`)
+      send(`data: ${JSON.stringify({ type: "snapshot", runs: listRuns() })}\n\n`)
       const unwatch = watchSubagents((event) => {
         send(`data: ${JSON.stringify(event)}\n\n`)
       })

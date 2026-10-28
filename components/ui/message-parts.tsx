@@ -2410,6 +2410,7 @@ export function MessageToolCalls({
   }
 
   const SummaryIcon = TOOL_GROUP_ICONS[summaryKind]
+  const running = tools.findLast((tool) => tool.status === "running" || tool.status === "pending")
 
   return (
     <Collapsible
@@ -2423,12 +2424,15 @@ export function MessageToolCalls({
           type="button"
           data-slot="message-tool-calls-trigger"
           data-kind={summaryKind}
+          data-running={!!running}
           className={cn(disclosureTrigger, "w-full")}
         >
           <DisclosureIcon>
             <SummaryIcon className="opacity-70" />
           </DisclosureIcon>
-          <span className="min-w-0 truncate">{summary}</span>
+          <span className={cn("min-w-0 truncate", running && "animate-pulse motion-reduce:animate-none")}>
+            {running ? toolHeadline(running).label : summary}
+          </span>
           <ChevronDown
             className={cn(
               "size-3.5 opacity-50 transition-transform duration-150",

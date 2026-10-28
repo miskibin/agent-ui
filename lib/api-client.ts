@@ -422,7 +422,8 @@ export async function streamSubagent(
 }
 
 export async function cancelSubagent(runId: string): Promise<void> {
-  await fetch(`/api/subagents/${encodeURIComponent(runId)}`, { method: "DELETE" })
+  const response = await fetch(`/api/subagents/${encodeURIComponent(runId)}`, { method: "DELETE" })
+  if (!response.ok) throw new Error(await errorText(response))
 }
 
 /**
@@ -563,9 +564,10 @@ export function fetchFolderLogos(): Promise<FolderLogoMap> {
  * changes panel draws. Resolved server-side from the chat, like every other
  * file route.
  */
-export function fetchChangedFiles(sessionId: string): Promise<ChangedFilePatch[]> {
+export function fetchChangedFiles(sessionId: string, signal?: AbortSignal): Promise<ChangedFilePatch[]> {
   return fetch(`/api/git/diff?session=${encodeURIComponent(sessionId)}`, {
     cache: "no-store",
+    signal,
   })
     .then(json<{ files: ChangedFilePatch[] }>)
     .then((data) => data.files)

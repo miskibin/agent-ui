@@ -428,3 +428,21 @@ test("a folder falls back to today's behaviour without a worktree", () => {
   assert.equal(groups.folders[0].branch, "main")
   assert.equal(groups.folders[0].worktree, false)
 })
+
+
+test("app subagents stay out of every sidebar list, even when pinned or settled", () => {
+  const groups = shelved([
+    meta("parent"),
+    meta("child", { parentId: "parent" }),
+    meta("pinned-child", { parentId: "parent", pinned: true }),
+    meta("external-child", { parentId: "parent", external: true }),
+    meta("settled-child", { parentId: "parent", settledAt: NOW - HOUR }),
+    meta("snoozed-child", { parentId: "parent", snoozedUntil: NOW + HOUR }),
+    meta("outside", { external: true }),
+  ], { agentsOpen: true, settledOpen: true, snoozedOpen: true, keepVisible: ["child"] })
+  assert.deepEqual(groups.folders.flatMap((group) => group.items.map((item) => item.id)), ["parent"])
+  assert.deepEqual(groups.agents.items.map((item) => item.id), ["outside"])
+  assert.deepEqual(groups.pinned, [])
+  assert.equal(groups.settled.total, 0)
+  assert.equal(groups.snoozed.total, 0)
+})

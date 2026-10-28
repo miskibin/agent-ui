@@ -159,6 +159,39 @@ jobs:
           # whole update path breaks silently without it.
           includeUpdaterJson: true
 
+      # Assets are still in the draft release. Never publish a build Defender
+      # detects, including the actual app executable (not only its installer).
+      - name: Scan Windows release with Microsoft Defender
+        if: startsWith(matrix.os, 'windows')
+        shell: pwsh
+        run: |
+          # Hosted Windows runners turn real-time monitoring off for build
+          # performance. Enable it for this gate; the scanner also ignores
+          # the runner image's drive-wide exclusions during its custom scan.
+          Set-MpPreference -DisableRealtimeMonitoring $false -DisableArchiveScanning $false -ErrorAction Stop
+          Update-MpSignature -ErrorAction Stop
+          ./scripts/scan-windows-release.ps1 -Path @(
+            'src-tauri/target/release/agent-ui.exe',
+            'src-tauri/binaries/node-x86_64-pc-windows-msvc.exe',
+            'src-tauri/target/release/bundle/nsis/*-setup.exe'
+          ) -ReportPath defender-report.json
+          # Bundling patches the embedded app's PE resources, so scan the
+          # installed executable too: its hash can differ from Cargo's EXE.
+          $installers = @(Get-Item 'src-tauri/target/release/bundle/nsis/*-setup.exe')
+          if ($installers.Count -ne 1) { throw 'Expected exactly one NSIS installer' }
+          $installDir = Join-Path $env:RUNNER_TEMP 'agent-ui-defender-install'
+          $installer = Start-Process -FilePath $installers[0].FullName -ArgumentList @('/S', "/D=$installDir") -WindowStyle Hidden -Wait -PassThru
+          if ($installer.ExitCode -ne 0) { throw "Installer failed: $($installer.ExitCode)" }
+          ./scripts/scan-windows-release.ps1 -Path (Join-Path $installDir 'agent-ui.exe') -ReportPath defender-installed-report.json
+
+      - name: Keep Windows scan report
+        if: always() && startsWith(matrix.os, 'windows')
+        uses: actions/upload-artifact@v4
+        with:
+          name: defender-${{ matrix.target }}
+          path: defender-*.json
+          if-no-files-found: warn
+
   # Only now, with every installer attached, does the release become visible.
   publish:
     name: Publish release

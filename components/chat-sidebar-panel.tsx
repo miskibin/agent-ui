@@ -18,19 +18,15 @@ import { toast } from "sonner"
 import { SidebarLoading } from "@/components/chat-skeletons"
 import { FolderLogoMark } from "@/components/folder-logo"
 import { HarnessLogo } from "@/components/provider-logo"
-import {
-  SidebarFolderSection,
-  SidebarSessionSection,
-  SidebarShelfSection,
-} from "@/components/sidebar-sections"
+import { SidebarShelfSection } from "@/components/sidebar-sections"
 import {
   ChatSidebar,
   ChatSidebarDnd,
   ChatSidebarItemGhost,
+  ChatSidebarItemList,
   SideActionRow,
   SideIconBtn,
   SideRow,
-  SidebarCollapsibleSection,
   SidebarEmptyState,
   SidebarResizeRail,
   type ChatSidebarItemData,
@@ -47,10 +43,8 @@ import {
   PINNED_GROUP_ID,
   SETTLED_SHELF_ID,
   SNOOZED_SHELF_ID,
-  groupIdForSession,
   shelfOpenKey,
   sidebarListId,
-  type SessionGroup,
   type SessionShelf,
 } from "@/lib/session-groups"
 import type { SessionMeta } from "@/lib/store/types"
@@ -59,12 +53,11 @@ import type { SessionMeta } from "@/lib/store/types"
 const SIDEBAR_THEME_TOGGLE =
   "size-8 rounded-md border-0 bg-transparent text-muted-foreground shadow-none hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
 
-/** The empty-state section has nothing to fold, so its trigger does nothing. */
-function noop() {}
+const ACTIVE_LIST_ID = "chats"
 
 /**
- * The whole left pane: the rail, the nav rows, the pinned group, one section
- * per working folder, and the Agents, Snoozed and Settled shelves under them.
+ * The left pane: a flat chat list with pins first, outside Agents, and
+ * Settled history at the bottom. Folder context belongs to each row.
  *
  * Memoized, and given nothing but already-derived lists and stable callbacks —
  * the chat list only moves when a session does, so keeping it out of the render
@@ -73,7 +66,7 @@ function noop() {}
 export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   sessionItems,
   pinnedItems,
-  folderGroups,
+  activeItems,
   agentsShelf,
   snoozedShelf,
   settledShelf,
@@ -109,7 +102,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
 }: {
   sessionItems: ChatSidebarItemData[]
   pinnedItems: ChatSidebarItemData[]
-  folderGroups: SessionGroup[]
+  activeItems: ChatSidebarItemData[]
   /** The shelves — see `lib/session-groups`. Absent = that one does not render. */
   agentsShelf?: SessionShelf
   snoozedShelf?: SessionShelf
@@ -163,17 +156,17 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
       ? item.subtitle
       : session.gitBranch || session.worktree?.branch || "\u00a0"
     return (
-      <span data-slot="app-sidebar-chat-card" className="flex min-w-0 flex-1 flex-col gap-0.5 py-1">
+      <span data-slot="app-sidebar-chat-card" className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+        <span className="flex min-w-0 items-center gap-1.5">
+          {item.leading}
+          <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">{item.title}</span>
+          <span className="shrink-0 text-[10px] text-muted-foreground group-hover/sidebar-item:opacity-0 group-focus-within/sidebar-item:opacity-0">{item.meta}</span>
+        </span>
         <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
           {session.cwd ? <FolderLogoMark cwd={session.cwd} /> : null}
-          {item.leading}
-          <span className="min-w-0 flex-1 truncate">{session.cwd ? folderName(session.cwd) : "Chat"}</span>
-          <span className="shrink-0 group-hover/sidebar-item:opacity-0 group-focus-within/sidebar-item:opacity-0">{item.meta}</span>
-        </span>
-        <span className="truncate text-[13px] font-semibold leading-5">{item.title}</span>
-        <span className="flex min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground">
-          <span className="min-w-0 flex-1 truncate" title={detail}>{detail}</span>
-          <HarnessLogo providerId={session.providerId} name={providerName(session.providerId)} className="size-3.5 shrink-0" />
+          <span className="min-w-0 truncate">{session.cwd ? folderName(session.cwd) : "Chat"}</span>
+          {detail.trim() ? <><span aria-hidden>·</span><span className="min-w-0 flex-1 truncate" title={detail}>{detail}</span></> : <span className="flex-1" />}
+          <HarnessLogo providerId={session.providerId} name={providerName(session.providerId)} className="size-3 shrink-0" />
         </span>
       </span>
     )
@@ -188,13 +181,15 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
     const session = sessionsRef.current.find((item) => item.id === id)
     // The list a chat is *in*, shelves included — the folder it belongs to is
     // not where it is rendered once it has been snoozed or settled.
-    return session ? sidebarListId(session) : null
+    if (!session) return null
+    const listId = sidebarListId(session)
+    return listId.startsWith("folder:") || listId === "no-folder" ? ACTIVE_LIST_ID : listId
   }
 
   /** Where an unpinned, awake, unsettled chat would land. */
   const folderListOf = (id: string) => {
     const session = sessionsRef.current.find((item) => item.id === id)
-    return session ? groupIdForSession({ ...session, pinned: false }) : null
+    return session ? ACTIVE_LIST_ID : null
   }
 
   return (
@@ -364,7 +359,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
         // No rules under the header or above the footer (`dividers` defaults
         // off): the sections are told apart by their own header rules and the
         // space between them, which is what this gap is for.
-        classNames={{ content: "flex flex-col gap-2 pt-2" }}
+        classNames={{ content: "flex flex-col gap-1 pt-2" }}
         brand={
           <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
             Chats
@@ -414,42 +409,20 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
         }
       >
         {sessionItems.length === 0 ? (
-          <SidebarCollapsibleSection title="Chats" open onToggle={noop}>
-            {!sessionsLoaded ? (
-              <SidebarLoading />
-            ) : (
-              <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
-            )}
-          </SidebarCollapsibleSection>
+          !sessionsLoaded ? <SidebarLoading /> : <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
         ) : null}
 
-        {pinnedItems.length > 0 ? (
-          <SidebarSessionSection
-            id={PINNED_GROUP_ID}
-            title="Pinned"
-            sortable
-            open={!closedSections[PINNED_GROUP_ID]}
-            onToggle={onToggleSection}
-            sessions={pinnedItems}
-            activeId={activeId}
-            renameRequest={renameRequest}
-            onSelect={onSelect}
-            onRename={onRename}
-            onTogglePin={onTogglePin}
-            onDelete={onDelete}
-            onDeleteMany={onDeleteMany}
-            getMenuActions={getMenuActions}
-            renderActions={renderActions}
-            renderContent={renderContent}
-          />
-        ) : null}
-
-        {folderGroups.map((group) => (
-          <SidebarFolderSection
-            key={group.id}
-            group={group}
-            open={!closedSections[group.id]}
-            onToggle={onToggleSection}
+        {[
+          { id: PINNED_GROUP_ID, items: pinnedItems, sortable: true },
+          { id: ACTIVE_LIST_ID, items: activeItems, sortable: false },
+          { id: SNOOZED_SHELF_ID, items: snoozedShelf?.items ?? [], sortable: false },
+        ].filter((list) => list.items.length > 0).map((list) => (
+          <ChatSidebarItemList
+            key={list.id}
+            listId={list.id}
+            items={list.items}
+            sortable={list.sortable}
+            draggable
             activeId={activeId}
             renameRequest={renameRequest}
             onSelect={onSelect}
@@ -463,29 +436,27 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           />
         ))}
 
-        {/* The shelves come last and start folded: what is not in play should
-            be reachable, not in the way. Their fold key is inverted — see
-            `shelfOpenKey`. Agents leads them, since what is on it may still
-            be running. */}
-        {[agentsShelf, snoozedShelf, settledShelf].map((shelf) =>
+        {/* Only outside agents and settled history have section headers. */}
+        {[agentsShelf, settledShelf].map((shelf) =>
           shelf && shelf.total > 0 && onShelfShowMore ? (
-            <SidebarShelfSection
-              key={shelf.id}
-              shelf={shelf}
-              open={!!closedSections[shelfOpenKey(shelf.id)]}
-              onToggle={onToggleSection}
-              onShowMore={onShelfShowMore}
-              activeId={activeId}
-              renameRequest={renameRequest}
-              onSelect={onSelect}
-              onRename={onRename}
-              onTogglePin={onTogglePin}
-              onDelete={onDelete}
-              onDeleteMany={onDeleteMany}
-              getMenuActions={getMenuActions}
-              renderActions={renderActions}
-              renderContent={renderContent}
-            />
+            <div key={shelf.id} className={shelf.id === SETTLED_SHELF_ID ? "mt-auto pt-2" : undefined}>
+              <SidebarShelfSection
+                shelf={shelf}
+                open={!!closedSections[shelfOpenKey(shelf.id)]}
+                onToggle={onToggleSection}
+                onShowMore={onShelfShowMore}
+                activeId={activeId}
+                renameRequest={renameRequest}
+                onSelect={onSelect}
+                onRename={onRename}
+                onTogglePin={onTogglePin}
+                onDelete={onDelete}
+                onDeleteMany={onDeleteMany}
+                getMenuActions={getMenuActions}
+                renderActions={renderActions}
+                renderContent={renderContent}
+              />
+            </div>
           ) : null
         )}
       </ChatSidebar>

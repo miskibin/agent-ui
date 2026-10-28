@@ -12,6 +12,7 @@ import {
   type ContextWindowSource,
 } from "@/lib/model-context"
 import type { StoredMessage } from "@/lib/store/types"
+import { withoutNativeActivity } from "@/lib/subagents/native"
 import { latestTodos, livePlan } from "@/lib/todo-plan"
 import { chatUsage } from "@/lib/usage"
 import { turnFiles } from "@/lib/turn-files"
@@ -154,20 +155,20 @@ export function useThreadView({
   const visibleMessages = React.useMemo(
     () =>
       messages.some(isInternalMessage)
-        ? messages.filter((message) => !isInternalMessage(message))
-        : messages,
+        ? messages.filter((message) => !isInternalMessage(message)).map(withoutNativeActivity)
+        : messages.map(withoutNativeActivity),
     [messages]
   )
 
   /**
    * The plan bar above the composer. A streaming turn rewrites `messages` every
-   * frame while the plan itself changes a handful of times per run, so the scan
-   * runs against a deferred copy — React drops the intermediate ones.
+   * frame. Read the live copy so task updates cannot wait behind transcript
+   * rendering until the end of the turn.
    */
   const deferredMessages = React.useDeferredValue(messages)
   const todos = React.useMemo(
-    () => latestTodos(deferredMessages),
-    [deferredMessages]
+    () => latestTodos(messages),
+    [messages]
   )
 
   /**
@@ -175,7 +176,7 @@ export function useThreadView({
    * todos above: a plan changes a handful of times per run and the transcript
    * changes every frame.
    */
-  const plan = React.useMemo(() => livePlan(deferredMessages), [deferredMessages])
+  const plan = React.useMemo(() => livePlan(messages), [messages])
 
   /**
    * The composer's context ring. `base` is recomputed every render but only
@@ -320,10 +321,8 @@ export function useThreadView({
   /** Every file the chat changed, across its turns — the header's count. */
   const chatChanges = React.useMemo(
     () =>
-      collectChatChanges(
-        isGenerating ? deferredMessages.slice(0, -1) : deferredMessages
-      ),
-    [deferredMessages, isGenerating]
+      collectChatChanges(messages),
+    [messages]
   )
 
   return {

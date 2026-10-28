@@ -131,6 +131,22 @@ folder, under the same permission mode. Claude Code is given the app's
 `list_harnesses`, …). Calls can block until the subagent answers, or run in
 the background so several go at once.
 
+Subagents appear as clickable cards in the parent conversation, with their
+task, status, harness/model and recent tool activity. Open a card to inspect
+the agent's prompt, tools and response in the main conversation column.
+Breadcrumbs in the header navigate between the main agent and its children,
+with an agent switcher for siblings. The workspace card at the top right
+groups the project, editor action, branch, commit/review entry,
+change totals and running tasks. It brings delegated chats and native
+Claude Code subagents together. Open a delegated chat to inspect its full
+history, answer a pending question, or send a follow-up; stop its active run
+directly from the panel. Open a native agent to inspect its reported model,
+tools and output. Native agents remain controlled by Claude Code; stopping
+the parent turn interrupts them. Their activity is saved with the parent
+transcript (up to the latest 64,000 text characters and 100 tool entries per
+agent). After a server restart, delegated transcripts remain available;
+in-flight execution is not automatically recovered.
+
 The same tools are on the command line, and can be given to a Claude Code you
 run yourself:
 
@@ -182,9 +198,55 @@ bun run desktop:dev
 bun run desktop:build
 ```
 
-`desktop:build` creates an installer for the current platform. Signed Windows
-installers and update metadata are published on
+`desktop:build` creates an installer for the current platform. Windows
+installers and signed update metadata are published on
 [GitHub Releases](https://github.com/miskibin/agent-ui/releases).
+
+### Windows antivirus checks and signing
+
+Updater signatures authenticate updates to this app; they are **not Windows
+Authenticode signatures** and do not establish a Windows publisher. For a
+Windows code-signing certificate installed on the build machine, pass a local
+Tauri config override to `bun run tauri build --config <path>`:
+
+```json
+{
+  "bundle": {
+    "windows": {
+      "certificateThumbprint": "<your code-signing certificate thumbprint>",
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
+  }
+}
+```
+
+See [Tauri's Windows signing guide](https://tauri.app/distribute/sign/windows/)
+for certificate requirements and signing services. A signature does not guarantee
+that Defender accepts a build. Do not use a self-signed certificate as a substitute
+for a trusted publisher certificate.
+
+Release CI updates Defender's signatures, scans the app executable, bundled Node
+runtime and NSIS installer, and blocks publication if any scan fails. The report
+records SHA256 hashes, Authenticode status and the Defender signature version.
+CI also installs the bundle and scans the installed EXE, whose PE resources can
+differ from the unbundled executable.
+Run the same check locally from PowerShell (elevation may be required):
+
+```powershell
+./scripts/scan-windows-release.ps1 -Path @(
+  'src-tauri/target/release/agent-ui.exe',
+  'src-tauri/target/release/bundle/nsis/*-setup.exe'
+)
+```
+
+The custom scan ignores exclusions and leaves real-time protection enabled.
+It reports detections without remediating them itself, so a detected-and-removed
+file cannot count as a passing scan. If a reviewed build is still detected,
+[submit the exact executable to Microsoft as a software developer](https://www.microsoft.com/en-us/wdsi/filesubmission/).
+Include the report's hash and detection name. Do not recommend disabling Defender
+or excluding the installation directory. A local clean scan is a point-in-time
+result; it does not guarantee cloud reputation or future runtime detections.
 
 ### Download size
 

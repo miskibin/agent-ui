@@ -9,6 +9,7 @@ import {
   type TodoItem,
 } from "@/components/ui/todo-list"
 import type { StoredMessage } from "@/lib/store/types"
+import { taskTodos } from "@/lib/task-todos"
 
 /** One frozen array, so "no plan" never re-renders the panel. */
 export const EMPTY_TODOS: TodoItem[] = []
@@ -20,17 +21,20 @@ export const EMPTY_TODOS: TodoItem[] = []
  * alongside it, so a reloaded chat shows the plan the live turn ended on.
  */
 export function latestTodos(messages: StoredMessage[]): TodoItem[] {
+  // TaskCreate/TaskUpdate carry incremental state rather than a full list.
+  const tasks = taskTodos(messages)
   for (let i = messages.length - 1; i >= 0; i--) {
     const parts = messages[i].parts
     if (!parts) continue
     for (let j = parts.length - 1; j >= 0; j--) {
       const part = parts[j]
+      if (part.type === "tool" && ["TaskCreate", "TaskUpdate"].includes(part.tool.name) && tasks) return tasks
       if (part.type !== "tool" || !isTodoToolName(part.tool.name)) continue
       const items = parseTodoItems(part.tool.input)
       if (items) return items
     }
   }
-  return EMPTY_TODOS
+  return tasks ?? EMPTY_TODOS
 }
 
 /** A written plan, and where in the transcript it was written. */

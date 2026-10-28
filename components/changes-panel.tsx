@@ -4,7 +4,7 @@ import { FileWarning, GitCompare, PanelLeft, RefreshCw, X } from "lucide-react"
 import * as React from "react"
 
 import { CommitControl } from "@/components/commit-control"
-import { refreshFolderStatus, useFolderStatus } from "@/components/folder-status"
+import { pollable, refreshFolderStatus, useFolderStatus } from "@/components/folder-status"
 import type {
   ChangeSummaryFile,
   FileActionItem,
@@ -48,6 +48,7 @@ export function ChangesPanel({
   sessionId,
   cwd,
   chatFiles,
+  running = false,
   onClose,
   onOpenFile,
   fileActions,
@@ -62,6 +63,7 @@ export function ChangesPanel({
   cwd?: string
   /** The header's own count: every file the chat's turns changed. */
   chatFiles?: ChangeSummaryFile[]
+  running?: boolean
   onClose?: () => void
   /** A map row's "open on its own" — hands the path to the file panel. */
   onOpenFile?: (path: string) => void
@@ -93,31 +95,51 @@ export function ChangesPanel({
    * effect, and a synchronous `setState` in an effect body is the one thing the
    * hooks rules forbid outright.
    */
-  const load = React.useCallback(() => {
-    if (!sessionId || !cwd) return
-    queueMicrotask(() => setLoading(true))
-    api
-      .fetchChangedFiles(sessionId)
-      .then((next) => {
-        setFiles(next)
-        setError(null)
-      })
-      .catch((err: unknown) => {
+  const requestRef = React.useRef<AbortController | null>(null)
+  const load = React.useCallback(async (background = false) => {
+    if (!sessionId || !cwd || requestRef.current) return
+    const controller = new AbortController()
+    requestRef.current = controller
+    if (!background) queueMicrotask(() => {
+      if (!controller.signal.aborted) setLoading(true)
+    })
+    try {
+      const next = await api.fetchChangedFiles(sessionId, controller.signal)
+      if (controller.signal.aborted) return
+      setFiles((previous) => JSON.stringify(previous) === JSON.stringify(next) ? previous : next)
+      setError(null)
+    } catch (err) {
+      if (!controller.signal.aborted && !background) {
         setError(err instanceof Error ? err.message : "Could not read the changes")
-      })
-      .finally(() => setLoading(false))
+      }
+    } finally {
+      if (requestRef.current === controller) requestRef.current = null
+      if (!controller.signal.aborted) setLoading(false)
+    }
   }, [cwd, sessionId])
 
-  /**
-   * On open, and again whenever the worktree moves. A commit from the control
-   * below empties the list and a turn that just wrote files fills it — both go
-   * through `refreshFolderStatus`, which `useFolderStatus` already listens to,
-   * so the dirty count changing is the signal to ask again.
-   */
+  React.useEffect(() => () => {
+    requestRef.current?.abort()
+    requestRef.current = null
+  }, [load, running])
+
+  // A dirty-file count cannot detect another edit to the same file.
   const dirty = status?.dirty
   React.useEffect(() => {
-    load()
-  }, [dirty, load])
+    let cancelled = false
+    queueMicrotask(() => { if (!cancelled) void load() })
+    return () => { cancelled = true }
+  }, [dirty, load, running])
+  React.useEffect(() => {
+    if (!running || !cwd) return
+    const refresh = () => { if (pollable()) void load(true) }
+    const timer = setInterval(refresh, 2000)
+    window.addEventListener("focus", refresh)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener("focus", refresh)
+    }
+  }, [cwd, load, running])
 
   const stack = React.useMemo<DiffStackFile[]>(
     () =>

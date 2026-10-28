@@ -586,9 +586,13 @@ test("a subagent's narration stays out of the parent's answer", () => {
       content_block: { type: "tool_use", id: SUB_TOOL, name: "Bash" },
     }),
   ])
-  assert.deepEqual(events, [
+  assert.deepEqual(events.filter((event) => event.type !== "tool" || !event.id.startsWith("native:")), [
     { type: "tool", id: SUB_TOOL, name: "Bash", status: "running" },
   ])
+  const activity = events.filter((event) => event.type === "tool" && event.id.startsWith("native:"))
+  const lastActivity = activity.at(-1)!
+  assert.equal(lastActivity.type, "tool")
+  if (lastActivity.type === "tool") assert.equal(JSON.parse(lastActivity.output!).text, "I will grep for it.")
 })
 
 test("a subagent's snapshot yields its tools and none of its text", () => {
@@ -608,7 +612,7 @@ test("a subagent's snapshot yields its tools and none of its text", () => {
       session_id: SESSION,
     } as ClaudeCodeCliEvent,
   ])
-  assert.deepEqual(events, [
+  assert.deepEqual(events.filter((event) => event.type !== "tool" || !event.id.startsWith("native:")), [
     {
       type: "tool",
       id: SUB_TOOL,
