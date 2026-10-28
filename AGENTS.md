@@ -80,6 +80,7 @@ everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `l
 `lib/message-search.ts`, `lib/search-ranking.ts`, `lib/skills.ts`, `lib/skills-scan.ts`,
 `lib/import/`, `lib/worktree.ts`, `lib/git-naming.ts`, `lib/git-commit.ts`, `lib/git-exec.ts`,
 `lib/checkpoints.ts`, `lib/dev-servers.ts`, `lib/shell-env.ts`, `instrumentation.ts`,
+`lib/subagents/`, `bin/agent-ui.mjs`,
 `app/settings/usage-section.tsx`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
@@ -472,6 +473,32 @@ one interface:
   `renderActions` slot, and the composer's provider list says which agents resume, when they
   last ran, and which are owed a handoff. `handoff.enabled` (Settings → Chat) turns the journal,
   the git reads and the block off together; per-provider session ids are kept either way.
+- Subagents across harnesses (`lib/subagents/`, `/api/mcp`, `/api/subagents/*`,
+  `app/hooks/use-subagents.ts`, `bin/agent-ui.mjs`): an agent in one chat hands work to *another*
+  harness — pi, tinyagent, codex, cursor, ollama — and the run is a real chat rather than a
+  subprocess whose work vanishes into one tool result. The app serves an MCP server (Streamable
+  HTTP, JSON answers only, bearer token from `$AGENT_UI_DIR/bridge.json`, 0600) with
+  `list_harnesses`, `list_models`, `run_subagent` (blocking, or `background: true`),
+  `get_subagent`, `cancel_subagent`, `list_subagents`; `lib/subagents/mcp.ts` is the pure,
+  unit-tested half. A top-level chat's turn is handed it as `AgentRunOptions.mcpServers` with
+  `?parent=<chat>&mode=<permission>`, and `claude-code` attaches it through `--mcp-config` — a
+  0600 file under `$AGENT_UI_DIR/mcp`, never inline, because the token is in the headers and argv
+  is world-readable — plus an `mcp__agent-ui` allow rule, since `-p` has nobody to approve an MCP
+  call. A subagent chat (`SessionMeta.parentId`) is never given the bridge itself: no recursion.
+
+  **A run is driven through this server's own `POST /api/chat`** (`lib/subagents/runs.ts`), the
+  identical request the page makes, so persistence, the handoff journal, process tracking and
+  memory context are the chat route's and nothing is written twice. The registry keeps every SSE
+  frame and fans it out: to the waiting agent, and to the page, which hears of runs on
+  `/api/subagents/events` (snapshot on connect, then each start) and attaches the ordinary turn
+  runner to `/api/subagents/<run>/stream` (`RunPromptArgs.attach`) — so a subagent chat joins the
+  sidebar under its parent (`nestUnderParents`), says Working, streams through the same reducer,
+  and Stop stops it (`DELETE`). The page's own unmount aborts with `PAGE_GONE`, which only stops
+  *watching*: a reload must not kill a run the server owns, and the snapshot re-attaches it. The
+  prompt is stored with `metadata.subagentOf`, which keeps it from the memory extractor — another
+  agent wrote it, not the user. `bin/agent-ui.mjs` is the CLI over the same tools, and
+  `agent-ui mcp` is a stdio proxy for a Claude Code run outside the app: the desktop port changes
+  every launch, and the proxy re-reads `bridge.json` per message.
 - Generative views (vendored `components/ui/generative-view.tsx`, `lib/generative-view.ts`):
   an agent can answer with a ` ```ui ` fence holding JSON from a closed vocabulary of display
   blocks — card, fields, table, list, timeline, stats, progress, tabs — and `MessageMarkdown`

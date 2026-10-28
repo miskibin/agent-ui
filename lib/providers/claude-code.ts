@@ -220,6 +220,7 @@ export function createClaudeCodeProvider(
         // A per-chat folder beats the one workspace from settings.
         workspace: options.cwd?.trim() || workspace,
         binPath,
+        mcpServers: options.mcpServers,
         processes: options.processes,
         signal: options.signal,
       })

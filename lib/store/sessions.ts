@@ -242,6 +242,9 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
       typeof value.permissionMode === "string"
         ? value.permissionMode
         : undefined,
+    ...(typeof value.parentId === "string" && isValidSessionId(value.parentId)
+      ? { parentId: value.parentId }
+      : null),
     ...(agentSessions ? { agentSessions } : null),
     createdAt: typeof value.createdAt === "number" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
@@ -356,6 +359,9 @@ export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
         : null),
       ...(input.permissionMode?.trim()
         ? { permissionMode: input.permissionMode.trim() }
+        : null),
+      ...(input.parentId && isValidSessionId(input.parentId)
+        ? { parentId: input.parentId }
         : null),
       ...(timestamp(input.settledAt) ? { settledAt: input.settledAt } : null),
       ...(settledOverride(input.settledOverride)

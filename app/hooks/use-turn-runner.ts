@@ -56,6 +56,17 @@ export type RunPromptArgs = {
   /** The app wrote this prompt, not the user — keep it out of the list. */
   internal?: boolean
   /**
+   * Watch a subagent run the server is already driving (`lib/subagents`)
+   * instead of starting one: the rows take the server's ids, the stream is the
+   * run's replay, and nothing is posted to `/api/chat`.
+   */
+  attach?: {
+    runId: string
+    userMessageId: string
+    assistantMessageId: string
+    startedAt: number
+  }
+  /**
    * Seed over `prior` instead of onto whatever the thread now holds — only
    * regenerate, which means to drop the turn it is re-running.
    */
@@ -63,6 +74,13 @@ export type RunPromptArgs = {
 }
 
 export type RunPrompt = (args: RunPromptArgs) => Promise<void>
+
+/**
+ * The abort reason of a page going away. Every other abort is someone asking
+ * a turn to stop; this one only stops *watching* — a subagent run the server
+ * drives must outlive a reload of the page that was showing it.
+ */
+const PAGE_GONE = "page-gone"
 
 /**
  * A fire-and-forget POST that is allowed to fail. Module-level on purpose:
@@ -121,18 +139,18 @@ export function useTurnRunner({
   React.useEffect(() => {
     const aborts = abortsRef.current
     return () => {
-      for (const controller of aborts.values()) controller.abort()
+      for (const controller of aborts.values()) controller.abort(PAGE_GONE)
       aborts.clear()
     }
   }, [abortsRef])
 
   return React.useCallback<RunPrompt>(
     async (args) => {
-      const { sessionId, prompt, prior } = args
-      const startedAt = nowMs()
-      const assistantId = newId()
+      const { sessionId, prompt, prior, attach } = args
+      const startedAt = attach?.startedAt ?? nowMs()
+      const assistantId = attach?.assistantMessageId ?? newId()
       const userMessage: StoredMessage = {
-        id: newId(),
+        id: attach?.userMessageId ?? newId(),
         content: prompt,
         sender: "user",
         createdAt: startedAt,
@@ -148,7 +166,12 @@ export function useTurnRunner({
        * wrote. Only a regenerate means to truncate, and it says so.
        */
       const seedOver = (current: StoredMessage[] | undefined) => [
-        ...(args.replacePrior || current === undefined ? prior : current),
+        // A watched run's pair may already be on disk — the transcript loaded
+        // after the server wrote it — and must not appear twice.
+        ...(args.replacePrior || current === undefined ? prior : current).filter(
+          (message) =>
+            message.id !== userMessage.id && message.id !== assistantId
+        ),
         userMessage,
         assistantMessage,
       ]
@@ -501,7 +524,9 @@ export function useTurnRunner({
        * no folder has nothing to snapshot either way.
        */
       const checkpointCwd =
-        cwd && settingsRef.current?.checkpoints.enabled !== false ? cwd : undefined
+        cwd && !attach && settingsRef.current?.checkpoints.enabled !== false
+          ? cwd
+          : undefined
       /**
        * Which turn this is, and therefore which checkpoint refs bracket it:
        * the tree as it stood after turn N is the "before" of turn N+1, and the
@@ -528,21 +553,36 @@ export function useTurnRunner({
       }
 
       try {
-        await api.streamChat(
-          {
-            prompt,
-            providerId: args.providerId,
-            model: args.model,
-            sessionId,
-            effort: args.effort,
-            permissionMode: args.permissionMode,
-            userMessageId: userMessage.id,
-            assistantMessageId: assistantId,
-            attachments: args.attachments,
-            typedText: args.typedText,
-          },
-          { onEvent, onTurnState, signal: controller.signal }
-        )
+        if (attach) {
+          // Stop on this chat stops the run; a page going away only stops
+          // watching it.
+          controller.signal.addEventListener("abort", () => {
+            if (controller.signal.reason !== PAGE_GONE) {
+              void api.cancelSubagent(attach.runId)
+            }
+          })
+          await api.streamSubagent(attach.runId, {
+            onEvent,
+            onTurnState,
+            signal: controller.signal,
+          })
+        } else {
+          await api.streamChat(
+            {
+              prompt,
+              providerId: args.providerId,
+              model: args.model,
+              sessionId,
+              effort: args.effort,
+              permissionMode: args.permissionMode,
+              userMessageId: userMessage.id,
+              assistantMessageId: assistantId,
+              attachments: args.attachments,
+              typedText: args.typedText,
+            },
+            { onEvent, onTurnState, signal: controller.signal }
+          )
+        }
       } catch (err) {
         if (!controller.signal.aborted) {
           const message = errorMessage(err, "The agent run failed")
@@ -597,7 +637,7 @@ export function useTurnRunner({
         /* Only a turn that actually landed is worth learning from. A stopped
            one is usually about to be re-sent, and a failed one would spend a
            model call to stack a second toast under the failure's own. */
-        if (!controller.signal.aborted && !failed) {
+        if (!controller.signal.aborted && !failed && !attach) {
           void runMemoryUpdate(sessionId)
         }
         /* A message queued during the turn goes next — a stopped turn keeps

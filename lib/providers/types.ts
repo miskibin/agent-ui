@@ -89,6 +89,18 @@ export type ChatTurn = {
   images?: string[]
 }
 
+/**
+ * An MCP server a harness should be connected to for one turn — today only
+ * the app's own subagent bridge (`lib/subagents`). Streamable HTTP; the
+ * headers carry the bridge token, so it must never reach argv or a log line
+ * the user did not ask for.
+ */
+export type McpServerConfig = {
+  name: string
+  url: string
+  headers?: Record<string, string>
+}
+
 export type AgentRunOptions = {
   prompt: string
   model: string
@@ -116,6 +128,11 @@ export type AgentRunOptions = {
   turnContext?: string
   /** Provider-side session to resume, if capabilities.resume. */
   sessionId?: string
+  /**
+   * MCP servers to connect for this turn. A provider that cannot attach one
+   * ignores the field; `claude-code` passes them as `--mcp-config`.
+   */
+  mcpServers?: McpServerConfig[]
   effort?: string
   /**
    * Per-chat override of the harness's configured permission policy. The chat

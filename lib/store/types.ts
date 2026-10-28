@@ -60,6 +60,13 @@ export type MessageMetadata = {
    */
   typedText?: string
   /**
+   * On a *user* message: the chat whose agent wrote this prompt, when the turn
+   * is a subagent run (`lib/subagents`). Its presence means nobody typed it —
+   * which is what keeps it away from the memory extractor, under the same rule
+   * as `typedText`.
+   */
+  subagentOf?: string
+  /**
    * The worktree checkpoint this turn produced — see `lib/checkpoints`.
    *
    * `ref` is the hidden git ref holding the tree as it stood when the turn
@@ -212,6 +219,13 @@ export type SessionMeta = {
    * grows; the chat route validates it against the provider before use.
    */
   permissionMode?: string
+  /**
+   * The chat whose agent started this one as a subagent, through the app's
+   * MCP bridge (`lib/subagents`). The sidebar files it under that chat, and a
+   * chat with no `parentId` is an ordinary one — including a subagent run
+   * started from outside the app, which has no chat to hang under.
+   */
+  parentId?: string
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -259,4 +273,5 @@ export type CreateSessionInput = {
   gitBranch?: string
   worktree?: SessionWorktree
   permissionMode?: string
+  parentId?: string
 } & SessionLifecyclePatch

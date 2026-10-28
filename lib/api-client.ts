@@ -359,8 +359,20 @@ export async function streamChat(
   })
 
   if (!res.ok || !res.body) throw new Error(await errorText(res))
+  await readTurnStream(res.body, handlers)
+}
 
-  const reader = res.body.getReader()
+type TurnStreamHandlers = {
+  onEvent: (event: AgentStreamEvent) => void
+  onTurnState?: (state: TurnStateFrame) => void
+}
+
+/** Reads one turn's SSE answer — `/api/chat`'s, or a subagent run's replay. */
+async function readTurnStream(
+  body: ReadableStream<Uint8Array>,
+  handlers: TurnStreamHandlers
+) {
+  const reader = body.getReader()
   const decoder = new TextDecoder()
   const lines = new LineBuffer()
   let eventLines: string[] = []
@@ -396,6 +408,26 @@ export async function streamChat(
   consume(lines.push(decoder.decode()))
   const tail = lines.finish()
   if (tail !== null) consume([tail, ""])
+}
+
+/**
+ * Watches a subagent run the server is driving (`lib/subagents`): every frame
+ * so far, then the rest live, in `streamChat`'s own framing. Aborting stops
+ * watching only; `cancelSubagent` stops the run.
+ */
+export async function streamSubagent(
+  runId: string,
+  handlers: TurnStreamHandlers & { signal: AbortSignal }
+) {
+  const res = await fetch(`/api/subagents/${encodeURIComponent(runId)}/stream`, {
+    signal: handlers.signal,
+  })
+  if (!res.ok || !res.body) throw new Error(await errorText(res))
+  await readTurnStream(res.body, handlers)
+}
+
+export async function cancelSubagent(runId: string): Promise<void> {
+  await fetch(`/api/subagents/${encodeURIComponent(runId)}`, { method: "DELETE" })
 }
 
 /**

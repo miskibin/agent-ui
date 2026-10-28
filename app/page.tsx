@@ -82,6 +82,7 @@ import { useSidebarItems } from "./hooks/use-sidebar-items"
 import { useSkills } from "./hooks/use-skills"
 import { useThreadView } from "./hooks/use-thread-view"
 import { useThreads } from "./hooks/use-threads"
+import { useSubagents } from "./hooks/use-subagents"
 import { useTurnRunner } from "./hooks/use-turn-runner"
 import type { SettingsSectionId } from "@/app/settings/settings-view"
 import * as api from "@/lib/api-client"
@@ -601,6 +602,8 @@ export default function ChatPage() {
     openFolder,
     openImport,
   })
+
+  useSubagents({ refs, runPrompt, loadThread, setSessions })
 
   useChatBootstrap({
     seedFromCache: index.seedFromCache,
