@@ -1,5 +1,7 @@
 import "server-only"
 
+import { randomBytes } from "node:crypto"
+
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import {
   applyStreamEvent,
@@ -284,7 +286,8 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
 
   let settle!: () => void
   const run: Run = {
-    runId: `r${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`,
+    // Unguessable: a run id is all `/api/subagents/<id>/stream` asks for.
+    runId: `r${randomBytes(9).toString("base64url")}`,
     sessionId: session.id,
     ...(parent ? { parentId: parent.id } : null),
     harness: input.harness,

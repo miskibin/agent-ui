@@ -101,17 +101,35 @@ async function readStdin() {
   return Buffer.concat(chunks).toString("utf8")
 }
 
+/**
+ * Everything printed here came from an agent or a server, so it is written
+ * with every control character but newline and tab removed: an answer must
+ * not be able to move the cursor, retitle the terminal or rewrite what was
+ * printed before it with escape sequences.
+ */
+function clean(text) {
+  return String(text).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "")
+}
+
+function out(text) {
+  process.stdout.write(`${clean(text)}\n`)
+}
+
+function note(text) {
+  process.stderr.write(`${clean(text)}\n`)
+}
+
 function print(data, json) {
   if (json || typeof data !== "object") {
-    console.log(typeof data === "string" ? data : JSON.stringify(data, null, 2))
+    out(typeof data === "string" ? data : JSON.stringify(data, null, 2))
     return
   }
   if (typeof data.answer === "string") {
-    console.log(data.answer)
-    console.error(`\n[${data.status} · ${data.harness} · session ${data.session_id} · run ${data.run_id}]`)
+    out(data.answer)
+    note(`\n[${data.status} · ${data.harness} · session ${data.session_id} · run ${data.run_id}]`)
     return
   }
-  console.log(JSON.stringify(data, null, 2))
+  out(JSON.stringify(data, null, 2))
 }
 
 /** stdin/stdout MCP server forwarding every message to the running app. */
@@ -161,7 +179,8 @@ async function main() {
       const data = await tool("list_harnesses")
       if (flags.json) return print(data, true)
       for (const h of data.harnesses) {
-        console.log(`${h.available ? "●" : "○"} ${h.id.padEnd(24)} ${h.name}${h.available ? "" : `  (${h.unavailable_reason ?? "unavailable"})`}`)
+        const reason = h.available ? "" : `  (${h.unavailable_reason ?? "unavailable"})`
+        out(`${h.available ? "●" : "○"} ${h.id.padEnd(24)} ${h.name}${reason}`)
       }
       return
     }
@@ -169,7 +188,10 @@ async function main() {
       if (!rest[0]) throw new Error("usage: agent-ui models <harness>")
       const data = await tool("list_models", { harness: rest[0] })
       if (flags.json) return print(data, true)
-      for (const m of data.models) console.log(`${m.id}${m.name && m.name !== m.id ? `  — ${m.name}` : ""}`)
+      for (const m of data.models) {
+        const name = m.name && m.name !== m.id ? `  — ${m.name}` : ""
+        out(`${m.id}${name}`)
+      }
       return
     }
     case "run": {
@@ -224,6 +246,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error(`agent-ui: ${err.message}`)
+  note(`agent-ui: ${err.message}`)
   process.exitCode = 1
 })
