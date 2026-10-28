@@ -11,9 +11,14 @@ import type { SessionMeta } from "@/lib/store/types"
 import {
   DEFAULT_WAIT_SECONDS,
   MAX_WAIT_SECONDS,
+  DEFAULT_ANSWER_CHARS,
+  DEFAULT_WAIT_ANSWER_CHARS,
   handleRpc,
+  parseMessageArgs,
   parseRunArgs,
+  type MessageSubagentArgs,
   type RunSubagentArgs,
+  type WaitSubagentsArgs,
   type SubagentTools,
 } from "@/lib/subagents/mcp"
 
@@ -25,7 +30,15 @@ function fakeTools(calls: unknown[] = []): SubagentTools {
       calls.push(args)
       return { status: "done", answer: "42", run_id: "r1" }
     },
-    status: async (runId, wait) => ({ run_id: runId, wait }),
+    message: async (args) => {
+      calls.push(args)
+      return { status: "queued", run_id: "r2" }
+    },
+    status: async (ref, wait, view) => ({ ...ref, wait, view }),
+    wait: async (args) => {
+      calls.push(args)
+      return { runs: [] }
+    },
     cancel: async (runId) => ({ run_id: runId, cancelled: true }),
     list: async () => [],
   }
@@ -58,7 +71,16 @@ describe("subagent MCP server", () => {
     }
     assert.deepEqual(
       list.result.tools.map((tool) => tool.name),
-      ["list_harnesses", "list_models", "run_subagent", "get_subagent", "cancel_subagent", "list_subagents"]
+      [
+        "list_harnesses",
+        "list_models",
+        "run_subagent",
+        "get_subagent",
+        "wait_subagents",
+        "message_subagent",
+        "cancel_subagent",
+        "list_subagents",
+      ]
     )
     const missing = (await handleRpc({ jsonrpc: "2.0", id: 2, method: "nope" }, fakeTools())) as {
       error: { code: number }
@@ -78,7 +100,8 @@ describe("subagent MCP server", () => {
       fakeTools(calls)
     )) as { result: { content: { text: string }[]; structuredContent: { answer: string }; isError?: boolean } }
     assert.equal(answer.result.structuredContent.answer, "42")
-    assert.match(answer.result.content[0].text, /"answer": "42"/)
+    // Compact JSON: indentation is context the orchestrator pays for.
+    assert.equal(answer.result.content[0].text, JSON.stringify({ status: "done", answer: "42", run_id: "r1" }))
     assert.equal(answer.result.isError, undefined)
     assert.equal((calls[0] as RunSubagentArgs).waitSeconds, 5)
   })
@@ -102,6 +125,54 @@ describe("subagent MCP server", () => {
   })
 })
 
+describe("orchestration tools", () => {
+  const call = (name: string, args: unknown, tools = fakeTools()) =>
+    handleRpc(
+      { jsonrpc: "2.0", id: 9, method: "tools/call", params: { name, arguments: args } },
+      tools
+    ) as Promise<{ result: { structuredContent: Record<string, unknown>; isError?: boolean; content: { text: string }[] } }>
+
+  test("get_subagent takes a run id or a session id, and reads the view", async () => {
+    const answer = await call("get_subagent", { session_id: "s1", detail: "full", since_step: 4 })
+    assert.deepEqual(answer.result.structuredContent, {
+      sessionId: "s1",
+      wait: 0,
+      view: { detail: "full", sinceStep: 4, maxAnswerChars: DEFAULT_ANSWER_CHARS },
+    })
+    const missing = await call("get_subagent", {})
+    assert.equal(missing.result.isError, true)
+  })
+
+  test("message_subagent needs a target and a message", async () => {
+    const calls: unknown[] = []
+    await call("message_subagent", { run_id: "r1", message: "also fix the tests", interrupt: true }, fakeTools(calls))
+    const args = calls[0] as MessageSubagentArgs
+    assert.equal(args.runId, "r1")
+    assert.equal(args.interrupt, true)
+    assert.equal(args.background, false)
+    assert.equal((await call("message_subagent", { run_id: "r1" })).result.isError, true)
+    assert.equal((await call("message_subagent", { message: "x" })).result.isError, true)
+  })
+
+  test("wait_subagents defaults to any, always brief, ids cleaned", async () => {
+    const calls: unknown[] = []
+    await call("wait_subagents", { run_ids: ["r1", "", 3, "r2"], detail: "full" }, fakeTools(calls))
+    const args = calls[0] as WaitSubagentsArgs
+    assert.deepEqual(args.runIds, ["r1", "r2"])
+    assert.equal(args.mode, "any")
+    assert.equal(args.view.detail, "brief")
+    assert.equal(args.view.maxAnswerChars, DEFAULT_WAIT_ANSWER_CHARS)
+    assert.equal(args.waitSeconds, DEFAULT_WAIT_SECONDS)
+  })
+
+  test("no single call may block past what the clients wait for", () => {
+    // Node's fetch (the stdio proxy) gives up after 300s without headers.
+    assert.ok(MAX_WAIT_SECONDS < 300)
+    const message = parseMessageArgs({ session_id: "s", message: "m", wait_seconds: 900 }) as MessageSubagentArgs
+    assert.equal(message.waitSeconds, MAX_WAIT_SECONDS)
+  })
+})
+
 describe("parseRunArgs", () => {
   test("requires a harness and a prompt", () => {
     assert.equal(typeof parseRunArgs({ prompt: "x" }), "string")
@@ -115,6 +186,12 @@ describe("parseRunArgs", () => {
     assert.equal(args.background, false)
     const capped = parseRunArgs({ harness: "pi", prompt: "x", wait_seconds: 1e9 }) as RunSubagentArgs
     assert.equal(capped.waitSeconds, MAX_WAIT_SECONDS)
+    const timed = parseRunArgs({ harness: "pi", prompt: "x", timeout_seconds: 90 }) as RunSubagentArgs
+    assert.equal(timed.timeoutSeconds, 90)
+    assert.equal(
+      (parseRunArgs({ harness: "pi", prompt: "x", timeout_seconds: -1 }) as RunSubagentArgs).timeoutSeconds,
+      undefined
+    )
   })
 })
 

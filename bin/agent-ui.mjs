@@ -11,8 +11,9 @@
  *   agent-ui harnesses
  *   agent-ui models <harness>
  *   agent-ui run <harness> [--model m] [--cwd dir] [--title t] [--session id]
- *                [--background] [--wait seconds] [--json] <prompt… | ->
- *   agent-ui status <run-id> [--wait seconds] [--json]
+ *                [--background] [--wait s] [--timeout s] [--json] <prompt… | ->
+ *   agent-ui send <run-id|session-id> [--interrupt] [--background] <message… | ->
+ *   agent-ui status <run-id> [--wait seconds] [--full] [--json]
  *   agent-ui cancel <run-id>
  *   agent-ui list
  *   agent-ui mcp            stdio MCP server proxying to the running app
@@ -88,7 +89,9 @@ function parseFlags(argv) {
   const rest = []
   for (let index = 0; index < argv.length; index++) {
     const arg = argv[index]
-    if (arg === "--background" || arg === "--json") flags[arg.slice(2)] = true
+    if (arg === "--background" || arg === "--json" || arg === "--full" || arg === "--interrupt") {
+      flags[arg.slice(2)] = true
+    }
     else if (arg.startsWith("--")) flags[arg.slice(2)] = argv[++index]
     else rest.push(arg)
   }
@@ -132,16 +135,48 @@ function print(data, json) {
   out(JSON.stringify(data, null, 2))
 }
 
-/** stdin/stdout MCP server forwarding every message to the running app. */
+/**
+ * Why a forwarded request failed, in words that point at the right cause.
+ * Node's fetch says "fetch failed" for a refused connection and for a request
+ * it gave up waiting on alike, and only the first means the app is gone.
+ */
+function proxyFailure(err) {
+  const code = err?.cause?.code ?? err?.code
+  if (code === "ECONNREFUSED" || code === "ENOTFOUND" || code === "EHOSTUNREACH") {
+    return "Agent UI is not running (connection refused). Start the app and try again; run and chat ids survive in its saved chats."
+  }
+  if (code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_BODY_TIMEOUT" || code === "ETIMEDOUT") {
+    return "Agent UI took too long to answer this call. The app is up — call again (keep wait_seconds at 240 or less)."
+  }
+  return `Agent UI did not answer: ${err?.message ?? err}${code ? ` (${code})` : ""}`
+}
+
+/**
+ * stdin/stdout MCP server forwarding every message to the running app.
+ *
+ * Each request is forwarded on its own, without waiting for the one before
+ * it: a blocking `wait_subagents` must not hold a `cancel_subagent` (or the
+ * client's own ping) behind it. Answers are written whenever they arrive,
+ * one JSON line each, which is all the stdio transport asks.
+ */
 async function stdioProxy() {
   const lines = createInterface({ input: process.stdin })
+  const inFlight = new Set()
   for await (const line of lines) {
     if (!line.trim()) continue
+    const task = forward(line).finally(() => inFlight.delete(task))
+    inFlight.add(task)
+  }
+  await Promise.allSettled(inFlight)
+}
+
+async function forward(line) {
+  {
     let message
     try {
       message = JSON.parse(line)
     } catch {
-      continue
+      return
     }
     const isRequest = message.id !== undefined && message.id !== null
     try {
@@ -155,20 +190,38 @@ async function stdioProxy() {
         },
         body: line,
       })
-      if (!isRequest) continue
+      if (!isRequest) return
       const body = await res.json()
       process.stdout.write(`${JSON.stringify(body)}\n`)
     } catch (err) {
-      if (!isRequest) continue
+      if (!isRequest) return
       process.stdout.write(
         `${JSON.stringify({
           jsonrpc: "2.0",
           id: message.id,
-          error: { code: -32000, message: `Agent UI is not reachable: ${err.message}` },
+          error: { code: -32000, message: proxyFailure(err) },
         })}\n`
       )
     }
   }
+}
+
+/** The server answers any one call within this; longer waits are a loop. */
+const WAIT_SLICE = 240
+
+/**
+ * A tool call that waits `total` seconds, made as slices the server will
+ * answer in time — the CLI keeps the long `--wait` a user asked for.
+ */
+async function waitingTool(name, args, total) {
+  let left = Math.max(0, total)
+  let data = await tool(name, { ...args, wait_seconds: Math.min(left, WAIT_SLICE) })
+  left -= WAIT_SLICE
+  while (left > 0 && (data.status === "running" || data.status === "queued")) {
+    data = await tool("get_subagent", { run_id: data.run_id, wait_seconds: Math.min(left, WAIT_SLICE) })
+    left -= WAIT_SLICE
+  }
+  return data
 }
 
 async function main() {
@@ -201,16 +254,20 @@ async function main() {
       if (!harness || !prompt.trim()) {
         throw new Error("usage: agent-ui run <harness> [flags] <prompt… | ->")
       }
-      const data = await tool("run_subagent", {
-        harness,
-        prompt,
-        model: flags.model,
-        cwd: flags.cwd ? resolve(flags.cwd) : process.cwd(),
-        title: flags.title,
-        session_id: flags.session,
-        background: !!flags.background,
-        ...(flags.wait ? { wait_seconds: Number(flags.wait) } : null),
-      })
+      const data = await waitingTool(
+        "run_subagent",
+        {
+          harness,
+          prompt,
+          model: flags.model,
+          cwd: flags.cwd ? resolve(flags.cwd) : process.cwd(),
+          title: flags.title,
+          session_id: flags.session,
+          background: !!flags.background,
+          ...(flags.timeout ? { timeout_seconds: Number(flags.timeout) } : null),
+        },
+        flags.background ? 0 : Number(flags.wait ?? 3600)
+      )
       print(data, flags.json)
       if (data.status === "error") process.exitCode = 1
       return
@@ -218,9 +275,34 @@ async function main() {
     case "status": {
       if (!rest[0]) throw new Error("usage: agent-ui status <run-id> [--wait s]")
       print(
-        await tool("get_subagent", { run_id: rest[0], wait_seconds: Number(flags.wait ?? 0) }),
+        await waitingTool(
+          "get_subagent",
+          { run_id: rest[0], ...(flags.full ? { detail: "full" } : null) },
+          Number(flags.wait ?? 0)
+        ),
         flags.json
       )
+      return
+    }
+    case "send": {
+      const [ref, ...words] = rest
+      let message = words.join(" ")
+      if (!message || message === "-") message = await readStdin()
+      if (!ref || !message.trim()) {
+        throw new Error("usage: agent-ui send <run-id|session-id> [--interrupt] <message… | ->")
+      }
+      const data = await waitingTool(
+        "message_subagent",
+        {
+          ...(ref.startsWith("r") ? { run_id: ref } : { session_id: ref }),
+          message,
+          interrupt: !!flags.interrupt,
+          background: !!flags.background,
+        },
+        flags.background ? 0 : Number(flags.wait ?? 3600)
+      )
+      print(data, flags.json)
+      if (data.status === "error") process.exitCode = 1
       return
     }
     case "cancel": {
@@ -240,7 +322,7 @@ async function main() {
       return
     }
     default:
-      console.log(readFileSync(SELF, "utf8").split("\n").slice(2, 19).map((l) => l.replace(/^ \*\s?/, "")).join("\n"))
+      console.log(readFileSync(SELF, "utf8").split("\n").slice(2, 20).map((l) => l.replace(/^ \*\s?/, "")).join("\n"))
       if (command && command !== "help" && command !== "--help") process.exitCode = 1
   }
 }

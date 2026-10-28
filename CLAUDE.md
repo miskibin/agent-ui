@@ -464,9 +464,27 @@ one interface:
   harness — pi, tinyagent, codex, cursor, ollama — and the run is a real chat rather than a
   subprocess whose work vanishes into one tool result. The app serves an MCP server (Streamable
   HTTP, JSON answers only, bearer token from `$AGENT_UI_DIR/bridge.json`, 0600) with
-  `list_harnesses`, `list_models`, `run_subagent` (blocking, or `background: true`),
-  `get_subagent`, `cancel_subagent`, `list_subagents`; `lib/subagents/mcp.ts` is the pure,
-  unit-tested half. A top-level chat's turn is handed it as `AgentRunOptions.mcpServers` with
+  `list_harnesses`, `list_models`, `run_subagent` (blocking, or `background: true`, with an
+  optional `timeout_seconds`), `get_subagent`, `wait_subagents` (any/all of several runs),
+  `message_subagent` (a follow-up into the chat — queued behind a running turn, or
+  `interrupt: true` to stop it and go now), `cancel_subagent`, `list_subagents`;
+  `lib/subagents/mcp.ts` is the pure, unit-tested half.
+
+  **Every answer is spent in the orchestrator's context**, which is the design constraint for
+  the whole vocabulary. A run's stream is folded into counters by `lib/subagents/progress.ts`
+  (pure, unit-tested) — phase, the call in flight, `idle_seconds` (a stall), `waiting_on_user`,
+  files edited, commands and failed ones, test runs, tool errors, tokens — and a `brief` digest
+  is that and nothing else; `detail: "full"` adds a step log and the output's tail, and
+  `since_step` returns only log lines past the cursor the caller already holds. Answers are
+  capped (`max_answer_chars`, smaller per run in `wait_subagents`), JSON is compact, and the
+  tool descriptions are kept short because they ride along on every turn. **No call blocks past
+  240s** (`MAX_WAIT_SECONDS`): Node's `fetch`, which `agent-ui mcp` forwards through, abandons a
+  request with no headers after 300s and says only "fetch failed" — a 900s wait once read as
+  "Agent UI is not reachable" while the app was fine — so a long wait is a loop of slices, which
+  the CLI does for its own `--wait`. The proxy forwards requests concurrently, so a blocking wait
+  never holds a cancel behind it. Run ids live in memory and die with the process;
+  `get_subagent` and `message_subagent` also take a `session_id`, which reads the chat's latest
+  turn back from disk and rebuilds the same digest from its stored tool calls. A top-level chat's turn is handed it as `AgentRunOptions.mcpServers` with
   `?parent=<chat>&mode=<permission>`, and `claude-code` attaches it through `--mcp-config` — a
   0600 file under `$AGENT_UI_DIR/mcp`, never inline, because the token is in the headers and argv
   is world-readable — plus an `mcp__agent-ui` allow rule, since `-p` has nobody to approve an MCP
