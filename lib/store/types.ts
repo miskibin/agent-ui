@@ -223,6 +223,14 @@ export type SessionMeta = {
    * started from outside the app, which has no chat to hang under.
    */
   parentId?: string
+  /**
+   * Started by an agent outside the app — `agent-ui run` or a Claude Code
+   * session talking to the bridge through `agent-ui mcp` — so no chat here
+   * asked for it. The sidebar keeps these on their own folded shelf until the
+   * user takes one over (types into it, pins it, or moves it to its folder),
+   * which clears the flag for good.
+   */
+  external?: boolean
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -260,7 +268,10 @@ export type SessionPatch = Partial<
     | "permissionMode"
   >
 > &
-  SessionLifecyclePatch
+  SessionLifecyclePatch & {
+    /** Only ever `false`: taking an agent's chat over is one-way. */
+    external?: false
+  }
 
 export type CreateSessionInput = {
   title?: string
@@ -271,4 +282,5 @@ export type CreateSessionInput = {
   worktree?: SessionWorktree
   permissionMode?: string
   parentId?: string
+  external?: boolean
 } & SessionLifecyclePatch

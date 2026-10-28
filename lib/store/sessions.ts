@@ -184,6 +184,8 @@ const QUIET_FIELDS = [
   "snoozedAt",
   "wokeAt",
   "lastVisitedAt",
+  // Taking over an agent's chat moves it to its folder, not to the top.
+  "external",
 ] as const
 
 const CLEARABLE_FIELDS = [
@@ -245,6 +247,7 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
     ...(typeof value.parentId === "string" && isValidSessionId(value.parentId)
       ? { parentId: value.parentId }
       : null),
+    ...(value.external === true ? { external: true } : null),
     ...(agentSessions ? { agentSessions } : null),
     createdAt: typeof value.createdAt === "number" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
@@ -304,6 +307,7 @@ function applyPatch(meta: SessionMeta, patch: SessionPatch): SessionMeta {
     if (next[key] !== undefined && !(next[key]! > 0)) delete next[key]
   }
   if (next.settledOverride === undefined) delete next.settledOverride
+  if (patch.external === false) delete next.external
   return next
 }
 
@@ -363,6 +367,7 @@ export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
       ...(input.parentId && isValidSessionId(input.parentId)
         ? { parentId: input.parentId }
         : null),
+      ...(input.external ? { external: true } : null),
       ...(timestamp(input.settledAt) ? { settledAt: input.settledAt } : null),
       ...(settledOverride(input.settledOverride)
         ? { settledOverride: settledOverride(input.settledOverride) }

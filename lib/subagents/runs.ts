@@ -281,6 +281,8 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
       gitBranch: parent?.cwd === cwd ? parent?.gitBranch : undefined,
       permissionMode: input.permissionMode,
       parentId: parent?.id,
+      // No chat here asked for it: the sidebar shelves it until it is adopted.
+      external: !parent,
     })
   }
 

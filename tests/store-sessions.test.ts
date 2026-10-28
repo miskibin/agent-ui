@@ -85,6 +85,19 @@ test("a chat round-trips through the index and its own file", async () => {
   assert.ok(existsSync(join(DATA_DIR, "sessions", `${session.id}.json`)))
 })
 
+test("an outside agent's chat is flagged until it is adopted, quietly", async () => {
+  const session = await createSession({ title: "from the CLI", external: true })
+  assert.equal(session.external, true)
+  const [listed] = (await listSessions()).filter((entry) => entry.id === session.id)
+  assert.equal(listed.external, true)
+
+  const adopted = await patchSession(session.id, { external: false })
+  assert.equal(adopted?.external, undefined)
+  // Taking it over moves it to its folder, not to the top of it.
+  assert.equal(adopted?.updatedAt, session.updatedAt)
+  assert.equal((await createSession({ title: "mine" })).external, undefined)
+})
+
 test("the newest chat is first and `order` stays dense", async () => {
   const first = await createSession({ title: "first" })
   const second = await createSession({ title: "second" })

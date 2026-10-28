@@ -8,6 +8,7 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 [![CI](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml)
 [![Desktop](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml)
 
+[Website](https://miskibin.github.io/agent-ui/) ·
 [Download for Windows](https://github.com/miskibin/agent-ui/releases/latest) ·
 [Chat Components](https://github.com/miskibin/chat-components)
 
@@ -138,6 +139,12 @@ node bin/agent-ui.mjs harnesses
 node bin/agent-ui.mjs run pi --model ollama/qwen3:8b "Summarize lib/handoff"
 node bin/agent-ui.mjs mcp-config   # prints the `claude mcp add` line
 ```
+
+Chats started that way have no chat in the app to sit under, so they collect on
+a folded **Agents** shelf below your folders instead of mixing into them. The
+shelf header pulses while one is running, and a run waiting for your answer
+stays visible while the shelf is folded. Type into one, or drag it onto its
+folder, and it becomes one of your own chats.
 
 ## Quick start
 

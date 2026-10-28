@@ -3,6 +3,7 @@ import { test } from "node:test"
 
 import type { ChatSidebarItemData } from "@/components/ui/chat-sidebar"
 import {
+  AGENTS_SHELF_ID,
   NO_FOLDER_GROUP_ID,
   PINNED_GROUP_ID,
   SETTLED_SHELF_ID,
@@ -307,6 +308,63 @@ test("the open chat is pulled in past the page and out of a closed shelf", () =>
     closed.settled.items.map((entry) => entry.id),
     ["s13"]
   )
+})
+
+test("a chat an outside agent started goes to the Agents shelf, not its folder", () => {
+  const sessions = [
+    meta("mine", { cwd: "/home/me/api", updatedAt: 1 }),
+    meta("old-run", { cwd: "/home/me/api", external: true, updatedAt: 2 }),
+    meta("new-run", { cwd: "/home/me/web", external: true, updatedAt: 3 }),
+  ]
+  const closed = shelved(sessions)
+  assert.deepEqual(
+    closed.folders.map((group) => group.items.map((entry) => entry.id)),
+    [["mine"]]
+  )
+  assert.equal(closed.agents.total, 2)
+  // Folded by default: nothing renders until the shelf is opened.
+  assert.deepEqual(closed.agents.items, [])
+
+  const open = shelved(sessions, { agentsOpen: true })
+  assert.deepEqual(
+    open.agents.items.map((entry) => entry.id),
+    ["new-run", "old-run"]
+  )
+  assert.equal(sidebarListId(sessions[1], NOW), AGENTS_SHELF_ID)
+  // Its folder is still where adopting it — or dragging it out — lands.
+  assert.equal(groupIdForSession(sessions[1]), "folder:/home/me/api")
+})
+
+test("pins and the lifecycle shelves outrank the Agents shelf", () => {
+  const groups = shelved([
+    meta("pinned", { external: true, pinned: true }),
+    meta("settled", { external: true, settledAt: NOW - HOUR }),
+    meta("snoozed", { external: true, snoozedUntil: NOW + HOUR }),
+  ])
+  assert.deepEqual(groups.pinned.map((entry) => entry.id), ["pinned"])
+  assert.equal(groups.settled.total, 1)
+  assert.equal(groups.snoozed.total, 1)
+  assert.equal(groups.agents.total, 0)
+})
+
+test("a folded Agents shelf still says it is running and keeps a question out", () => {
+  const sessions = [
+    meta("busy", { external: true }),
+    meta("asking", { external: true }),
+    meta("quiet", { external: true }),
+  ]
+  const groups = groupSessions(
+    sessions,
+    [item("busy", { status: "streaming" }), item("asking"), item("quiet")],
+    { now: NOW, attention: ["asking"] }
+  )
+  assert.equal(groups.agents.running, true)
+  assert.deepEqual(
+    groups.agents.items.map((entry) => entry.id),
+    ["asking"]
+  )
+  // Only this shelf lifts a question out of the fold.
+  assert.equal(groups.settled.running, false)
 })
 
 test("a shelf remembers its fold under a key of its own", () => {

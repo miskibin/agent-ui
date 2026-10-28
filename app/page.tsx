@@ -304,6 +304,7 @@ export default function ChatPage() {
     settleChat,
     snoozeChat,
     wakeChat,
+    adoptChat,
     markVisited,
   } = useChatActions({
     refs,
@@ -432,6 +433,7 @@ export default function ChatPage() {
     choosePermission,
     autoTitle: settings?.chat.autoTitle,
     patchLocal,
+    adoptChat,
     setSessions,
     setActiveId,
     setThreads,
@@ -546,6 +548,7 @@ export default function ChatPage() {
     folderGroups,
     sessionMenuActions,
     sessionRowActions,
+    agentsShelf,
     snoozedShelf,
     settledShelf,
     showMoreOnShelf,
@@ -567,6 +570,7 @@ export default function ChatPage() {
     onSnooze: snoozeChat,
     onWake: wakeChat,
     onMarkVisited: markVisited,
+    onAdopt: adoptChat,
   })
 
   const { paletteActions, paletteSessions } = useCommandPalette({
@@ -868,11 +872,13 @@ export default function ChatPage() {
           sessionItems={sessionItems}
           pinnedItems={pinnedItems}
           folderGroups={folderGroups}
+          agentsShelf={agentsShelf}
           snoozedShelf={snoozedShelf}
           settledShelf={settledShelf}
           onShelfShowMore={showMoreOnShelf}
           onSettle={settleChat}
           onWake={wakeChat}
+          onAdopt={adoptChat}
           activeId={activeId}
           sessionsLoaded={sessionsLoaded}
           sessionsRef={sessionsRef}

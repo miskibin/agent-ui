@@ -91,6 +91,7 @@ export function useChatTurns({
   choosePermission,
   autoTitle,
   patchLocal,
+  adoptChat,
   setSessions,
   setActiveId,
   setThreads,
@@ -123,6 +124,8 @@ export function useChatTurns({
   choosePermission: (mode: PermissionMode) => void
   autoTitle: boolean | undefined
   patchLocal: (id: string, patch: Partial<SessionMeta>) => void
+  /** Typing into an outside agent's chat makes it yours — see `use-chat-actions`. */
+  adoptChat: (id: string) => void
   setSessions: React.Dispatch<React.SetStateAction<SessionMeta[]>>
   setActiveId: React.Dispatch<React.SetStateAction<string>>
   setThreads: React.Dispatch<
@@ -166,6 +169,7 @@ export function useChatTurns({
       // it runs with the agent its own chat remembers, not the one on screen.
       const target = sessionsRef.current.find((item) => item.id === sessionId)
       const detached = !!targetId && targetId !== activeIdRef.current && !!target
+      if (target?.external) adoptChat(sessionId)
       const runProvider = detached ? target.providerId : providerId
       const runModel = detached ? target.model : model
       /**
@@ -401,6 +405,7 @@ export function useChatTurns({
       abortsRef,
       activeId,
       activeIdRef,
+      adoptChat,
       autoTitle,
       capabilities?.effort,
       capabilities?.vision,

@@ -481,7 +481,14 @@ one interface:
   sidebar under its parent (`nestUnderParents`), says Working, streams through the same reducer,
   and Stop stops it (`DELETE`). The page's own unmount aborts with `PAGE_GONE`, which only stops
   *watching*: a reload must not kill a run the server owns, and the snapshot re-attaches it. The
-  prompt is stored with `metadata.subagentOf` — another agent wrote it, not the user. `bin/agent-ui.mjs` is the CLI over the same tools, and
+  prompt is stored with `metadata.subagentOf` — another agent wrote it, not the user. A run with no parent here — `agent-ui run`, or a Claude Code session on
+  `agent-ui mcp` — creates its chat with `SessionMeta.external`, and the sidebar keeps those on a
+  folded **Agents** shelf under the folder sections (`lib/session-groups`) rather than letting a
+  batch of CLI runs reshuffle the folders the user is working in: the header pulses while one is
+  running, a row waiting on an answer stays out of the fold, and each row names its folder.
+  Typing into one, "Move to <folder>" on its menu, or dragging it onto its folder adopts it
+  (`adoptChat`, `PATCH { external: false }`, quiet — it does not jump to the top). Only the run
+  registry can set the flag; `POST /api/sessions` cannot. `bin/agent-ui.mjs` is the CLI over the same tools, and
   `agent-ui mcp` is a stdio proxy for a Claude Code run outside the app: the desktop port changes
   every launch, and the proxy re-reads `bridge.json` per message.
 - Generative views (vendored `components/ui/generative-view.tsx`, `lib/generative-view.ts`):

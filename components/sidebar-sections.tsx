@@ -161,7 +161,7 @@ export const SidebarFolderSection = React.memo(function SidebarFolderSection({
 })
 
 /**
- * One shelf — Snoozed or Settled — under the folder sections.
+ * One shelf — Agents, Snoozed or Settled — under the folder sections.
  *
  * Two things it does that a folder section does not. It pages: history should
  * not be able to push live work off the screen, so the shelf renders ten rows
@@ -215,6 +215,9 @@ export const SidebarShelfSection = React.memo(function SidebarShelfSection({
         open={open}
         onToggle={toggle}
         rule
+        // Only the Agents shelf can hold a running chat; the dot is how a
+        // folded one still says that something on it is working.
+        live={shelf.running}
         count={shelf.total}
       >
         {rows}
