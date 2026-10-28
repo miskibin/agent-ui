@@ -1,7 +1,11 @@
 import { FlaskConical, MessageSquare, type LucideIcon } from "lucide-react"
 import * as React from "react"
 
-import { BRAND_COLOR_MARKS, BRAND_MARKS } from "@/components/brand-marks"
+import {
+  BRAND_COLOR_MARKS,
+  BRAND_MARKS,
+  type BrandMarkNode,
+} from "@/components/brand-marks"
 import { harnessBrand, modelBrand, sourceBrand } from "@/lib/model-brand"
 import { cn } from "@/lib/utils"
 
@@ -37,14 +41,9 @@ export function ProviderLogo({
         aria-hidden="true"
         data-brand={slug}
         className={cn("size-4 shrink-0", className)}
-        // Built by the generator from an allow-list of elements and
-        // attributes; nothing in it comes from a user or the network.
-        dangerouslySetInnerHTML={{
-          __html: color.includes("__ID__")
-            ? color.replaceAll("__ID__", `${id}-`)
-            : color,
-        }}
-      />
+      >
+        {renderMark(color, `${id}-`, "0")}
+      </svg>
     )
   }
 
@@ -78,6 +77,26 @@ export function ProviderLogo({
   }
 
   return null
+}
+
+/**
+ * One node of a colour mark as an element, `__ID__` swapped for this
+ * instance's prefix wherever it appears (an `id`, a `url(#…)`).
+ */
+function renderMark(
+  [tag, props, ...children]: BrandMarkNode,
+  prefix: string,
+  key: string
+): React.ReactElement {
+  const own: Record<string, string> = { key }
+  for (const [name, value] of Object.entries(props)) {
+    own[name] = value.includes("__ID__") ? value.replaceAll("__ID__", prefix) : value
+  }
+  return React.createElement(
+    tag,
+    own,
+    ...children.map((child, index) => renderMark(child, prefix, String(index)))
+  )
 }
 
 /** True when a mark exists for the slug. */

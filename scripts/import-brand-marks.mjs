@@ -8,26 +8,28 @@
  *
  *   node scripts/import-brand-marks.mjs
  *
- * The package is fetched with `npm pack` into a temporary folder, so nothing
- * is added to the app's dependencies. Adding a mark is one slug in CURATED
+ * The package tarball is fetched from the npm registry and read in memory —
+ * no subprocess, no temporary folder, nothing added to the app's dependencies. Adding a mark is one slug in CURATED
  * plus a rerun; which model or harness resolves to it lives in
  * `lib/model-brand.ts`.
  *
- * A colour mark is rebuilt from an allow-list of elements and attributes rather
- * than copied, because the page injects it as markup. Its gradient ids become
+ * A colour mark is rebuilt as an element tree — `[tag, props, ...children]`,
+ * from an allow-list of elements and attributes, props already in React's
+ * spelling — so the page renders elements and never injects markup. Its
+ * gradient ids become
  * `__ID__<n>` for the renderer to make unique per instance, and pure black
  * becomes `currentColor` — black ink on a dark theme is no mark at all.
  */
 
-import { execFileSync } from "node:child_process"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { writeFile } from "node:fs/promises"
 import { dirname, join } from "node:path"
 import { fileURLToPath } from "node:url"
+import { gunzipSync } from "node:zlib"
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..")
 const OUT = join(ROOT, "components/brand-marks.ts")
 const PACKAGE = "@lobehub/icons-static-svg"
+const REGISTRY = "https://registry.npmjs.org"
 
 /** Model families, then model sources, then harnesses. */
 const CURATED = [
@@ -99,16 +101,20 @@ function parseColor(slug, svg) {
   const ids = new Map()
   for (const [, id] of body.matchAll(/\bid="([^"]+)"/g)) ids.set(id, `__ID__${ids.size}`)
 
-  let out = ""
+  // The root's own paint moves onto a group; unpainted shapes take the ink.
+  const group = { fill: root.fill && !BLACK.test(root.fill) ? root.fill : "currentColor" }
+  if (root["fill-rule"]) group.fillRule = root["fill-rule"]
+  const tree = ["g", group]
+  const stack = [tree]
   for (const [token, close, tag, rest, selfClose] of body.matchAll(
     /<(\/?)([a-zA-Z]+)([^>]*?)(\/?)>/g
   )) {
     if (!COLOR_ELEMENTS.has(tag)) throw new Error(`${slug}-color: <${tag}> in ${token}`)
     if (close) {
-      out += `</${tag}>`
+      if (stack.pop()?.[0] !== tag) throw new Error(`${slug}-color: unbalanced </${tag}>`)
       continue
     }
-    let element = `<${tag}`
+    const props = {}
     for (const [name, raw] of Object.entries(attrs(rest))) {
       if (!COLOR_ATTRIBUTES.has(name)) throw new Error(`${slug}-color: ${name}=`)
       let value = raw
@@ -118,37 +124,57 @@ function parseColor(slug, svg) {
         return `url(#${ids.get(id)})`
       })
       if ((name === "fill" || name === "stop-color") && BLACK.test(value)) value = "currentColor"
-      if (/[<>"&]/.test(value)) throw new Error(`${slug}-color: ${name}="${value}"`)
-      element += ` ${name}="${value}"`
+      props[name.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = value
     }
-    out += element + (selfClose ? "/>" : ">")
+    const node = [tag, props]
+    stack.at(-1).push(node)
+    if (!selfClose) stack.push(node)
   }
-  // The root's own paint moves onto a group; unpainted shapes take the ink.
-  const fill = root.fill && !BLACK.test(root.fill) ? root.fill : "currentColor"
-  const rule = root["fill-rule"] ? ` fill-rule="${root["fill-rule"]}"` : ""
-  return `<g fill="${fill}"${rule}>${out}</g>`
+  if (stack.length !== 1) throw new Error(`${slug}-color: unclosed element`)
+  return tree
 }
 
-const work = await mkdtemp(join(tmpdir(), "brand-marks-"))
-try {
-  const tarball = execFileSync("npm", ["pack", PACKAGE, "--silent"], {
-    cwd: work,
-    encoding: "utf8",
-  }).trim()
-  execFileSync("tar", ["xzf", tarball], { cwd: work })
-  const version = JSON.parse(await readFile(join(work, "package/package.json"), "utf8")).version
+/** A ustar archive's regular files, by path. Enough of tar for an npm tarball. */
+function untar(archive) {
+  const files = new Map()
+  for (let offset = 0; offset + 512 <= archive.length; ) {
+    const header = archive.subarray(offset, offset + 512)
+    const name = header.subarray(0, 100).toString("utf8").replace(/\0.*$/s, "")
+    if (!name) break
+    const prefix = header.subarray(345, 500).toString("utf8").replace(/\0.*$/s, "")
+    const size = parseInt(header.subarray(124, 136).toString("utf8").trim() || "0", 8)
+    const type = String.fromCharCode(header[156] || 48)
+    const body = archive.subarray(offset + 512, offset + 512 + size)
+    if (type === "0") files.set(prefix ? `${prefix}/${name}` : name, body.toString("utf8"))
+    offset += 512 + Math.ceil(size / 512) * 512
+  }
+  return files
+}
 
-  const icons = join(work, "package/icons")
+async function fetchPackage() {
+  const meta = await fetch(`${REGISTRY}/${PACKAGE}/latest`)
+  if (!meta.ok) throw new Error(`${PACKAGE}: registry answered ${meta.status}`)
+  const { version, dist } = await meta.json()
+  const tarball = await fetch(dist.tarball)
+  if (!tarball.ok) throw new Error(`${PACKAGE}: tarball answered ${tarball.status}`)
+  return { version, files: untar(gunzipSync(Buffer.from(await tarball.arrayBuffer()))) }
+}
+
+{
+  const { version, files } = await fetchPackage()
+  const icon = (name) => files.get(`package/icons/${name}`) ?? null
+
   const entries = []
   const colorEntries = []
   for (const slug of CURATED) {
-    const color = await readFile(join(icons, `${slug}-color.svg`), "utf8").catch(() => null)
+    const color = icon(`${slug}-color.svg`)
     if (color) {
       const title = color.match(/<title>(.*?)<\/title>/)?.[1] ?? slug
       colorEntries.push(`  // ${title}\n  ${slug}:\n    ${JSON.stringify(parseColor(slug, color))},`)
       continue
     }
-    const svg = await readFile(join(icons, `${slug}.svg`), "utf8")
+    const svg = icon(`${slug}.svg`)
+    if (!svg) throw new Error(`${slug}: no such icon in ${PACKAGE}@${version}`)
     const { title, paths } = parse(slug, svg)
     const body = paths.map((p) => `    ${JSON.stringify(p)},`).join("\n")
     entries.push(`  // ${title}\n  ${slug}: [\n${body}\n  ],`)
@@ -170,17 +196,22 @@ export const BRAND_MARKS: Record<string, readonly BrandMarkPath[]> = {
 ${entries.join("\n")}
 }
 
+/** \`[tag, props, ...children]\`, props in React's spelling. */
+export type BrandMarkNode = readonly [
+  tag: string,
+  props: Readonly<Record<string, string>>,
+  ...children: BrandMarkNode[],
+]
+
 /**
- * Brands in their own colours: the inside of a 24x24 \`<svg>\`, rebuilt from an
- * allow-list of elements and attributes. \`__ID__\` prefixes every gradient id
- * so each instance on a page can make its own unique.
+ * Brands in their own colours: what goes inside a 24x24 \`<svg>\`, rebuilt
+ * from an allow-list of elements and attributes. \`__ID__\` prefixes every
+ * gradient id so each instance on a page can make its own unique.
  */
-export const BRAND_COLOR_MARKS: Record<string, string> = {
+export const BRAND_COLOR_MARKS: Record<string, BrandMarkNode> = {
 ${colorEntries.join("\n")}
 }
 `
   )
   console.log(`wrote ${colorEntries.length} colour and ${entries.length} monochrome marks to ${OUT}`)
-} finally {
-  await rm(work, { recursive: true, force: true })
 }
