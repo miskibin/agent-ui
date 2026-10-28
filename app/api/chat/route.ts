@@ -2,6 +2,7 @@ import { NextResponse } from "next/server"
 
 import type { MessageAttachmentData } from "@/components/ui/message"
 import { base64FromDataUrl, sanitizeAttachments } from "@/lib/attachments"
+import { replayHistory } from "@/lib/conversation-replay"
 import type { AgentTokenUsage } from "@/lib/cursor-agent-types"
 import { createToolJournal, userJournalText } from "@/lib/handoff/journal"
 import { commitTurn, prepareTurn } from "@/lib/handoff/server"
@@ -38,10 +39,6 @@ export const runtime = "nodejs"
 // Vercel's hobby plan caps serverless maxDuration at 60s.
 export const maxDuration = 60
 export const dynamic = "force-dynamic"
-
-const MAX_REPLAY_MESSAGES = 200
-const MAX_REPLAY_CHARACTERS = 512_000
-const MAX_REPLAY_IMAGE_CHARACTERS = 16 * 1024 * 1024
 
 type ChatBody = {
   prompt?: string
@@ -162,14 +159,6 @@ export async function POST(req: Request) {
     ...(shouldTitle ? { title: deriveSessionTitle(prompt) } : null),
   })
 
-  // Providers that resume server-side get the id; stateless ones get the
-  // transcript replayed instead — images included, so a vision model keeps
-  // seeing what was attached earlier in the thread.
-  const history: ChatTurn[] | undefined =
-    info.capabilities.resume && !info.capabilities.historyOnFreshSession
-      ? undefined
-      : replayHistory(prior, info.capabilities.vision)
-
   const startedAt = Date.now()
   let assistant = seedAssistantMessage(body.assistantMessageId || newId())
   let durationMs: number | undefined
@@ -209,6 +198,22 @@ export async function POST(req: Request) {
     enabled: settings.handoff.enabled,
   })
   let providerSessionId = prepared.resumeSessionId
+
+  // Providers that resume server-side get the id; stateless ones get the
+  // transcript replayed instead — images included, so a vision model keeps
+  // seeing what was attached earlier in the thread.
+  //
+  // A resumable one with *no* session to resume gets it too: a turn stopped
+  // before the backend minted an id, a repointed folder or a switched
+  // permission mode all leave the next turn on a fresh backend conversation
+  // that has never seen the chat, and "continue" then reads as the first
+  // message ever sent.
+  const history: ChatTurn[] | undefined =
+    info.capabilities.resume &&
+    !info.capabilities.historyOnFreshSession &&
+    prepared.resumeSessionId
+      ? undefined
+      : replayHistory(prior, info.capabilities.vision)
 
   /**
    * Standing context for this turn: the generative-view vocabulary, when
@@ -492,50 +497,6 @@ function allowedPermissionMode(
   return (offered ?? []).includes(mode as PermissionMode)
     ? (mode as PermissionMode)
     : undefined
-}
-
-/**
- * Durable history and model context are separate budgets. Stateless providers
- * get the newest useful window instead of serializing an unbounded transcript
- * (and every historical base64 image) into each new request.
- */
-function replayHistory(messages: StoredMessage[], vision: boolean): ChatTurn[] {
-  const selected: ChatTurn[] = []
-  let characters = 0
-  let imageCharacters = 0
-
-  for (let index = messages.length - 1; index >= 0; index--) {
-    const message = messages[index]
-    if (!message.content.trim() && !message.attachments?.length) continue
-    if (selected.length >= MAX_REPLAY_MESSAGES) break
-    if (
-      selected.length > 0 &&
-      characters + message.content.length > MAX_REPLAY_CHARACTERS
-    ) {
-      break
-    }
-
-    const images: string[] = []
-    if (vision) {
-      for (const attachment of message.attachments ?? []) {
-        const image = base64FromDataUrl(attachment.url)
-        if (imageCharacters + image.length > MAX_REPLAY_IMAGE_CHARACTERS) break
-        imageCharacters += image.length
-        images.push(image)
-      }
-    }
-
-    characters += message.content.length
-    selected.push({
-      role: message.sender === "user" ? "user" : "assistant",
-      content: message.content,
-      ...(images.length ? { images } : null),
-    })
-  }
-
-  selected.reverse()
-  while (selected[0]?.role === "assistant") selected.shift()
-  return selected
 }
 
 /** Only the counters the backend actually reported make it into the record. */
