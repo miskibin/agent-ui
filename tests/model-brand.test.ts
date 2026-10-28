@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import { BRAND_MARKS } from "@/components/brand-marks"
+import { BRAND_COLOR_MARKS, BRAND_MARKS as MONO_MARKS } from "@/components/brand-marks"
+
+const BRAND_MARKS = { ...MONO_MARKS, ...BRAND_COLOR_MARKS }
 import { harnessBrand, modelBrand, modelFamily, sourceBrand } from "@/lib/model-brand"
 
 /**

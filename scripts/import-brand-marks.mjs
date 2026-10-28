@@ -1,15 +1,22 @@
 #!/usr/bin/env node
 /**
- * Regenerates `components/brand-marks.ts` from the monochrome icons of
- * `@lobehub/icons-static-svg` (MIT, https://github.com/lobehub/lobe-icons).
+ * Regenerates `components/brand-marks.ts` from `@lobehub/icons-static-svg`
+ * (MIT, https://github.com/lobehub/lobe-icons): a brand's colour variant where
+ * the package has one, its monochrome mark where it does not — OpenAI, Ollama
+ * or Cursor are black-and-white brands, and their mark is drawn in
+ * `currentColor` so it follows the theme.
  *
  *   node scripts/import-brand-marks.mjs
  *
  * The package is fetched with `npm pack` into a temporary folder, so nothing
  * is added to the app's dependencies. Adding a mark is one slug in CURATED
  * plus a rerun; which model or harness resolves to it lives in
- * `lib/model-brand.ts`. Only the path data is kept — every mark is a 24x24
- * `currentColor` drawing with `fill-rule="evenodd"`, so the theme colours it.
+ * `lib/model-brand.ts`.
+ *
+ * A colour mark is rebuilt from an allow-list of elements and attributes rather
+ * than copied, because the page injects it as markup. Its gradient ids become
+ * `__ID__<n>` for the renderer to make unique per instance, and pure black
+ * becomes `currentColor` — black ink on a dark theme is no mark at all.
  */
 
 import { execFileSync } from "node:child_process"
@@ -70,6 +77,58 @@ function parse(slug, svg) {
   return { title, paths }
 }
 
+const COLOR_ELEMENTS = new Set([
+  "g", "path", "circle", "ellipse", "rect", "defs", "linearGradient",
+  "radialGradient", "stop",
+])
+const COLOR_ATTRIBUTES = new Set([
+  "d", "fill", "fill-rule", "clip-rule", "fill-opacity", "opacity", "stroke",
+  "stroke-width", "cx", "cy", "r", "rx", "ry", "x", "y", "width", "height",
+  "x1", "x2", "y1", "y2", "fx", "fy", "offset", "stop-color", "stop-opacity",
+  "gradientUnits", "gradientTransform", "transform", "id",
+])
+const BLACK = /^#(?:000|000000)$/i
+
+function parseColor(slug, svg) {
+  const root = attrs(svg.match(/<svg([^>]*)>/)?.[1] ?? "")
+  if (root.viewBox !== "0 0 24 24") throw new Error(`${slug}-color: expected 24x24`)
+  const body = svg
+    .replace(/^[\s\S]*?<svg[^>]*>/, "")
+    .replace(/<\/svg>\s*$/, "")
+    .replace(/<title>[\s\S]*?<\/title>/, "")
+  const ids = new Map()
+  for (const [, id] of body.matchAll(/\bid="([^"]+)"/g)) ids.set(id, `__ID__${ids.size}`)
+
+  let out = ""
+  for (const [token, close, tag, rest, selfClose] of body.matchAll(
+    /<(\/?)([a-zA-Z]+)([^>]*?)(\/?)>/g
+  )) {
+    if (!COLOR_ELEMENTS.has(tag)) throw new Error(`${slug}-color: <${tag}> in ${token}`)
+    if (close) {
+      out += `</${tag}>`
+      continue
+    }
+    let element = `<${tag}`
+    for (const [name, raw] of Object.entries(attrs(rest))) {
+      if (!COLOR_ATTRIBUTES.has(name)) throw new Error(`${slug}-color: ${name}=`)
+      let value = raw
+      if (name === "id") value = ids.get(raw)
+      value = value.replace(/url\(#([^)]+)\)/g, (_, id) => {
+        if (!ids.has(id)) throw new Error(`${slug}-color: unknown url(#${id})`)
+        return `url(#${ids.get(id)})`
+      })
+      if ((name === "fill" || name === "stop-color") && BLACK.test(value)) value = "currentColor"
+      if (/[<>"&]/.test(value)) throw new Error(`${slug}-color: ${name}="${value}"`)
+      element += ` ${name}="${value}"`
+    }
+    out += element + (selfClose ? "/>" : ">")
+  }
+  // The root's own paint moves onto a group; unpainted shapes take the ink.
+  const fill = root.fill && !BLACK.test(root.fill) ? root.fill : "currentColor"
+  const rule = root["fill-rule"] ? ` fill-rule="${root["fill-rule"]}"` : ""
+  return `<g fill="${fill}"${rule}>${out}</g>`
+}
+
 const work = await mkdtemp(join(tmpdir(), "brand-marks-"))
 try {
   const tarball = execFileSync("npm", ["pack", PACKAGE, "--silent"], {
@@ -79,9 +138,17 @@ try {
   execFileSync("tar", ["xzf", tarball], { cwd: work })
   const version = JSON.parse(await readFile(join(work, "package/package.json"), "utf8")).version
 
+  const icons = join(work, "package/icons")
   const entries = []
+  const colorEntries = []
   for (const slug of CURATED) {
-    const svg = await readFile(join(work, "package/icons", `${slug}.svg`), "utf8")
+    const color = await readFile(join(icons, `${slug}-color.svg`), "utf8").catch(() => null)
+    if (color) {
+      const title = color.match(/<title>(.*?)<\/title>/)?.[1] ?? slug
+      colorEntries.push(`  // ${title}\n  ${slug}:\n    ${JSON.stringify(parseColor(slug, color))},`)
+      continue
+    }
+    const svg = await readFile(join(icons, `${slug}.svg`), "utf8")
     const { title, paths } = parse(slug, svg)
     const body = paths.map((p) => `    ${JSON.stringify(p)},`).join("\n")
     entries.push(`  // ${title}\n  ${slug}: [\n${body}\n  ],`)
@@ -95,13 +162,25 @@ try {
 /** One path of a mark: its \`d\`, or \`[d, fillOpacity]\`. */
 export type BrandMarkPath = string | readonly [string, number]
 
-/** 24x24 \`currentColor\` path data, drawn with \`fill-rule="evenodd"\`. */
+/**
+ * Monochrome brands: 24x24 \`currentColor\` path data, drawn with
+ * \`fill-rule="evenodd"\`.
+ */
 export const BRAND_MARKS: Record<string, readonly BrandMarkPath[]> = {
 ${entries.join("\n")}
 }
+
+/**
+ * Brands in their own colours: the inside of a 24x24 \`<svg>\`, rebuilt from an
+ * allow-list of elements and attributes. \`__ID__\` prefixes every gradient id
+ * so each instance on a page can make its own unique.
+ */
+export const BRAND_COLOR_MARKS: Record<string, string> = {
+${colorEntries.join("\n")}
+}
 `
   )
-  console.log(`wrote ${CURATED.length} marks to ${OUT}`)
+  console.log(`wrote ${colorEntries.length} colour and ${entries.length} monochrome marks to ${OUT}`)
 } finally {
   await rm(work, { recursive: true, force: true })
 }

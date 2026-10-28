@@ -206,11 +206,11 @@ export function useSidebarItems({
                 <AgentLabel
                   providerId={session.providerId}
                   providerName={providerName(session.providerId)}
-                  model={session.model}
                   modelName={
                     session.providerId === providerId
-                      ? models.find((m) => m.id === session.model)?.name
-                      : undefined
+                      ? (models.find((m) => m.id === session.model)?.name ??
+                        session.model)
+                      : session.model
                   }
                 />
               )
