@@ -25,6 +25,7 @@ import {
 import type { GenerationStage } from "@/components/ui/generation-status"
 import type { ModelOption } from "@/components/ui/model-picker"
 import { RelativeTime } from "@/components/live-time"
+import { AgentLabel } from "@/components/provider-logo"
 import {
   SIDEBAR_ROW_ACTION,
   SnoozeAction,
@@ -202,17 +203,22 @@ export function useSidebarItems({
             // what answered in it.
             session.messageCount === 0
             ? "New chat"
-            : [
-                // Filed under the chat whose agent started it.
-                session.parentId ? "Subagent" : "",
-                providerName(session.providerId),
-                session.providerId === providerId
-                  ? (models.find((m) => m.id === session.model)?.name ??
-                    session.model)
-                  : session.model,
-              ]
-                .filter(Boolean)
-                .join(" · ")
+            : (
+                <>
+                  {/* Filed under the chat whose agent started it. */}
+                  {session.parentId ? "Subagent · " : null}
+                  <AgentLabel
+                    providerId={session.providerId}
+                    providerName={providerName(session.providerId)}
+                    modelName={
+                      session.providerId === providerId
+                        ? (models.find((m) => m.id === session.model)?.name ??
+                          session.model)
+                        : session.model
+                    }
+                  />
+                </>
+              )
         // Three colours and no more: amber for a chat waiting on an answer,
         // the app's own for one that is working, destructive for one that
         // broke. A chat asking a question outranks one that is merely busy.

@@ -174,6 +174,7 @@ export default function ChatPage() {
     showEfforts,
     activeProviderName,
     pickerGroups,
+    pickerModels,
   } = config
 
   const {
@@ -778,7 +779,7 @@ export default function ChatPage() {
             <ModelPicker
               value={model}
               onChange={chooseModel}
-              options={models}
+              options={pickerModels}
               /* One section is just the flat list with a heading over it. */
               groups={pickerGroups.length > 1 ? pickerGroups : undefined}
               efforts={showEfforts ? DEFAULT_MODEL_EFFORTS : false}
@@ -847,10 +848,10 @@ export default function ChatPage() {
       isGenerating,
       lastTurnFinishedAt,
       model,
-      models,
       pendingBanner,
       permissionModes,
       pickerGroups,
+      pickerModels,
       providerId,
       providers,
       queueItems,
