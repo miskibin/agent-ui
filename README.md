@@ -8,6 +8,7 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 [![CI](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/ci.yml)
 [![Desktop](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml/badge.svg)](https://github.com/miskibin/agent-ui/actions/workflows/desktop.yml)
 
+[Website](https://miskibin.github.io/agent-ui/) ·
 [Download for Windows](https://github.com/miskibin/agent-ui/releases/latest) ·
 [Chat Components](https://github.com/miskibin/chat-components)
 
