@@ -212,7 +212,8 @@ export async function POST(req: Request) {
 
   /**
    * Standing context for this turn: the generative-view vocabulary, when
-   * `chat.generativeViews` is on, then the user's memory, when that is.
+   * `chat.generativeViews` is on and a person is the reader (not a subagent
+   * run), then the user's memory, when that is.
    *
    * Backends that resume server-side get it only on the first turn of their
    * conversation: they already hold everything sent before, so re-sending the
@@ -235,9 +236,13 @@ export async function POST(req: Request) {
               ? "files"
               : "none",
       })
+  // A prompt another agent wrote (`subagentOf`, set by the MCP/CLI runner) is
+  // answered to that agent, not to a person: a ```ui fence is noise in its
+  // context, so the vocabulary is withheld there.
+  const showViews = settings.chat.generativeViews && !body.subagentOf
   const standingContext = resumed
     ? undefined
-    : [settings.chat.generativeViews ? VIEW_SPEC_PROMPT : "", memoryContext ?? ""]
+    : [showViews ? VIEW_SPEC_PROMPT : "", memoryContext ?? ""]
         .filter(Boolean)
         .join("\n\n") || undefined
 
