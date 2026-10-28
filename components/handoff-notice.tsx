@@ -12,11 +12,10 @@ import { cn } from "@/lib/utils"
  * the conversation, attached to the answer it explains, and the vendored list
  * stays untouched.
  *
- * The same stance as `memory-notice`, for the same reason: something was
- * silently added to a prompt, and the user should be able to scroll back,
- * find the moment, and read the exact text the agent was sent. It is a
- * sibling of that marker, not a copy of it — memory is durable and about the
- * user, this is ephemeral and about the other agents in this chat.
+ * Something was silently added to a prompt, and the user should be able to
+ * scroll back, find the moment, and read the exact text the agent was sent.
+ * Unlike memory, which is durable and about the user, this is ephemeral and
+ * about the other agents in this chat.
  */
 export const HandoffNotice = React.memo(function HandoffNotice({
   handoff,

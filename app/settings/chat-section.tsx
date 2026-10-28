@@ -102,6 +102,23 @@ export function ChatSection({ settings, loaded, update }: AppSettingsApi) {
       />
 
       <SettingsRow
+        title="Helper model"
+        htmlFor="chat-helper-model"
+        description="Writes chat titles and commit messages when the chat runs on a CLI agent, whose model the app cannot call directly. An Ollama tag (qwen3:4b) or a provider model (openai/gpt-5-mini)."
+        control={
+          <Input
+            id="chat-helper-model"
+            value={chat.helperModel}
+            onChange={(event) => setChat({ helperModel: event.target.value })}
+            onBlur={() => setChat({ helperModel: chat.helperModel.trim() })}
+            placeholder="None"
+            spellCheck={false}
+            className="h-8 w-52 font-mono text-[12px]"
+          />
+        }
+      />
+
+      <SettingsRow
         title="Notification sounds"
         htmlFor="chat-notification-sounds"
         description="Play a sound when an agent finishes or asks a question."

@@ -6,75 +6,56 @@ import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Slider } from "@/components/ui/slider"
 import { Switch } from "@/components/ui/switch"
-import * as api from "@/lib/api-client"
 import {
-  DEFAULT_MEMORY_CATEGORIES,
-  isValidMemoryCategory,
-  memoryFactLines,
-  memoryTitleFrom,
-  toMemoryCategoryId,
-  withMemoryHeading,
+  isValidMemoryName,
+  MAX_MEMORY_DESCRIPTION_CHARS,
+  MAX_MEMORY_FILE_CHARS,
+  MAX_MEMORY_FILES,
+  memoryLines,
+  SUGGESTED_MEMORY_FILES,
+  toMemoryName,
   type MemoryFile,
 } from "@/lib/memory/types"
-import {
-  DEFAULT_MEMORY_EMBED_MODEL,
-  MEMORY_BUDGET_RANGE,
-  type AppSettings,
-} from "@/lib/settings/schema"
+import { MEMORY_BUDGET_RANGE, type AppSettings } from "@/lib/settings/schema"
 import { cn } from "@/lib/utils"
 
 import { SettingsRow, SettingsSection } from "./section"
 import type { AppSettingsApi } from "./use-app-settings"
-import { useMemoryStore } from "./use-memory-store"
-
+import { useMemoryStore, type MemoryFileDraft } from "./use-memory-store"
 
 /** How long "Forget everything" stays armed before it disarms itself. */
 const CONFIRM_TIMEOUT = 5000
 
-function factCount(file: MemoryFile) {
-  return memoryFactLines(file.content).filter((line) => !line.startsWith("#"))
-    .length
-}
-
 /**
- * One category, collapsed to a summary until opened. Both the id and the body
- * are editable: the id is the file name, so changing it is how a fact gets
- * moved to a different category — the row writes the new file and drops the
- * old one in the same save.
+ * One topic file, collapsed to its description until opened. The name is
+ * editable too: it is the file name, so changing it renames the file.
  */
 function MemoryFileRow({
   file,
   busy,
   onSave,
-  onRename,
   onDelete,
 }: {
   file: MemoryFile
   busy: boolean
-  onSave: (category: string, content: string) => Promise<boolean>
-  onRename: (from: string, to: string, content: string) => Promise<boolean>
-  onDelete: (category: string) => void
+  onSave: (draft: MemoryFileDraft, previousName?: string) => Promise<boolean>
+  onDelete: (name: string) => void
 }) {
   const [open, setOpen] = React.useState(false)
-  const [draft, setDraft] = React.useState(file.content)
-  const [category, setCategory] = React.useState(file.category)
+  const [name, setName] = React.useState(file.name)
+  const [description, setDescription] = React.useState(file.description)
+  const [content, setContent] = React.useState(file.content)
 
-  // Reopening a row shows what is on disk now, not a stale draft from before
-  // an extraction pass rewrote the file underneath it.
+  // Reopening a row shows what is on disk now — an agent may have rewritten
+  // the file since the draft was taken.
   const reset = React.useCallback(() => {
-    setDraft(file.content)
-    setCategory(file.category)
-  }, [file.content, file.category])
+    setName(file.name)
+    setDescription(file.description)
+    setContent(file.content)
+  }, [file.name, file.description, file.content])
 
   const toggle = React.useCallback(() => {
     setOpen((current) => {
@@ -83,16 +64,21 @@ function MemoryFileRow({
     })
   }, [reset])
 
-  const dirty = draft !== file.content || category !== file.category
-  const renaming = category !== file.category
-  const idValid = isValidMemoryCategory(category)
+  const dirty =
+    name !== file.name || description !== file.description || content !== file.content
+  const valid =
+    isValidMemoryName(name) &&
+    description.trim().length > 0 &&
+    content.length <= MAX_MEMORY_FILE_CHARS
+  const lines = memoryLines(file.content).length
 
   const commit = React.useCallback(async () => {
-    const ok = renaming
-      ? await onRename(file.category, category, draft)
-      : await onSave(file.category, draft)
+    const ok = await onSave(
+      { name, description, content },
+      name !== file.name ? file.name : undefined
+    )
     if (ok) setOpen(false)
-  }, [renaming, onRename, onSave, file.category, category, draft])
+  }, [onSave, name, description, content, file.name])
 
   return (
     <div data-slot="memory-file" className="px-4 py-3">
@@ -109,15 +95,15 @@ function MemoryFileRow({
               open && "rotate-90"
             )}
           />
-          <span className="truncate text-[13px] font-medium text-foreground">
-            {file.title}
+          <span className="shrink-0 font-mono text-[12px] font-medium text-foreground">
+            {file.name}
           </span>
-          <span className="shrink-0 font-mono text-[11px] text-muted-foreground">
-            {file.category}
+          <span className="truncate text-[12px] text-muted-foreground">
+            {file.description}
           </span>
         </button>
         <span className="shrink-0 text-[11.5px] text-muted-foreground">
-          {factCount(file)} {factCount(file) === 1 ? "fact" : "facts"}
+          {lines} {lines === 1 ? "line" : "lines"}
         </span>
       </div>
 
@@ -125,42 +111,55 @@ function MemoryFileRow({
         <div className="mt-3 flex flex-col gap-2.5 pl-5.5">
           <div className="flex items-center gap-2">
             <label
-              htmlFor={`memory-category-${file.category}`}
-              className="text-[12px] text-muted-foreground"
+              htmlFor={`memory-name-${file.name}`}
+              className="w-20 shrink-0 text-[12px] text-muted-foreground"
             >
-              Category
+              Name
             </label>
             <Input
-              id={`memory-category-${file.category}`}
-              value={category}
-              /* Lower-cased as you type, but not slugged: `toMemoryCategoryId`
+              id={`memory-name-${file.name}`}
+              value={name}
+              /* Lower-cased as you type, but not slugged: `toMemoryName`
                  strips trailing dashes, which makes `my-notes` untypable. The
                  slug is applied on blur, once the name is finished. */
-              onChange={(event) => setCategory(event.target.value.toLowerCase())}
-              onBlur={() => setCategory(toMemoryCategoryId(category))}
-              aria-invalid={!idValid}
+              onChange={(event) => setName(event.target.value.toLowerCase())}
+              onBlur={() => setName(toMemoryName(name))}
+              aria-invalid={!isValidMemoryName(name)}
               className="h-8 w-56 font-mono text-[12px]"
             />
-            {renaming && idValid ? (
-              <span className="text-[11.5px] text-muted-foreground">
-                moves these facts to {category}.md
-              </span>
-            ) : null}
+          </div>
+          <div className="flex items-center gap-2">
+            <label
+              htmlFor={`memory-description-${file.name}`}
+              className="w-20 shrink-0 text-[12px] text-muted-foreground"
+            >
+              Description
+            </label>
+            <Input
+              id={`memory-description-${file.name}`}
+              value={description}
+              maxLength={MAX_MEMORY_DESCRIPTION_CHARS}
+              onChange={(event) => setDescription(event.target.value)}
+              aria-invalid={!description.trim()}
+              className="h-8 text-[12.5px]"
+            />
           </div>
 
           <textarea
-            value={draft}
-            onChange={(event) => setDraft(event.target.value)}
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
             spellCheck={false}
-            rows={Math.min(16, Math.max(5, draft.split("\n").length + 1))}
-            className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 font-mono text-[12px] leading-relaxed shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 dark:bg-input/30"
+            aria-label={`${file.name} contents`}
+            aria-invalid={content.length > MAX_MEMORY_FILE_CHARS}
+            rows={Math.min(16, Math.max(5, content.split("\n").length + 1))}
+            className="w-full resize-y rounded-md border border-input bg-transparent px-3 py-2 font-mono text-[12px] leading-relaxed shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-invalid:border-destructive dark:bg-input/30"
           />
 
           <div className="flex items-center gap-2">
             <Button
               type="button"
               size="sm"
-              disabled={busy || !dirty || !idValid}
+              disabled={busy || !dirty || !valid}
               onClick={() => void commit()}
               className="text-[12.5px]"
             >
@@ -179,12 +178,20 @@ function MemoryFileRow({
             >
               Cancel
             </Button>
+            <span
+              className={cn(
+                "font-mono text-[11px] tabular-nums text-muted-foreground",
+                content.length > MAX_MEMORY_FILE_CHARS && "text-destructive"
+              )}
+            >
+              {content.length}/{MAX_MEMORY_FILE_CHARS}
+            </span>
             <Button
               type="button"
               size="sm"
               variant="ghost"
               disabled={busy}
-              onClick={() => onDelete(file.category)}
+              onClick={() => onDelete(file.name)}
               className="ml-auto text-[12.5px] text-destructive hover:bg-destructive/10 hover:text-destructive"
             >
               <Trash2 />
@@ -199,11 +206,8 @@ function MemoryFileRow({
 
 export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
   const memory = settings.memory
-  const store = useMemoryStore(memory.enabled)
-  const [models, setModels] = React.useState<
-    { id: string; name: string }[] | null
-  >(null)
-  const [newCategory, setNewCategory] = React.useState("")
+  const store = useMemoryStore()
+  const [newName, setNewName] = React.useState("")
   // Same arm-then-confirm as Settings → Data: this shreds every note in one
   // click, and the files are the only copy.
   const [armed, setArmed] = React.useState(false)
@@ -223,106 +227,37 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
     [update]
   )
 
-  // The extraction model list is Ollama's, whatever the chat is pointed at —
-  // this step always runs locally.
-  React.useEffect(() => {
-    let cancelled = false
-    api
-      .fetchModels("ollama")
-      .then((res) => {
-        if (cancelled) return
-        // An embedding model cannot chat, so it is no extraction model.
-        setModels(
-          res.models
-            .filter(({ id }) => !/embed/i.test(id))
-            .map(({ id, name }) => ({ id, name }))
-        )
-      })
-      .catch(() => {
-        if (!cancelled) setModels([])
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
-  const addCategory = React.useCallback(async () => {
-    const id = toMemoryCategoryId(newCategory)
-    if (!isValidMemoryCategory(id)) {
+  const addFile = React.useCallback(async () => {
+    const name = toMemoryName(newName)
+    if (!isValidMemoryName(name)) {
       toast.error("Use lowercase letters, digits and dashes.")
       return
     }
-    if (store.files.some((file) => file.category === id)) {
-      toast.error(`"${id}" already exists.`)
+    if (store.files.some((file) => file.name === name)) {
+      toast.error(`"${name}" already exists.`)
       return
     }
-    const title = id
-      .split("-")
-      .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-      .join(" ")
-    const ok = await store.save(id, `# ${title}\n`)
-    if (ok) setNewCategory("")
-  }, [newCategory, store])
+    const suggested = SUGGESTED_MEMORY_FILES.find((entry) => entry.name === name)
+    const ok = await store.save({
+      name,
+      description: suggested?.description ?? name.replace(/-/g, " "),
+      content: "",
+    })
+    if (ok) setNewName("")
+  }, [newName, store])
 
-  const rename = React.useCallback(
-    async (from: string, to: string, content: string) => {
-      if (store.files.some((file) => file.category === to)) {
-        toast.error(`"${to}" already exists — merge them by hand instead.`)
-        return false
-      }
-      /* The heading is the category's display name, so it has to move with it;
-         left alone, `stack.md` renamed to `tooling` still reads "Stack" here
-         and in every prompt. */
-      const retitled = withMemoryHeading(content, memoryTitleFrom(to, ""))
-      if (!(await store.save(to, retitled))) return false
-      /* Write first, then drop the original — and only if the drop succeeds,
-         because a failed delete would leave the same facts under both names. */
-      if (!(await store.remove(from))) {
-        toast.error(`Renamed, but "${from}" is still there — delete it by hand.`)
-      }
-      return true
-    },
-    [store]
-  )
-
-  const status = store.status
-
-  /**
-   * Why memory would do nothing, said in the page's own terms. Composed from
-   * the settings this component holds — which are current — plus what only
-   * the server knows: whether Ollama answers and what it has pulled.
-   */
-  const blocker =
-    !memory.enabled || store.loading || !status
-      ? undefined
-      : !status.reachable
-        ? `Ollama isn't running at ${status.baseUrl || "an unset URL"} and couldn't be started, so memory is off — nothing is learned and nothing is sent. Start Ollama and it comes back on its own.`
-        : !memory.model
-          ? "No extraction model chosen, so nothing new is learned. The notes below are still used."
-          : !status.extractionInstalled && status.extractionModel === memory.model
-            ? `${memory.model} isn't pulled on this Ollama server — run \`ollama pull ${memory.model}\`.`
-            : undefined
-
-  const embedNote = !status?.reachable
-    ? undefined
-    : status.embed === "pulling"
-      ? "Downloading… until it lands, facts are matched by shared words."
-      : status.embed === "failed"
-        ? `Can't run here${status.embedError ? ` (${status.embedError})` : ""} — facts are matched by shared words instead.`
-        : status.embed === "missing"
-          ? "Not pulled yet — facts are matched by shared words until it is."
-          : "Ready."
+  const full = store.files.length >= MAX_MEMORY_FILES
 
   return (
     <SettingsSection
       id="memory"
       title="Memory"
-      description="Durable preferences carried into new conversations, extracted by a local model from what you type and recalled by relevance with a local embedding model."
+      description="A few markdown files about you that every agent is shown. The agent keeps them itself, like Claude Code does: it adds what you tell it to remember, updates the file a topic already lives in, and deletes what turns out wrong or outdated."
     >
       <SettingsRow
-        title="Remember preferences"
+        title="Remember across chats"
         htmlFor="memory-enabled"
-        description="Off by default. What is learned here is sent to every backend you chat with afterwards, including ones that never heard it."
+        description="Off by default. What is remembered here is sent to every backend you chat with afterwards, including ones that never heard it."
         control={
           loaded ? (
             <Switch
@@ -337,120 +272,37 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
       />
 
       {memory.enabled ? (
-        <>
-          <SettingsRow
-            title="Extraction model"
-            description="A small local model reads your messages after each turn and updates the notes. It never sees the agent's replies, tool calls, or any file."
-            control={
-              models === null ? (
-                <Skeleton className="h-8 w-52" />
-              ) : models.length === 0 ? (
-                <span className="text-[12px] text-muted-foreground">
-                  No Ollama models
-                </span>
-              ) : (
-                <Select
-                  value={memory.model}
-                  onValueChange={(model) => setMemory({ model })}
-                >
-                  <SelectTrigger size="sm" className="w-52 text-[12.5px]">
-                    <SelectValue placeholder="Choose a model" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {models.map((model) => (
-                      <SelectItem key={model.id} value={model.id}>
-                        {model.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              )
-            }
+        <SettingsRow
+          title="Per-turn budget"
+          description="Characters of file contents sent with a new conversation. The list of files is always sent; a file that does not fit is read on demand by agents that have tools."
+          control={
+            <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+              {store.bytes} stored · {memory.maxChars} per turn
+            </span>
+          }
+        >
+          <Slider
+            value={[memory.maxChars]}
+            min={MEMORY_BUDGET_RANGE.min}
+            max={MEMORY_BUDGET_RANGE.max}
+            step={500}
+            onValueChange={([maxChars]) => setMemory({ maxChars })}
+            aria-label="Memory characters per turn"
           />
-
-          <SettingsRow
-            title="Embedding model"
-            htmlFor="memory-embed"
-            description={`Ranks remembered facts against each message, so only the relevant ones are sent, and catches a fact that restates one already stored. Pulled automatically when missing.${embedNote ? ` ${embedNote}` : ""}`}
-            control={
-              <Input
-                id="memory-embed"
-                value={memory.embedModel}
-                onChange={(event) => setMemory({ embedModel: event.target.value })}
-                onBlur={() => {
-                  if (!memory.embedModel.trim()) {
-                    setMemory({ embedModel: DEFAULT_MEMORY_EMBED_MODEL })
-                  }
-                }}
-                spellCheck={false}
-                className="h-8 w-52 font-mono text-[12px]"
-              />
-            }
-          />
-
-          <SettingsRow
-            title="Update after every turn"
-            htmlFor="memory-auto"
-            description="Runs the extraction in the background once an answer settles. Off means the notes only change when you edit them here."
-            control={
-              <Switch
-                id="memory-auto"
-                checked={memory.autoUpdate}
-                onCheckedChange={(autoUpdate) => setMemory({ autoUpdate })}
-              />
-            }
-          />
-
-          <SettingsRow
-            title="Remember sensitive topics"
-            htmlFor="memory-sensitive"
-            description="Health, ethnicity, religion, politics and gender identity are skipped unless you turn this on. Identity numbers, payment details and credentials are never stored either way."
-            control={
-              <Switch
-                id="memory-sensitive"
-                checked={memory.includeSensitive}
-                onCheckedChange={(includeSensitive) =>
-                  setMemory({ includeSensitive })
-                }
-              />
-            }
-          />
-
-          <SettingsRow
-            title="Per-turn budget"
-            description="Characters of memory sent with each message. While everything fits, everything is sent; past that, the facts most relevant to the message fill it, and agents with file tools are told where the rest are."
-            control={
-              <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
-                {store.bytes} stored · {memory.maxChars} per turn
-              </span>
-            }
-          >
-            <Slider
-              value={[memory.maxChars]}
-              min={MEMORY_BUDGET_RANGE.min}
-              max={MEMORY_BUDGET_RANGE.max}
-              step={250}
-              onValueChange={([maxChars]) => setMemory({ maxChars })}
-              aria-label="Memory characters per turn"
-            />
-          </SettingsRow>
-        </>
+        </SettingsRow>
       ) : null}
 
       <SettingsRow
         title="What's remembered"
-        description={
-          store.dir
-            ? `One markdown file per category in ${store.dir}. Edit them freely — this is exactly what the agent is handed.`
-            : "One markdown file per category, editable here."
+        description={`${
+          store.dir ? `Files in ${store.dir}. ` : ""
+        }At most ${MAX_MEMORY_FILES} files of ${MAX_MEMORY_FILE_CHARS} characters, so memory stays a handful of current notes rather than a log. Claude Code edits them through the app's memory tools; other agents with file tools edit the files directly.`}
+        control={
+          <span className="font-mono text-[12px] text-muted-foreground tabular-nums">
+            {store.files.length}/{MAX_MEMORY_FILES} files
+          </span>
         }
-      >
-        {blocker ? (
-          <p className="rounded-md border border-dashed px-3 py-2 text-[12px] text-muted-foreground">
-            {blocker}
-          </p>
-        ) : null}
-      </SettingsRow>
+      />
 
       {store.loading ? (
         <div className="flex flex-col gap-2 px-4 py-3.5">
@@ -462,47 +314,47 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
           <p className="text-[12.5px] text-muted-foreground">
             Nothing remembered yet.{" "}
             {memory.enabled
-              ? "Notes appear here as you chat."
-              : "Turn memory on, or add a category below to write notes by hand."}
+              ? "Tell an agent something about how you work and it will save it."
+              : "Turn memory on, or add a file below to write notes by hand."}
           </p>
           <p className="mt-1.5 text-[11.5px] text-muted-foreground">
-            Suggested categories:{" "}
-            {DEFAULT_MEMORY_CATEGORIES.map((entry) => entry.category).join(", ")}.
+            Suggested files:{" "}
+            {SUGGESTED_MEMORY_FILES.map((entry) => entry.name).join(", ")}.
           </p>
         </div>
       ) : (
         store.files.map((file) => (
           <MemoryFileRow
-            key={file.category}
+            key={file.name}
             file={file}
-            busy={store.saving === file.category}
+            busy={store.saving === file.name}
             onSave={store.save}
-            onRename={rename}
             onDelete={store.remove}
           />
         ))
       )}
 
-      <SettingsRow title="Add a category">
+      <SettingsRow title="Add a file">
         <div className="flex items-center gap-2">
           <Input
-            value={newCategory}
-            onChange={(event) => setNewCategory(event.target.value)}
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
             onKeyDown={(event) => {
               if (event.key === "Enter") {
                 event.preventDefault()
-                void addCategory()
+                void addFile()
               }
             }}
-            placeholder="tone, deployment, editor…"
+            disabled={full}
+            placeholder={full ? "Limit reached — merge files first" : "preferences, stack, workflow…"}
             className="h-8 max-w-64 text-[12.5px]"
           />
           <Button
             type="button"
             size="sm"
             variant="outline"
-            disabled={!newCategory.trim()}
-            onClick={() => void addCategory()}
+            disabled={full || !newName.trim()}
+            onClick={() => void addFile()}
             className="text-[12.5px]"
           >
             <Plus />
@@ -531,7 +383,7 @@ export function MemorySection({ settings, loaded, update }: AppSettingsApi) {
                   className="text-[12.5px]"
                 >
                   <Trash2 />
-                  Delete every note
+                  Delete every file
                 </Button>
               </div>
             ) : (

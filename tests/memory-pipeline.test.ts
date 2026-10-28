@@ -1,161 +1,217 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, writeFile, mkdir } from "node:fs/promises"
-import { createServer, type Server } from "node:http"
-import type { AddressInfo } from "node:net"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
 
 import { buildMemoryContext } from "@/lib/memory/context"
-import { extractMemory } from "@/lib/memory/extract"
+import { renderMemoryContext } from "@/lib/memory/prompt"
+import {
+  deleteMemoryFile,
+  readMemoryFiles,
+  writeMemoryFile,
+} from "@/lib/memory/server"
+import { callMemoryTool, type MemoryTools } from "@/lib/memory/tools"
+import {
+  MAX_MEMORY_FILE_CHARS,
+  MAX_MEMORY_FILES,
+  parseMemoryFile,
+  serializeMemoryFile,
+  type MemoryFile,
+} from "@/lib/memory/types"
+import { handleRpc, type SubagentTools } from "@/lib/subagents/mcp"
 import { DEFAULT_SETTINGS, type AppSettings } from "@/lib/settings/schema"
 
 /*
- * The memory pipeline against a fake Ollama: real HTTP, real files, a
- * deterministic "embedding" (one axis per topic word) and a scripted
- * extractor. What it pins is the wiring — operations applied, restatements
- * dropped by the embedder, the prompt ranked, and nothing at all when Ollama
- * is gone.
+ * Agent-kept memory: real files under a temp AGENT_UI_DIR, the MCP tools the
+ * agent writes through, and the block a turn is handed. What it pins is the
+ * shape that keeps memory small — one file per topic, updates in place, a hard
+ * cap that tells the agent to merge — and that nothing here needs a model.
  */
 
-const TOPICS = ["pnpm", "typescript", "chess", "vercel", "concise"]
-
-function embedding(text: string) {
-  const lower = text.toLowerCase()
-  const vector: number[] = TOPICS.map((topic) => (lower.includes(topic) ? 1 : 0))
-  vector.push(0.05) // never the zero vector
-  return vector
-}
-
-let operations: unknown[] = []
-let embedCalls = 0
-let server: Server
-let baseUrl = ""
 let dir = ""
 
 test.before(async () => {
   dir = await mkdtemp(join(tmpdir(), "agent-ui-memory-"))
   process.env.AGENT_UI_DIR = dir
-  server = createServer((req, res) => {
-    let body = ""
-    req.on("data", (chunk) => (body += chunk))
-    req.on("end", () => {
-      res.setHeader("Content-Type", "application/json")
-      if (req.url === "/api/tags") {
-        res.end(JSON.stringify({ models: [{ name: "embeddinggemma-2:270m" }] }))
-      } else if (req.url === "/api/embed") {
-        embedCalls++
-        const { input, dimensions } = JSON.parse(body) as {
-          input: string[]
-          dimensions?: number
-        }
-        assert.equal(dimensions, 256)
-        res.end(JSON.stringify({ embeddings: input.map(embedding) }))
-      } else if (req.url === "/api/chat") {
-        res.end(JSON.stringify({ message: { content: JSON.stringify({ operations }) } }))
-      } else {
-        res.statusCode = 404
-        res.end("{}")
-      }
-    })
-  })
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
-  baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
 })
 
 test.after(async () => {
-  server.close()
   await rm(dir, { recursive: true, force: true })
 })
 
-function settings(patch: Partial<AppSettings["memory"]> = {}): AppSettings {
-  return {
-    ...DEFAULT_SETTINGS,
-    providers: {
-      ...DEFAULT_SETTINGS.providers,
-      ollama: { ...DEFAULT_SETTINGS.providers.ollama, baseUrl },
-    },
-    memory: { ...DEFAULT_SETTINGS.memory, enabled: true, model: "qwen3:4b", ...patch },
-  }
+test.beforeEach(async () => {
+  await rm(join(dir, "memory"), { recursive: true, force: true })
+})
+
+const tools: MemoryTools = {
+  list: readMemoryFiles,
+  write: writeMemoryFile,
+  remove: deleteMemoryFile,
 }
 
-test("extraction applies operations and drops a restated fact", async () => {
-  await mkdir(join(dir, "memory"), { recursive: true })
-  await writeFile(
-    join(dir, "memory", "stack.md"),
-    "# Stack\n\n- Uses pnpm\n- Plays chess on weekends\n"
-  )
-  operations = [
-    { op: "add", category: "stack", text: "Prefers pnpm over npm" }, // restates f1
-    { op: "add", category: "stack", text: "Writes TypeScript" },
-    { op: "delete", id: "f2" },
-    { op: "add", category: "nonsense", text: "Should be refused" },
-  ]
-  const result = await extractMemory({
-    settings: settings().memory,
-    baseUrl,
-    userMessages: ["I use pnpm and typescript, and I gave up chess"],
+function settings(memory: Partial<AppSettings["memory"]>): AppSettings {
+  return { ...DEFAULT_SETTINGS, memory: { ...DEFAULT_SETTINGS.memory, ...memory } }
+}
+
+function file(name: string, content: string, description = `${name} notes`): MemoryFile {
+  return { name, description, content, updatedAt: 0, bytes: content.length }
+}
+
+test("a file round-trips through its frontmatter, and an old-style file still reads", () => {
+  const raw = serializeMemoryFile("How answers should look", "- Prefers concise answers")
+  assert.deepEqual(parseMemoryFile("preferences", raw), {
+    description: "How answers should look",
+    content: "- Prefers concise answers",
   })
-  assert.equal(result.ranking, "embedding")
-  assert.deepEqual(result.changes, [
-    {
-      category: "stack",
-      added: ["- Writes TypeScript"],
-      removed: ["- Plays chess on weekends"],
-    },
-  ])
-  assert.equal(
-    await readFile(join(dir, "memory", "stack.md"), "utf8"),
-    "# Stack\n\n- Uses pnpm\n- Writes TypeScript\n"
-  )
-  // The cache was warmed for the next turn.
-  const cache = JSON.parse(await readFile(join(dir, "memory", ".vectors.json"), "utf8"))
-  assert.deepEqual(Object.keys(cache.vectors).sort(), ["uses pnpm", "writes typescript"])
-})
-
-test("a store past the budget is ranked against the prompt", async () => {
-  await writeFile(
-    join(dir, "memory", "preferences.md"),
-    "# Preferences\n\n- Prefers concise answers\n"
-  )
-  await writeFile(
-    join(dir, "memory", "workflow.md"),
-    "# Workflow\n\n- Deploys every project to Vercel from the main branch\n"
-  )
-  const before = embedCalls
-  const block = await buildMemoryContext(settings({ maxChars: 60 }), {
-    toolCapable: true,
-    query: "how should I set up the typescript config?",
+  // What the Ollama extractor left behind: a heading and bullets.
+  assert.deepEqual(parseMemoryFile("stack", "# Stack\n\n- Uses pnpm\n"), {
+    description: "Stack",
+    content: "# Stack\n\n- Uses pnpm",
   })
-  assert.ok(block)
-  assert.match(block, /Prefers concise answers/)
-  assert.match(block, /Writes TypeScript/)
-  assert.doesNotMatch(block, /Vercel/)
-  assert.match(block, /more facts are stored there/)
-  // Only the query and the two never-seen facts were embedded.
-  assert.equal(embedCalls - before, 2)
 })
 
-test("a store that fits is sent whole, with no embedding at all", async () => {
-  const before = embedCalls
-  const block = await buildMemoryContext(settings(), { toolCapable: false, query: "hi" })
-  assert.ok(block)
-  assert.match(block, /Vercel/)
-  assert.equal(embedCalls, before)
+test("memory_write creates, then updates the same file in place", async () => {
+  const created = await callMemoryTool(tools, "memory_write", {
+    name: "Preferences",
+    description: "How answers should be written",
+    content: "- Prefers concise answers",
+  })
+  assert.deepEqual(created.data, { name: "preferences", status: "created" })
+
+  const updated = await callMemoryTool(tools, "memory_write", {
+    name: "preferences",
+    description: "How answers should be written",
+    content: "- Prefers concise answers\n- Answers in Polish",
+  })
+  assert.deepEqual(updated.data, { name: "preferences", status: "updated" })
+
+  const files = await readMemoryFiles()
+  assert.equal(files.length, 1)
+  assert.match(files[0].content, /Answers in Polish/)
+  const raw = await readFile(join(dir, "memory", "preferences.md"), "utf8")
+  assert.match(raw, /^---\ndescription: How answers should be written\n---\n/)
 })
 
-test("without Ollama, memory is off: nothing injected, nothing extracted", async () => {
-  const down = settings()
-  down.providers = {
-    ...down.providers,
-    // A remote URL is probed but never spawned for, so the test cannot start one.
-    ollama: { ...down.providers.ollama, baseUrl: "http://192.0.2.1:9" },
+test("past the file cap a new file is refused with the names to merge into", async () => {
+  for (let index = 0; index < MAX_MEMORY_FILES; index++) {
+    await writeMemoryFile({ name: `topic-${index}`, description: "d", content: "- x" })
   }
-  assert.equal(await buildMemoryContext(down, { toolCapable: true, query: "pnpm" }), undefined)
-  const result = await extractMemory({
-    settings: down.memory,
-    baseUrl: undefined,
-    userMessages: ["I use pnpm"],
+  const refused = await callMemoryTool(tools, "memory_write", {
+    name: "one-more",
+    description: "d",
+    content: "- y",
   })
-  assert.equal(result.skipped, "unreachable")
+  assert.equal(refused.isError, true)
+  assert.match(String(refused.data), /topic-0/)
+  assert.match(String(refused.data), /instead of creating a new one/)
+
+  // Updating one that exists is still fine at the cap.
+  const update = await callMemoryTool(tools, "memory_write", {
+    name: "topic-0",
+    description: "d",
+    content: "- z",
+  })
+  assert.equal(update.isError, undefined)
+})
+
+test("an oversized file and a missing description are refused", async () => {
+  const big = await callMemoryTool(tools, "memory_write", {
+    name: "stack",
+    description: "d",
+    content: "x".repeat(MAX_MEMORY_FILE_CHARS + 1),
+  })
+  assert.equal(big.isError, true)
+  assert.match(String(big.data), /Condense it/)
+
+  const bare = await callMemoryTool(tools, "memory_write", { name: "stack", content: "- x" })
+  assert.equal(bare.isError, true)
+  assert.equal((await readMemoryFiles()).length, 0)
+})
+
+test("memory_delete removes a file and says so when there was none", async () => {
+  await writeMemoryFile({ name: "stack", description: "d", content: "- Uses pnpm" })
+  assert.deepEqual((await callMemoryTool(tools, "memory_delete", { name: "stack" })).data, {
+    name: "stack",
+    status: "deleted",
+  })
+  assert.equal((await callMemoryTool(tools, "memory_delete", { name: "stack" })).isError, true)
+})
+
+test("memory_read lists the index without a name, and refuses a path", async () => {
+  await writeMemoryFile({ name: "stack", description: "Tools in use", content: "- Uses pnpm" })
+  const index = await callMemoryTool(tools, "memory_read", {})
+  assert.deepEqual((index.data as { files: unknown[] }).files, [
+    { name: "stack", description: "Tools in use" },
+  ])
+  // `../settings` slugs to `settings`, which does not exist — never a path.
+  const escape = await callMemoryTool(tools, "memory_read", { name: "../settings" })
+  assert.equal(escape.isError, true)
+})
+
+test("the MCP server offers memory tools only while memory is on", async () => {
+  const subagents = {} as SubagentTools
+  const list = { jsonrpc: "2.0", id: 1, method: "tools/list" }
+  const names = async (memory?: MemoryTools) => {
+    const answer = (await handleRpc(list, subagents, "0", memory)) as {
+      result: { tools: { name: string }[] }
+    }
+    return answer.result.tools.map((tool) => tool.name)
+  }
+  assert.ok(!(await names()).includes("memory_write"))
+  assert.ok((await names(tools)).includes("memory_write"))
+
+  const call = (await handleRpc(
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name: "memory_write", arguments: {} } },
+    subagents,
+    "0"
+  )) as { result: { isError?: boolean; content: { text: string }[] } }
+  assert.equal(call.result.isError, true)
+  assert.match(call.result.content[0].text, /turned off/)
+})
+
+test("an agent with tools is told how to keep memory; a chat-only one is not", () => {
+  const files = [file("preferences", "- Prefers concise answers")]
+  const withTools = renderMemoryContext({ files, budget: 1000, access: "tools", dir: "/m" })!
+  assert.match(withTools, /Prefers concise answers/)
+  assert.match(withTools, /memory_write/)
+  assert.match(withTools, /update that file instead/)
+
+  const chatOnly = renderMemoryContext({ files, budget: 1000, access: "none", dir: "/m" })!
+  assert.match(chatOnly, /Prefers concise answers/)
+  assert.doesNotMatch(chatOnly, /Keeping memory/)
+
+  const viaFiles = renderMemoryContext({ files, budget: 1000, access: "files", dir: "/m" })!
+  assert.match(viaFiles, /editing the files in \/m/)
+})
+
+test("an empty store still invites an agent with tools, and sends nothing to one without", () => {
+  assert.equal(renderMemoryContext({ files: [], budget: 1000, access: "none", dir: "/m" }), undefined)
+  assert.match(
+    renderMemoryContext({ files: [], budget: 1000, access: "tools", dir: "/m" })!,
+    /nothing remembered yet/
+  )
+})
+
+test("past the budget, bodies are left out but every file stays in the index", () => {
+  const block = renderMemoryContext({
+    files: [
+      file("stack", "- " + "a".repeat(300)),
+      file("preferences", "- Prefers concise answers"),
+    ],
+    budget: 100,
+    access: "tools",
+    dir: "/m",
+  })!
+  assert.match(block, /Prefers concise answers/)
+  assert.match(block, /`stack` — stack notes \(updated .*; not loaded\)/)
+  assert.match(block, /One file is not loaded/)
+})
+
+test("buildMemoryContext reads the files and is off when memory is", async () => {
+  await mkdir(join(dir, "memory"), { recursive: true })
+  await writeFile(join(dir, "memory", "stack.md"), "# Stack\n\n- Uses pnpm\n")
+  assert.equal(await buildMemoryContext(settings({ enabled: false }), { access: "tools" }), undefined)
+  const block = await buildMemoryContext(settings({ enabled: true }), { access: "files" })
+  assert.match(block!, /Uses pnpm/)
 })

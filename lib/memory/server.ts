@@ -5,15 +5,16 @@ import { join } from "node:path"
 
 import { dataDir } from "@/lib/settings/server"
 import {
-  DEFAULT_MEMORY_CATEGORIES,
-  isValidMemoryCategory,
-  memoryFactLines,
-  memoryTitleFrom,
+  isValidMemoryName,
+  memoryWriteError,
+  parseMemoryFile,
+  serializeMemoryFile,
   type MemoryFile,
+  type MemoryStore,
 } from "@/lib/memory/types"
 
 /**
- * The on-disk half of the memory layer: one markdown file per category under
+ * The on-disk half of the memory layer: one markdown topic file per name under
  * `~/.agent-ui/memory` (or `$AGENT_UI_DIR/memory`).
  *
  * Deliberately a sibling of `sessions/` rather than a key in settings.json:
@@ -27,15 +28,15 @@ export function memoryDir() {
 }
 
 /**
- * Category ids reach a file path, so they are validated rather than escaped —
- * the alphabet in `isValidMemoryCategory` has no `.` and no separator, which
- * leaves nothing for a `../` to be built from.
+ * Names reach a file path, so they are validated rather than escaped — the
+ * alphabet in `isValidMemoryName` has no `.` and no separator, which leaves
+ * nothing for a `../` to be built from.
  */
-function memoryPath(category: string) {
-  if (!isValidMemoryCategory(category)) {
-    throw new Error(`Invalid memory category "${category}"`)
+export function memoryPath(name: string) {
+  if (!isValidMemoryName(name)) {
+    throw new Error(`Invalid memory file name "${name}"`)
   }
-  return join(memoryDir(), `${category}.md`)
+  return join(memoryDir(), `${name}.md`)
 }
 
 async function writeAtomic(path: string, content: string) {
@@ -47,7 +48,7 @@ async function writeAtomic(path: string, content: string) {
   await rename(tmp, path)
 }
 
-/** Every category file, alphabetical, with the defaults' order honoured first. */
+/** Every topic file, most recently updated first. */
 export async function readMemoryFiles(): Promise<MemoryFile[]> {
   let names: string[]
   try {
@@ -55,83 +56,75 @@ export async function readMemoryFiles(): Promise<MemoryFile[]> {
   } catch {
     return []
   }
-  const categories = names
-    .filter((name) => name.endsWith(".md"))
-    .map((name) => name.slice(0, -3))
-    .filter(isValidMemoryCategory)
-
   const files = await Promise.all(
-    categories.map(async (category): Promise<MemoryFile | null> => {
-      try {
-        const path = memoryPath(category)
-        const [content, info] = await Promise.all([
-          readFile(path, "utf8"),
-          stat(path),
-        ])
-        return {
-          category,
-          title: memoryTitleFrom(category, content),
-          content,
-          updatedAt: info.mtimeMs,
-          bytes: Buffer.byteLength(content, "utf8"),
+    names
+      .filter((entry) => entry.endsWith(".md"))
+      .map((entry) => entry.slice(0, -3))
+      .filter(isValidMemoryName)
+      .map(async (name): Promise<MemoryFile | null> => {
+        try {
+          const path = memoryPath(name)
+          const [raw, info] = await Promise.all([readFile(path, "utf8"), stat(path)])
+          const parsed = parseMemoryFile(name, raw)
+          return {
+            name,
+            ...parsed,
+            updatedAt: info.mtimeMs,
+            bytes: Buffer.byteLength(parsed.content, "utf8"),
+          }
+        } catch {
+          return null
         }
-      } catch {
-        return null
-      }
-    })
+      })
   )
-
-  const order = DEFAULT_MEMORY_CATEGORIES.map((entry) => entry.category)
   return files
     .filter((file): file is MemoryFile => file !== null)
-    .sort((a, b) => {
-      const rankA = order.indexOf(a.category)
-      const rankB = order.indexOf(b.category)
-      if (rankA !== rankB) {
-        return (rankA < 0 ? order.length : rankA) - (rankB < 0 ? order.length : rankB)
-      }
-      return a.category.localeCompare(b.category)
-    })
+    .sort((a, b) => b.updatedAt - a.updatedAt || a.name.localeCompare(b.name))
 }
 
-export async function readMemoryFile(category: string): Promise<string> {
-  try {
-    return await readFile(memoryPath(category), "utf8")
-  } catch {
-    return ""
-  }
+export async function readMemoryFile(name: string): Promise<MemoryFile | undefined> {
+  return (await readMemoryFiles()).find((file) => file.name === name)
 }
 
 /**
- * Writes a category. Blank content deletes it, so clearing the editor (or an
- * extraction pass that emptied a category) removes the file rather than
- * leaving an empty one behind.
- *
- * A file with only a heading and no facts is kept: that is a category the user
- * has just created and is about to fill, and `memoryPromptBlock` skips it, so
- * it costs a turn nothing.
+ * Creates or replaces one file, under the same limits whoever writes — the
+ * agent through the MCP tool or the user through settings. Throws the reason
+ * (`memoryWriteError`) when the write is refused.
  */
-export async function writeMemoryFile(category: string, content: string) {
-  const trimmed = content.trim()
-  if (!trimmed) {
-    await deleteMemoryFile(category)
-    return
-  }
-  await writeAtomic(memoryPath(category), `${trimmed}\n`)
+export async function writeMemoryFile(input: {
+  name: string
+  description: string
+  content: string
+}) {
+  const existing = (await readMemoryFiles()).map((file) => file.name)
+  const refused = memoryWriteError(input, existing)
+  if (refused) throw new Error(refused)
+  await writeAtomic(
+    memoryPath(input.name),
+    serializeMemoryFile(input.description, input.content)
+  )
 }
 
-export async function deleteMemoryFile(category: string) {
-  await rm(memoryPath(category), { force: true })
+/** True when there was a file to delete. */
+export async function deleteMemoryFile(name: string): Promise<boolean> {
+  const path = memoryPath(name)
+  const existed = await stat(path).then(
+    () => true,
+    () => false
+  )
+  await rm(path, { force: true })
+  return existed
 }
 
 export async function clearMemory() {
   await rm(memoryDir(), { recursive: true, force: true })
 }
 
-/** Total characters the store currently holds, shown against the per-turn budget. */
 export function memoryBytes(files: MemoryFile[]) {
-  return files.reduce(
-    (total, file) => total + memoryFactLines(file.content).join("\n").length,
-    0
-  )
+  return files.reduce((total, file) => total + file.content.length, 0)
+}
+
+export async function memoryStore(): Promise<MemoryStore> {
+  const files = await readMemoryFiles()
+  return { dir: memoryDir(), files, bytes: memoryBytes(files) }
 }

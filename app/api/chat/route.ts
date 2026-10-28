@@ -67,9 +67,8 @@ type ChatBody = {
   /**
    * What the user actually typed, when `prompt` is more than that — the
    * composer prepends a skill and appends the text of every attached file.
-   * Stored beside the message and handed to the memory extractor in place of
-   * `content`, so a file the agent was given cannot write itself into a store
-   * that is pasted into every later conversation.
+   * Stored beside the message: it is what search indexes and what the
+   * transcript shows as the user's own words.
    */
   typedText?: string
   /**
@@ -226,9 +225,15 @@ export async function POST(req: Request) {
   const memoryContext = resumed
     ? undefined
     : await buildMemoryContext(settings, {
-        toolCapable: info.capabilities.tools,
-        // Ranked against what was typed, not against attached file text.
-        query: typedText || prompt,
+        // How this agent can keep memory: through the bridge's `memory_*`
+        // tools when it takes MCP servers (a subagent chat is never given the
+        // bridge), else by editing the files when it has file tools at all.
+        access:
+          info.capabilities.mcp && !session.parentId
+            ? "tools"
+            : info.capabilities.tools
+              ? "files"
+              : "none",
       })
   const standingContext = resumed
     ? undefined

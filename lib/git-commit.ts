@@ -324,7 +324,7 @@ export type CompleteFn = (prompt: {
  * Reads the repository, builds the prompt, asks, and sanitizes the answer.
  *
  * The completion is a parameter rather than an import: the route knows which
- * models this app can reach (the chat's own, else the memory model — see
+ * models this app can reach (the chat's own, else `chat.helperModel` — see
  * `lib/completion.ts`), and the tests know none of that and should not have to.
  */
 export async function generateCommitMessage(input: {

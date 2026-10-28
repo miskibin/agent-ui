@@ -20,7 +20,7 @@
  *                when a returning agent needs it.
  *
  * Neither ever touches the stored user message: what the user typed is what
- * gets persisted, shown, and handed to the memory extractor.
+ * gets persisted and shown.
  */
 export type PromptContext = {
   standingContext?: string

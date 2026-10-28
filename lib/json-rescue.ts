@@ -3,8 +3,8 @@
 /**
  * Getting the JSON out of what a small model actually said.
  *
- * The app asks local models for structured answers — the categories the memory
- * extractor should rewrite, a chat title — and the servers that can enforce a
+ * The app asks local models for structured answers — a commit message, a chat
+ * title — and the servers that can enforce a
  * schema do. The ones that cannot are asked for `format: "json"` instead, and
  * a 3B model handed that will still open with "Here is the JSON:", wrap the
  * object in a ```json fence, or add a sentence after the closing brace. A bare

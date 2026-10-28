@@ -52,18 +52,15 @@ export type MessageMetadata = {
    * added anything — a skill prefix, the fenced contents of an attached file,
    * the note naming the files it could not read.
    *
-   * It exists for the memory boundary. `content` is what the model was sent,
-   * and everything the composer folded into it is content the user did not
-   * write; the extractor (`lib/memory/extract`) is only ever allowed the
-   * user's own words, so it reads this and falls back to `content` only for
-   * turns stored before the field existed.
+   * `content` is what the model was sent, and everything the composer folded
+   * into it is content the user did not write; search and the composer's
+   * ArrowUp recall read this instead, falling back to `content` only for turns
+   * stored before the field existed.
    */
   typedText?: string
   /**
    * On a *user* message: the chat whose agent wrote this prompt, when the turn
-   * is a subagent run (`lib/subagents`). Its presence means nobody typed it —
-   * which is what keeps it away from the memory extractor, under the same rule
-   * as `typedText`.
+   * is a subagent run (`lib/subagents`). Its presence means nobody typed it.
    */
   subagentOf?: string
   /**

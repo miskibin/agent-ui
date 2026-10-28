@@ -174,6 +174,8 @@ export function createClaudeCodeProvider(
           // on disk for the Read tool to open, which is not what this flag
           // promises the composer.
           vision: false,
+          // `--mcp-config`, written per turn (`lib/claude-code-agent`).
+          mcp: true,
           permissionModes: CLAUDE_CODE_PERMISSION_MODES,
           defaultPermissionMode: settings.permissionMode,
         },

@@ -29,7 +29,6 @@ import {
   isOpenUserRequestTool,
   parseUserRequestInput,
 } from "@/lib/turn-requests"
-import type { MemoryChange } from "@/lib/memory/types"
 import type { PermissionMode } from "@/lib/providers/types"
 import type {
   SessionMeta,
@@ -112,9 +111,7 @@ export function useTurnRunner({
   setThreads,
   setRuns,
   setFailures,
-  setMemoryNotices,
   patchLocal,
-  runMemoryUpdate,
   notificationSounds,
 }: {
   refs: ChatRefs
@@ -123,13 +120,7 @@ export function useTurnRunner({
   >
   setRuns: React.Dispatch<React.SetStateAction<Record<string, SessionRun>>>
   setFailures: React.Dispatch<React.SetStateAction<Record<string, boolean>>>
-  setMemoryNotices: React.Dispatch<
-    React.SetStateAction<
-      Record<string, { changes: MemoryChange[] }>
-    >
-  >
   patchLocal: (id: string, patch: Partial<SessionMeta>) => void
-  runMemoryUpdate: (sessionId: string) => Promise<void>
   /** Passed unresolved, so the runner is not rebuilt when settings first land. */
   notificationSounds: boolean | undefined
 }): RunPrompt {
@@ -202,10 +193,6 @@ export function useTurnRunner({
           [sessionId]: { startedAt, stage: "thinking" },
         }))
         setFailures((prev) => omit(prev, sessionId))
-        // Last turn's marker belongs to last turn.
-        setMemoryNotices((prev) =>
-          sessionId in prev ? omit(prev, sessionId) : prev
-        )
       }
       if (args.animate) runLayoutTransition(paint)
       else paint()
@@ -634,12 +621,6 @@ export function useTurnRunner({
            is exactly wrong the moment a turn creates the file the user is
            about to go looking for. */
         if (cwd) void postJson("/api/fs/invalidate", { sessionId })
-        /* Only a turn that actually landed is worth learning from. A stopped
-           one is usually about to be re-sent, and a failed one would spend a
-           model call to stack a second toast under the failure's own. */
-        if (!controller.signal.aborted && !failed && !attach) {
-          void runMemoryUpdate(sessionId)
-        }
         /* A message queued during the turn goes next — a stopped turn keeps
            its queue, since Stop usually means "let me rephrase". */
         if (!controller.signal.aborted) drainQueueRef.current(sessionId)
@@ -650,11 +631,9 @@ export function useTurnRunner({
       drainQueueRef,
       notificationSounds,
       patchLocal,
-      runMemoryUpdate,
       selectSessionRef,
       sessionsRef,
       setFailures,
-      setMemoryNotices,
       setRuns,
       setThreads,
       settingsRef,

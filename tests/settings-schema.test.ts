@@ -76,12 +76,21 @@ test("the two default-on switches only turn off on a real false", () => {
   assert.equal(normalizeSettings({ memory: { enabled: true } }).memory.enabled, true)
 })
 
-test("the memory embedding model defaults to EmbeddingGemma 2's text-only tag and never ends up blank", () => {
-  assert.equal(normalizeSettings({ memory: {} }).memory.embedModel, "embeddinggemma-2:270m")
-  assert.equal(normalizeSettings({ memory: { embedModel: "  " } }).memory.embedModel, "embeddinggemma-2:270m")
+test("settings from the Ollama-extractor era drop the old memory knobs", () => {
+  assert.deepEqual(
+    normalizeSettings({
+      memory: { enabled: true, model: "qwen3:4b", embedModel: "x", autoUpdate: false, maxChars: 3000 },
+    }).memory,
+    { enabled: true, maxChars: 3000 }
+  )
+})
+
+test("the old memory extraction model becomes the helper model", () => {
+  assert.equal(normalizeSettings({ memory: { model: "qwen3:4b" } }).chat.helperModel, "qwen3:4b")
   assert.equal(
-    normalizeSettings({ memory: { embedModel: "nomic-embed-text" } }).memory.embedModel,
-    "nomic-embed-text"
+    normalizeSettings({ chat: { helperModel: "openai/gpt-5-mini" }, memory: { model: "qwen3:4b" } })
+      .chat.helperModel,
+    "openai/gpt-5-mini"
   )
 })
 
@@ -211,7 +220,7 @@ test("normalising twice is the same as normalising once", () => {
   const stored = {
     appearance: { theme: "notebook", mode: "dark" },
     providers: { active: "pi", pi: { workspace: "/home/me/p" } },
-    memory: { enabled: true, model: "qwen3:4b", maxChars: 3000 },
+    memory: { enabled: true, maxChars: 3000 },
     modelProviders: { openai: { enabled: true, apiKey: "k", models: ["gpt-5"] } },
     recentFolders: ["/home/me/p"],
   }

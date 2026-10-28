@@ -9,9 +9,8 @@
  *   lib/handoff  ephemeral, one chat, about the *other agents* — reaches a
  *                turn as `turnContext` and never outlives the chat.
  *
- * Nothing crosses: a handoff never carries memory facts, and nothing here is
- * ever handed to the memory extractor (which only ever sees stored user
- * messages, and the stored user message is exactly what the user typed).
+ * Nothing crosses: a handoff never carries memory, and nothing here is ever
+ * written to the memory files.
  */
 
 import { sameFolder } from "@/lib/folder-identity"

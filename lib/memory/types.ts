@@ -1,188 +1,157 @@
 /**
  * Wire + on-disk shapes for the user memory layer. Types and pure helpers
- * only, so the settings page and the chat page can import them without
- * dragging `node:fs` into the client bundle.
+ * only, so the settings page, the chat page and `node --test` can import them
+ * without dragging `node:fs` into anything.
  *
- * Memory is a directory of small markdown files under `~/.agent-ui/memory`,
- * one per category. Plain files on purpose: the whole point of the feature is
- * that a user can open, read and correct what the app remembers about them.
+ * Memory works the way Claude Code's does: a small directory of markdown
+ * *topic* files under `~/.agent-ui/memory`, each opening with a one-line
+ * description, and the agent itself keeps them — it is shown the index (and
+ * the bodies that fit), and it updates, merges or deletes a file when what the
+ * user says makes one wrong. No second model guesses at it after the turn.
+ *
+ * Plain files on purpose: a user can open, read and correct what the app
+ * remembers about them with any editor.
  */
 
-/** One category file. `content` is markdown — in practice a list of one-line facts. */
+/** One topic file. */
 export type MemoryFile = {
   /** Slug, and the file's basename: `preferences` → `preferences.md`. */
-  category: string
-  /** Human label, taken from the file's `# ` heading when it has one. */
-  title: string
+  name: string
+  /** One line: what this file holds and when it matters. The index shows it. */
+  description: string
+  /** Markdown body, frontmatter stripped. */
   content: string
   updatedAt: number
   bytes: number
 }
 
 /**
- * What one extraction run did to one category, derived by diffing the file
- * before and after. The extractor rewrites whole categories (that is what lets
- * it merge and shorten), so the per-line diff is the only place a readable
- * "what changed" exists.
+ * The store stays small by construction. A new file past the cap is refused
+ * with the names that exist, which is what pushes an agent to update or merge
+ * rather than spawn `preferences-2`. Claude Code's memory has the same shape:
+ * a handful of topic files, kept current, never a log.
  */
-export type MemoryChange = {
-  category: string
-  added: string[]
-  removed: string[]
-}
+export const MAX_MEMORY_FILES = 12
+/** One file's body. A topic that outgrows this is two topics, or too detailed. */
+export const MAX_MEMORY_FILE_CHARS = 4_000
+export const MAX_MEMORY_DESCRIPTION_CHARS = 160
 
-/** Why an update run produced nothing — surfaced instead of a silent no-op. */
-export type MemorySkipReason =
-  | "disabled"
-  | "no-model"
-  | "unreachable"
-  | "nothing-to-learn"
-  | "failed"
-
-export type MemoryUpdateResult = {
-  changes: MemoryChange[]
-  /** Present when the run deliberately did nothing. */
-  skipped?: MemorySkipReason
-  /** Ollama model that ran the extraction, for the details line. */
-  model?: string
-  /**
-   * How related facts were found: EmbeddingGemma, or word overlap when the
-   * embedder could not run (still downloading, or unsupported on this build).
-   */
-  ranking?: "embedding" | "lexical"
-  /** Total characters across all category files after the run. */
-  bytes?: number
-}
-
-/** Categories a fresh install starts with. Users can add, rename and delete. */
-export const DEFAULT_MEMORY_CATEGORIES: Array<{
-  category: string
-  title: string
-  hint: string
-}> = [
+/** Names suggested to the agent and the settings page for a fresh store. */
+export const SUGGESTED_MEMORY_FILES: Array<{ name: string; description: string }> = [
   {
-    category: "preferences",
-    title: "Preferences",
-    hint: "How answers should be written: length, tone, language, formatting.",
+    name: "preferences",
+    description: "How answers should be written: length, tone, language, formatting.",
   },
   {
-    category: "profile",
-    title: "Profile",
-    hint: "Durable facts about the person: role, timezone, what they work on.",
+    name: "profile",
+    description: "Durable facts about the user: role, timezone, what they work on.",
   },
   {
-    category: "stack",
-    title: "Stack",
-    hint: "Languages, frameworks, tools and versions they actually use.",
+    name: "stack",
+    description: "Languages, frameworks, tools and versions they actually use.",
   },
   {
-    category: "workflow",
-    title: "Workflow",
-    hint: "How they work: conventions, review habits, deploy and test process.",
+    name: "workflow",
+    description: "How they work: conventions, review habits, testing and deploy process.",
   },
 ]
 
-/** Ids become file names — keep them to a known-safe alphabet. */
-export function isValidMemoryCategory(id: string) {
+/** Names become file names — kept to an alphabet with no `.` and no separator. */
+export function isValidMemoryName(id: string) {
   return /^[a-z0-9][a-z0-9-]{0,47}$/.test(id)
 }
 
-/** Free text → a category id, for the "add category" field in settings. */
-export function toMemoryCategoryId(input: string) {
+/** Free text → a file name, for the "new file" field and lenient tool calls. */
+export function toMemoryName(input: string) {
   return input
     .toLowerCase()
+    .replace(/\.md$/, "")
     .replace(/[^a-z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 48)
 }
 
-/** `# Title` on the first line, falling back to a title-cased slug. */
-export function memoryTitleFrom(category: string, content: string) {
-  const heading = content.match(/^#\s+(.+)$/m)?.[1]?.trim()
-  if (heading) return heading
-  return category
+function titleCase(name: string) {
+  return name
     .split("-")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ")
 }
 
 /**
- * The lines of a category that carry facts — bullets and prose, minus the
- * heading, blank lines and empty list markers. Both the prompt budget and the
- * change diff count in these, so they agree on what a "fact" is; an empty `- `
- * left behind by the editor is not one, and must not be counted, diffed or
- * pasted into a prompt.
+ * Splits a file into its description and body.
+ *
+ * The format is `---\ndescription: …\n---\n\nbody`. A file written before
+ * that format — `# Title` and bullets, which is what the old extractor left —
+ * still reads: its heading becomes the description and stays in the body.
  */
-export function memoryFactLines(content: string): string[] {
+export function parseMemoryFile(
+  name: string,
+  raw: string
+): { description: string; content: string } {
+  const text = raw.replace(/^﻿/, "")
+  const front = text.match(/^---\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/)
+  if (front) {
+    const description =
+      front[1].match(/^description:[ \t]*(.*)$/m)?.[1]?.trim().replace(/^["']|["']$/g, "") ??
+      ""
+    return {
+      description: description || titleCase(name),
+      content: text.slice(front[0].length).trim(),
+    }
+  }
+  const heading = text.match(/^#\s+(.+)$/m)?.[1]?.trim()
+  return { description: heading || titleCase(name), content: text.trim() }
+}
+
+/** The on-disk form `parseMemoryFile` reads back. */
+export function serializeMemoryFile(description: string, content: string) {
+  const line = description.replace(/\s+/g, " ").trim()
+  const body = content.trim()
+  return `---\ndescription: ${line}\n---\n${body ? `\n${body}\n` : ""}`
+}
+
+/** Lines that carry something — what the settings page counts. */
+export function memoryLines(content: string): string[] {
   return content
     .split("\n")
     .map((line) => line.trim())
-    .filter(
-      (line) =>
-        line.length > 0 &&
-        !line.startsWith("#") &&
-        !/^[-*+]\s*$/.test(line)
-    )
-}
-
-/** Retitles a category's `# ` heading — what a rename has to do to the body. */
-export function withMemoryHeading(content: string, title: string): string {
-  const body = content.replace(/^#\s+.*(?:\n|$)/, "").replace(/^\s+/, "")
-  return body ? `# ${title}\n\n${body}` : `# ${title}\n`
-}
-
-/** Added / removed fact lines between two versions of one category. */
-export function diffMemoryContent(
-  category: string,
-  before: string,
-  after: string
-): MemoryChange | null {
-  const previous = memoryFactLines(before)
-  const next = memoryFactLines(after)
-  const had = new Set(previous)
-  const has = new Set(next)
-  const added = next.filter((line) => !had.has(line))
-  const removed = previous.filter((line) => !has.has(line))
-  if (added.length === 0 && removed.length === 0) return null
-  return { category, added, removed }
-}
-
-/** "2 added, 1 merged" — the one-liner the toast and the inline notice share. */
-export function summarizeMemoryChanges(changes: MemoryChange[]) {
-  const added = changes.reduce((total, change) => total + change.added.length, 0)
-  const removed = changes.reduce(
-    (total, change) => total + change.removed.length,
-    0
-  )
-  const parts: string[] = []
-  if (added > 0) parts.push(`${added} added`)
-  // A removal that comes with additions in the same category is the extractor
-  // rewriting a fact, not forgetting one — say so rather than alarming anyone.
-  if (removed > 0) {
-    const merged = changes.some(
-      (change) => change.removed.length > 0 && change.added.length > 0
-    )
-    parts.push(`${removed} ${merged ? "rewritten" : "removed"}`)
-  }
-  return parts.join(", ") || "no changes"
+    .filter((line) => line.length > 0 && !line.startsWith("#") && !/^[-*+]\s*$/.test(line))
 }
 
 /**
- * Whether memory can run right now, as the boot check and the settings page
- * see it. Memory runs on Ollama, so "reachable" is the whole verdict: without
- * it nothing is injected and nothing extracted. The embedding model is the
- * quality half — without it ranking and dedupe fall back to word overlap.
+ * Why a write would be refused, or null when it may land. Shared by the MCP
+ * tool and the settings route, so an agent and a person hit the same limits —
+ * and the refusals are written for the agent, since it is the one that has to
+ * act on them.
  */
-export type MemoryStatus = {
-  enabled: boolean
-  /** Ollama answered — after the app tried to start it when it did not. */
-  reachable: boolean
-  baseUrl: string
-  extractionModel: string
-  /** False when the chosen extraction model is not pulled on this server. */
-  extractionInstalled: boolean
-  embedModel: string
-  embed: "ready" | "pulling" | "missing" | "failed" | "unknown"
-  /** Ollama's own words when the embedder failed, e.g. an unsupported runtime. */
-  embedError?: string
+export function memoryWriteError(
+  input: { name: string; description: string; content: string },
+  existing: string[]
+): string | null {
+  if (!isValidMemoryName(input.name)) {
+    return "`name` must be lowercase letters, digits and dashes (it becomes the file name), e.g. `preferences`."
+  }
+  if (!input.description.trim()) {
+    return "`description` is required: one line saying what this file holds, so it can be found from the index."
+  }
+  if (input.description.length > MAX_MEMORY_DESCRIPTION_CHARS) {
+    return `\`description\` must be one line under ${MAX_MEMORY_DESCRIPTION_CHARS} characters.`
+  }
+  if (input.content.length > MAX_MEMORY_FILE_CHARS) {
+    return `This file would be ${input.content.length} characters; the limit is ${MAX_MEMORY_FILE_CHARS}. Condense it — drop what is outdated or too specific — or split off a distinct topic.`
+  }
+  if (!existing.includes(input.name) && existing.length >= MAX_MEMORY_FILES) {
+    return `Memory already has ${existing.length} files (the limit is ${MAX_MEMORY_FILES}): ${existing.join(", ")}. Put this into the existing file it belongs to, or merge two related files and delete one, instead of creating a new one.`
+  }
+  return null
+}
+
+/** Whether memory can be written to, as the settings page sees it. */
+export type MemoryStore = {
+  /** Absolute path of the memory directory. */
+  dir: string
+  files: MemoryFile[]
+  /** Characters across every body, shown against the per-turn budget. */
+  bytes: number
 }

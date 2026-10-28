@@ -24,7 +24,7 @@ import type { SessionMeta, StoredMessage } from "@/lib/store/types"
  * and `tests/message-search.test.ts` supplies them from literals.
  *
  * What is searched is deliberately narrow — the user's own words
- * (`metadata.typedText`, the same field the memory extractor is held to) and
+ * (`metadata.typedText`) and
  * the assistant's answer text. Never thinking, never tool input or output:
  * a grep over tool output finds every chat that ever ran `ls`, and the file
  * a tool touched is already searchable in the file panel.

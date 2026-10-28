@@ -36,6 +36,11 @@ export type ProviderCapabilities = {
   /** Accepts image attachments. */
   vision: boolean
   /**
+   * Connects the `mcpServers` a turn is handed — so this harness gets the
+   * app's own MCP server: subagents, and the `memory_*` tools.
+   */
+  mcp?: boolean
+  /**
    * Permission modes this harness can enforce, in the order a picker should
    * show them. Absent or empty = no user choice: the provider runs under a
    * fixed policy (its settings, or no tools at all).

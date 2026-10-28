@@ -3,11 +3,7 @@ import type { ModelOption, ModelPickerGroup } from "@/components/ui/model-picker
 import type { FolderInfo, FolderListing } from "@/lib/folder"
 import type { FolderLogoMap } from "@/lib/folder-logo"
 import type { TurnStateFrame } from "@/lib/handoff/types"
-import type {
-  MemoryFile,
-  MemoryStatus,
-  MemoryUpdateResult,
-} from "@/lib/memory/types"
+import type { MemoryStore } from "@/lib/memory/types"
 import type { MessageSearchResult } from "@/lib/message-search"
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import type {
@@ -328,9 +324,8 @@ export type ChatRequest = {
   attachments?: MessageAttachmentData[]
   /**
    * Exactly what the user typed, before the skill prefix, the attachment
-   * fences and the "Attached: …" note the composer adds. The memory extractor
-   * is fed this instead of `content`, so a file the turn merely carried cannot
-   * write itself into every future prompt. Absent when it is not known — a
+   * fences and the "Attached: …" note the composer adds. Stored beside the
+   * message as the user's own words (search indexes it). Absent when it is not known — a
    * regenerate re-runs a stored message, whose typed half is long gone.
    */
   typedText?: string
@@ -457,64 +452,33 @@ export function respondToRequest(
 /* Memory                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export type MemoryStore = {
-  /** Absolute path of the memory directory, shown in settings. */
-  dir: string
-  files: MemoryFile[]
-  bytes: number
-  /** Whether memory can run; only meaningful when fetched with `probe`. */
-  status: MemoryStatus
-}
+export type { MemoryStore }
 
-/** `probe` checks Ollama and the models as if memory were on — see the route. */
-export function fetchMemory(probe = false): Promise<MemoryStore> {
-  return fetch(`/api/memory${probe ? "?probe=1" : ""}`, {
-    cache: "no-store",
-  }).then(json<MemoryStore>)
+export function fetchMemory(): Promise<MemoryStore> {
+  return fetch("/api/memory", { cache: "no-store" }).then(json<MemoryStore>)
 }
 
 /**
- * The chat page's boot check: starts Ollama if it can, and the embedding
- * model's download if it is missing. `retry` re-arms the one spawn attempt.
+ * Saves one file from the settings editor, under the same limits the agent's
+ * `memory_write` has; `previousName` renames it.
  */
-export function fetchMemoryStatus(retry = false): Promise<MemoryStatus> {
-  return fetch(`/api/memory/status${retry ? "?retry=1" : ""}`, {
-    cache: "no-store",
-  }).then(json<MemoryStatus>)
-}
-
-type MemoryWriteResult = { files: MemoryFile[]; bytes: number }
-
-/** Saves one category from the settings editor; empty content deletes it. */
-export function putMemoryFile(
-  category: string,
+export function putMemoryFile(input: {
+  name: string
+  description: string
   content: string
-): Promise<MemoryWriteResult> {
+  previousName?: string
+}): Promise<MemoryStore> {
   return fetch("/api/memory", {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ category, content }),
-  }).then(json<MemoryWriteResult>)
+    body: JSON.stringify(input),
+  }).then(json<MemoryStore>)
 }
 
-/** Drops one category, or the whole store when `category` is omitted. */
-export function deleteMemoryFile(category?: string): Promise<MemoryWriteResult> {
-  const query = category ? `?category=${encodeURIComponent(category)}` : ""
-  return fetch(`/api/memory${query}`, { method: "DELETE" }).then(
-    json<MemoryWriteResult>
-  )
-}
-
-/**
- * Runs an extraction pass over a thread. Fires after a turn settles, on its
- * own request, so nothing about it can delay or fail the answer itself.
- */
-export function updateMemory(sessionId: string): Promise<MemoryUpdateResult> {
-  return fetch("/api/memory/update", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessionId }),
-  }).then(json<MemoryUpdateResult>)
+/** Drops one file, or the whole store when `name` is omitted. */
+export function deleteMemoryFile(name?: string): Promise<MemoryStore> {
+  const query = name ? `?name=${encodeURIComponent(name)}` : ""
+  return fetch(`/api/memory${query}`, { method: "DELETE" }).then(json<MemoryStore>)
 }
 
 /* -------------------------------------------------------------------------- */

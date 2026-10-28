@@ -95,7 +95,7 @@ const SECTION_GROUPS: SettingsGroup[] = [
         id: "memory",
         label: "Memory",
         icon: Brain,
-        keywords: "memory remember facts recall context notes learned",
+        keywords: "memory remember facts recall context notes learned forget",
       },
     ],
   },

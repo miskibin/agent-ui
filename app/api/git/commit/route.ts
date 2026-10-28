@@ -105,13 +105,13 @@ export async function POST(req: Request) {
   } else {
     const settings = await readSettings()
     const session = await getSession(body.sessionId ?? "")
-    // The chat's own model when this app can reach it directly, else the one
-    // the memory extractor uses — the same order `POST /api/sessions/<id>`
+    // The chat's own model when this app can reach it directly, else the helper
+    // model (`chat.helperModel`) — the same order `POST /api/sessions/<id>`
     // follows, and for the same reason: a CLI harness's model is not something
     // a plain completion can call.
     const candidates = [
       ...new Set(
-        [session?.model, settings.memory.model].filter(
+        [session?.model, settings.chat.helperModel].filter(
           (model): model is string => !!model && canComplete(settings, model)
         )
       ),
@@ -120,7 +120,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            "No model to ask — pick an Ollama or hosted model for this chat, or set a memory model in Settings",
+            "No model to ask — pick an Ollama or hosted model for this chat, or set a helper model in Settings → Chat",
         },
         { status: 409 }
       )

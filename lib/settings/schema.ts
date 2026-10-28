@@ -218,6 +218,12 @@ export type ChatSettings = {
    * never — the chat stays exactly where it is until someone moves it.
    */
   autoSettleAfterDays: number
+  /**
+   * The model asked for chat titles and commit messages when the chat's own
+   * model is a CLI harness's, which a plain completion cannot call. An Ollama
+   * tag or a `<source>/<model>` id; empty = only the chat's own model.
+   */
+  helperModel: string
 }
 
 /**
@@ -249,30 +255,16 @@ export type FileSettings = {
  * switch: it is the one feature here that carries something learned in one
  * conversation into every later one, including conversations with a different
  * backend, so it is never something a user ends up with by accident.
+ *
+ * The agent keeps the files itself, Claude Code style, so there is no model to
+ * pick: the only knob is how much of them each turn is sent.
  */
 export type MemorySettings = {
   enabled: boolean
-  /** Ollama model id that runs the extraction; empty = the feature is inert. */
-  model: string
   /**
-   * Ollama embedding model behind retrieval and write-time dedupe. Pulled on
-   * first use when missing; when it cannot run, both fall back to lexical
-   * matching rather than turning memory off.
-   */
-  embedModel: string
-  /** Run an extraction pass after every turn, rather than only on demand. */
-  autoUpdate: boolean
-  /**
-   * Whether health, ethnicity, religion, politics and gender identity may be
-   * remembered. Off by default, and the extractor is told to skip them as well
-   * as filtered afterwards — a fact this specific about a person should take a
-   * deliberate act to store, not a passing mention.
-   */
-  includeSensitive: boolean
-  /**
-   * Characters of memory handed to one turn. The store itself may grow past
-   * it: a store that fits is sent whole, one that does not is ranked against
-   * the prompt and the most relevant facts fill the budget.
+   * Characters of file bodies handed to one turn. The index of every file is
+   * always sent; a body that does not fit is listed as not loaded, for an
+   * agent with tools to read on demand.
    */
   maxChars: number
 }
@@ -430,19 +422,12 @@ function defaultModelProviders(): Record<string, ModelProviderEntry> {
 }
 
 /**
- * Characters of memory handed to a turn. Small on purpose — every character
- * is paid for on every turn of every backend — which is why a store that has
- * outgrown it is *retrieved from* (`lib/memory/retrieve.ts`) rather than
- * truncated.
+ * Characters of memory bodies handed to a turn. Every character is paid for
+ * on every turn of every backend; past it, files are listed by description
+ * and read on demand rather than truncated.
  */
-export const DEFAULT_MEMORY_BUDGET = 2_000
-export const MEMORY_BUDGET_RANGE = { min: 500, max: 8_000 } as const
-/**
- * EmbeddingGemma 2, the 270M text-only tag. Memory embeds one-line facts and
- * the typed prompt, never an image, so the multimodal `latest` (740M, 1.3 GB)
- * buys nothing here but a download three times the size of this one (378 MB).
- */
-export const DEFAULT_MEMORY_EMBED_MODEL = "embeddinggemma-2:270m"
+export const DEFAULT_MEMORY_BUDGET = 6_000
+export const MEMORY_BUDGET_RANGE = { min: 1_000, max: 20_000 } as const
 
 /** Two weeks — long enough that a chat you are still coming back to survives. */
 export const DEFAULT_AUTO_SETTLE_DAYS = 14
@@ -501,6 +486,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
     generativeViews: true,
     newWorktreesStartFromOrigin: true,
     autoSettleAfterDays: DEFAULT_AUTO_SETTLE_DAYS,
+    helperModel: "",
   },
   files: {
     anyPath: true,
@@ -511,10 +497,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   },
   memory: {
     enabled: false,
-    model: "",
-    embedModel: DEFAULT_MEMORY_EMBED_MODEL,
-    autoUpdate: true,
-    includeSensitive: false,
     maxChars: DEFAULT_MEMORY_BUDGET,
   },
   handoff: {
@@ -566,7 +548,8 @@ export function normalizeSettings(raw: unknown): AppSettings {
     },
     providers: normalizeProviders(value.providers),
     modelProviders: normalizeModelProviders(value.modelProviders),
-    chat: normalizeChat(value.chat),
+    // The helper model used to be the memory extractor's (`memory.model`).
+    chat: normalizeChat(value.chat, asObject(value.memory).model),
     files: {
       anyPath: asObject(value.files).anyPath !== false,
     },
@@ -627,7 +610,7 @@ function normalizeProviders(raw: unknown): ProviderSettings {
 }
 
 /** Same rule as `normalizeProviders`: every field checked, not spread. */
-function normalizeChat(raw: unknown): ChatSettings {
+function normalizeChat(raw: unknown, legacyHelper?: unknown): ChatSettings {
   const fallback = DEFAULT_SETTINGS.chat
   const value = asObject(raw)
   return {
@@ -652,6 +635,7 @@ function normalizeChat(raw: unknown): ChatSettings {
       value.autoSettleAfterDays,
       fallback.autoSettleAfterDays
     ),
+    helperModel: (asString(value.helperModel) ?? asString(legacyHelper) ?? "").trim(),
   }
 }
 
@@ -907,14 +891,7 @@ function normalizeMemory(raw: unknown): MemorySettings {
           Math.max(MEMORY_BUDGET_RANGE.min, Math.round(value.maxChars))
         )
       : fallback.maxChars
-  return {
-    enabled: value.enabled === true,
-    model: asString(value.model)?.trim() ?? fallback.model,
-    embedModel: asString(value.embedModel)?.trim() || fallback.embedModel,
-    autoUpdate: value.autoUpdate !== false,
-    includeSensitive: value.includeSensitive === true,
-    maxChars: budget,
-  }
+  return { enabled: value.enabled === true, maxChars: budget }
 }
 
 function asString(value: unknown): string | undefined {

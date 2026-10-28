@@ -236,8 +236,8 @@ export function useChatTurns({
       /**
        * `$review` is this app's spelling of a skill; the harness has its own,
        * or none at all. Only the *prompt* is rewritten — `typedText` below
-       * stays exactly what the user typed, which is what the memory extractor
-       * is held to and what ArrowUp brings back.
+       * stays exactly what the user typed, which is what search indexes and
+       * what ArrowUp brings back.
        */
       const known = knownSkillNamesRef.current
       const promptText = dispatchSkillMentions(
@@ -379,9 +379,8 @@ export function useChatTurns({
       void runPrompt({
         sessionId,
         prompt: content,
-        // What the memory extractor is shown: the prompt carries the skill
-        // invocations, the prefix, the fenced attachments and the file note
-        // as well.
+        // The user's own words: the prompt carries the skill invocations, the
+        // prefix, the fenced attachments and the file note as well.
         typedText: text,
         prior,
         providerId: runProvider,

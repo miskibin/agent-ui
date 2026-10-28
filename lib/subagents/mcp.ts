@@ -16,6 +16,13 @@
  * the two together.
  */
 
+import {
+  callMemoryTool,
+  MEMORY_TOOL_DEFINITIONS,
+  MEMORY_TOOL_NAMES,
+  type MemoryTools,
+} from "@/lib/memory/tools"
+
 export const MCP_PROTOCOL_VERSIONS = [
   "2025-06-18",
   "2025-03-26",
@@ -261,7 +268,9 @@ function fail(id: JsonRpcId | null, code: number, message: string): JsonRpcRespo
 export async function handleRpc(
   message: JsonRpcMessage,
   tools: SubagentTools,
-  version = "0.0.0"
+  version = "0.0.0",
+  /** The user's memory, offered only while memory is on (`lib/memory/tools`). */
+  memory?: MemoryTools
 ): Promise<JsonRpcResponse | null> {
   const id = message.id ?? null
   const method = typeof message.method === "string" ? message.method : ""
@@ -285,17 +294,25 @@ export async function handleRpc(
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: MCP_SERVER_NAME, version },
-        instructions:
-          "Run other agent harnesses as subagents. Each run is a chat in the user's Agent UI app that they can watch live. Call list_harnesses first.",
+        instructions: memory
+          ? "Run other agent harnesses as subagents (each run is a chat in the user's Agent UI app that they can watch live; call list_harnesses first), and keep the user's persistent memory with the memory_* tools."
+          : "Run other agent harnesses as subagents. Each run is a chat in the user's Agent UI app that they can watch live. Call list_harnesses first.",
       })
     }
     case "ping":
       return ok(id, {})
     case "tools/list":
-      return ok(id, { tools: TOOL_DEFINITIONS })
+      return ok(id, {
+        tools: memory ? [...TOOL_DEFINITIONS, ...MEMORY_TOOL_DEFINITIONS] : TOOL_DEFINITIONS,
+      })
     case "tools/call": {
       const name = text(params.name, 100)
       if (!name) return fail(id, -32602, "Missing tool name")
+      if (MEMORY_TOOL_NAMES.has(name)) {
+        if (!memory) return ok(id, toolResult("Memory is turned off in this app's settings.", true))
+        const answer = await callMemoryTool(memory, name, record(params.arguments))
+        return ok(id, toolResult(answer.data, answer.isError))
+      }
       return ok(id, await callTool(tools, name, params.arguments))
     }
     default:

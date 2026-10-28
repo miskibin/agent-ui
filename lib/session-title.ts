@@ -83,7 +83,7 @@ function regeneratePrompt(previousTitle: string) {
  *
  * The chat's own model is used when it is one the app can reach directly (a
  * composite `<source>/<model>` id from Ollama or a configured provider);
- * a CLI harness's model is not, so the memory extractor's Ollama model is the
+ * a CLI harness's model is not, so `chat.helperModel` is the
  * fallback. Nothing to ask → 409, and the title is left alone.
  */
 export async function regenerateSessionTitle(id: string): Promise<Response> {
@@ -112,7 +112,7 @@ export async function regenerateSessionTitle(id: string): Promise<Response> {
   const settings = await readSettings()
   const candidates = [
     ...new Set(
-      [session.model, settings.memory.model].filter(
+      [session.model, settings.chat.helperModel].filter(
         (model): model is string => !!model && canComplete(settings, model)
       )
     ),
@@ -121,7 +121,7 @@ export async function regenerateSessionTitle(id: string): Promise<Response> {
     return NextResponse.json(
       {
         error:
-          "No model to ask — pick an Ollama or hosted model for this chat, or set a memory model in Settings",
+          "No model to ask — pick an Ollama or hosted model for this chat, or set a helper model in Settings → Chat",
       },
       { status: 409 }
     )

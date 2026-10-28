@@ -22,8 +22,6 @@ import {
 import { DiffWorkers } from "@/components/diff-workers"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
-import { MemoryNotice } from "@/components/memory-notice"
-import { MemoryUnavailableDialog } from "@/components/memory-unavailable-dialog"
 import { MessageActions } from "@/components/message-actions"
 import { PendingQuestion, PendingUserRequest } from "@/components/pending-question"
 import {
@@ -74,7 +72,6 @@ import {
   useFilePanel,
 } from "./hooks/use-file-panel"
 import { useIsDesktop } from "./hooks/use-is-desktop"
-import { useMemoryNotices } from "./hooks/use-memory-notices"
 import { useMessageQueue } from "./hooks/use-message-queue"
 import { usePromptStash } from "./hooks/use-prompt-stash"
 import { useSessionIndex } from "./hooks/use-session-index"
@@ -262,16 +259,6 @@ export default function ChatPage() {
     handleReviewChanges,
   } = panel
 
-  const {
-    memoryNotices,
-    setMemoryNotices,
-    runMemoryUpdate,
-    dismissMemoryNotice,
-    memoryOutage,
-    retryMemory,
-    dismissMemoryOutage,
-  } = useMemoryNotices(refs)
-
   const { stash, parkDraft, handleStash, restoreStash, discardStash } =
     usePromptStash(refs)
 
@@ -347,9 +334,7 @@ export default function ChatPage() {
     setThreads,
     setRuns,
     setFailures,
-    setMemoryNotices,
     patchLocal,
-    runMemoryUpdate,
     notificationSounds: settings?.chat.notificationSounds,
   })
 
@@ -381,16 +366,6 @@ export default function ChatPage() {
     setSettingsSection(null)
     refreshConfig()
   }, [refreshConfig])
-  /** The memory notice's "Edit what's remembered". */
-  const openMemorySettings = React.useCallback(
-    () => openSettings("memory"),
-    [openSettings]
-  )
-  /** The outage dialog's "Memory settings": the dialog has said its piece. */
-  const openMemorySettingsFromOutage = React.useCallback(() => {
-    dismissMemoryOutage()
-    openSettings("memory")
-  }, [dismissMemoryOutage, openSettings])
   /**
    * Settings → Data has deleted every chat. The page behind the panel still
    * holds the whole index, the open thread and its queue in memory, and would
@@ -1094,19 +1069,7 @@ export default function ChatPage() {
                           </>
                         ) : null
                       }
-                    >
-                      {/* Composed in through the list's own `children` slot: the
-                          marker belongs after the last turn, inside the
-                          conversation column, and `MessageList` stays
-                          untouched. */}
-                      {memoryNotices[activeId] && !isGenerating ? (
-                        <MemoryNotice
-                          changes={memoryNotices[activeId].changes}
-                          onDismiss={() => dismissMemoryNotice(activeId)}
-                          onOpenMemorySettings={openMemorySettings}
-                        />
-                      ) : null}
-                    </MessageList>
+                    />
                   )}
 
                   <div
@@ -1338,16 +1301,6 @@ export default function ChatPage() {
           onImported={reloadSessions}
         />
       ) : null}
-
-      <MemoryUnavailableDialog
-        open={memoryOutage !== null}
-        baseUrl={memoryOutage?.baseUrl ?? ""}
-        retrying={memoryOutage?.retrying ?? false}
-        stillDown={memoryOutage?.stillDown ?? false}
-        onRetry={retryMemory}
-        onClose={dismissMemoryOutage}
-        onOpenSettings={openMemorySettingsFromOutage}
-      />
     </div>
   )
 }

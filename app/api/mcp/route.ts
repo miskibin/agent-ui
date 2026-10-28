@@ -21,6 +21,13 @@ import {
   waitForRun,
 } from "@/lib/subagents/runs"
 import { isValidSessionId } from "@/lib/store/sessions"
+import {
+  deleteMemoryFile,
+  readMemoryFiles,
+  writeMemoryFile,
+} from "@/lib/memory/server"
+import type { MemoryTools } from "@/lib/memory/tools"
+import { readSettings } from "@/lib/settings/server"
 import packageJson from "@/package.json"
 
 export const runtime = "nodejs"
@@ -107,7 +114,12 @@ export async function POST(req: Request) {
     },
   }
 
-  const answer = await handleRpc(message, tools, packageJson.version)
+  // Read per message, so switching memory off takes the tools away at once.
+  const memory: MemoryTools | undefined = (await readSettings()).memory.enabled
+    ? { list: readMemoryFiles, write: writeMemoryFile, remove: deleteMemoryFile }
+    : undefined
+
+  const answer = await handleRpc(message, tools, packageJson.version, memory)
   if (!answer) return new Response(null, { status: 202 })
   return NextResponse.json(answer)
 }
