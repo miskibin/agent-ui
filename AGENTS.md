@@ -329,11 +329,12 @@ one interface:
   reasoning families; and an endpoint that 400s on `reasoning_effort` takes that model out for
   the rest of the process. pi writes the same predicate into `models.json` as `reasoning`, which
   is what makes its `--thinking` reach the model at all.
-- Themes: five, and that is the set. Modern Minimal and Claude are tweakcn registry
+- Themes: eight, and that is the set. Modern Minimal and Claude are tweakcn registry
   items, verbatim, in `lib/theme/themes/generated.ts` (`scripts/import-tweakcn.mjs` refreshes
-  only those two). Ink, Grove and Dusk are hand-tuned in `lib/theme/themes/authored.ts` —
-  the rest of that catalog stained the type, shipped a disabled-looking primary, or put a
-  near-white rule on a dark sidebar, and it does not come back. `lib/theme/apply.ts` emits
+  only those two). Ink, Grove and Dusk, plus the louder Ember, Rose and Iris, are hand-tuned
+  in `lib/theme/themes/authored.ts` — the rest of that catalog stained the type, shipped a
+  disabled-looking primary, or put a near-white rule on a dark sidebar, and it does not come
+  back. `lib/theme/apply.ts` emits
   every variable — colors, radius, fonts, shadows, tracking — into one `[data-theme]`
   stylesheet, `app/fonts.ts` loads the typefaces they name, and the app's own surface aliases
   in `globals.css` are `color-mix`ed from those tokens. Do not hand-edit `generated.ts`.

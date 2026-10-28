@@ -9,10 +9,19 @@ import {
   findPreset,
 } from "@/lib/theme/presets"
 
-const SHIPPED = ["modern-minimal", "claude", "ink", "grove", "dusk"]
-const AUTHORED = ["ink", "grove", "dusk"]
+const SHIPPED = [
+  "modern-minimal",
+  "claude",
+  "ink",
+  "grove",
+  "dusk",
+  "ember",
+  "rose",
+  "iris",
+]
+const AUTHORED = ["ink", "grove", "dusk", "ember", "rose", "iris"]
 
-test("the shipped set is the five themes that hold up", () => {
+test("the shipped set is the eight themes that hold up", () => {
   assert.deepEqual(
     THEME_PRESETS.map((preset) => preset.id),
     SHIPPED

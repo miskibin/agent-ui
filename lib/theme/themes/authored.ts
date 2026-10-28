@@ -4,11 +4,12 @@
  * Modern Minimal and Claude stay verbatim registry items (`generated.ts`).
  * Everything else from that catalog failed in this app: stained body text,
  * a primary that reads as disabled, a handwriting face, letter-spacing on
- * every glyph, or a near-white rule on a dark sidebar. These three follow
+ * every glyph, or a near-white rule on a dark sidebar. The themes here follow
  * the structure of the two that work — neutral-enough surfaces, one accent
  * that still reads as a control, quiet shadows, Inter — and each pair was
  * checked in light and dark at the standard contrast level so the repair
- * pass has nothing to move.
+ * pass has nothing to move. Ink, Grove and Dusk stay quiet. Ember, Rose and
+ * Iris push the primary harder; the page around it does not.
  */
 
 import type { TweakcnTheme, TweakcnVars } from "./types"
@@ -330,4 +331,134 @@ const dusk = theme(
   }
 )
 
-export const AUTHORED_THEMES: TweakcnTheme[] = [ink, grove, dusk]
+/**
+ * A louder primary on the same quiet page. The hue tints the surfaces just
+ * enough to belong to the button; chroma stays under the stain caps, and the
+ * primary is the darkest saturated colour at that hue that still holds white
+ * type (a hair above the 3.6:1 button bar, in both modes).
+ */
+function vivid(
+  id: string,
+  name: string,
+  description: string,
+  hue: number,
+  lightPrimary: string,
+  darkPrimary: string
+): TweakcnTheme {
+  const h = String(hue)
+  return theme(
+    id,
+    name,
+    description,
+    "0.625rem",
+    {
+      background: `oklch(0.982 0.016 ${h})`,
+      foreground: `oklch(0.32 0.024 ${h})`,
+      card: `oklch(0.993 0.008 ${h})`,
+      "card-foreground": `oklch(0.32 0.024 ${h})`,
+      popover: `oklch(0.995 0.006 ${h})`,
+      "popover-foreground": `oklch(0.32 0.024 ${h})`,
+      primary: lightPrimary,
+      "primary-foreground": WHITE,
+      secondary: `oklch(0.95 0.018 ${h})`,
+      "secondary-foreground": `oklch(0.36 0.03 ${h})`,
+      muted: `oklch(0.948 0.016 ${h})`,
+      "muted-foreground": `oklch(0.46 0.028 ${h})`,
+      accent: `oklch(0.948 0.016 ${h})`,
+      "accent-foreground": `oklch(0.32 0.024 ${h})`,
+      destructive: RED,
+      "destructive-foreground": WHITE,
+      border: `oklch(0.84 0.02 ${h})`,
+      input: `oklch(0.84 0.02 ${h})`,
+      ring: lightPrimary,
+      "chart-1": lightPrimary,
+      "chart-2": `oklch(0.62 0.12 ${h})`,
+      "chart-3": `oklch(0.4 0.1 ${h})`,
+      "chart-4": `oklch(0.7 0.08 ${h})`,
+      "chart-5": `oklch(0.5 0.06 ${h})`,
+      sidebar: `oklch(0.955 0.02 ${h})`,
+      "sidebar-foreground": `oklch(0.32 0.024 ${h})`,
+      "sidebar-primary": lightPrimary,
+      "sidebar-primary-foreground": WHITE,
+      "sidebar-accent": `oklch(0.93 0.02 ${h})`,
+      "sidebar-accent-foreground": `oklch(0.32 0.024 ${h})`,
+      "sidebar-border": `oklch(0.83 0.02 ${h})`,
+      "sidebar-ring": lightPrimary,
+    },
+    {
+      background: `oklch(0.19 0.018 ${h})`,
+      foreground: `oklch(0.91 0.02 ${h})`,
+      card: `oklch(0.245 0.022 ${h})`,
+      "card-foreground": `oklch(0.91 0.02 ${h})`,
+      popover: `oklch(0.265 0.024 ${h})`,
+      "popover-foreground": `oklch(0.91 0.02 ${h})`,
+      primary: darkPrimary,
+      "primary-foreground": WHITE,
+      secondary: `oklch(0.28 0.02 ${h})`,
+      "secondary-foreground": `oklch(0.91 0.02 ${h})`,
+      muted: `oklch(0.24 0.018 ${h})`,
+      "muted-foreground": `oklch(0.74 0.024 ${h})`,
+      accent: `oklch(0.25 0.02 ${h})`,
+      "accent-foreground": `oklch(0.91 0.02 ${h})`,
+      destructive: RED,
+      "destructive-foreground": WHITE,
+      border: `oklch(0.36 0.028 ${h})`,
+      input: `oklch(0.38 0.028 ${h})`,
+      ring: darkPrimary,
+      "chart-1": darkPrimary,
+      "chart-2": `oklch(0.7 0.12 ${h})`,
+      "chart-3": `oklch(0.5 0.1 ${h})`,
+      "chart-4": `oklch(0.78 0.08 ${h})`,
+      "chart-5": `oklch(0.42 0.08 ${h})`,
+      sidebar: `oklch(0.16 0.02 ${h})`,
+      "sidebar-foreground": `oklch(0.91 0.02 ${h})`,
+      "sidebar-primary": darkPrimary,
+      "sidebar-primary-foreground": WHITE,
+      "sidebar-accent": `oklch(0.22 0.022 ${h})`,
+      "sidebar-accent-foreground": `oklch(0.91 0.02 ${h})`,
+      "sidebar-border": `oklch(0.32 0.024 ${h})`,
+      "sidebar-ring": darkPrimary,
+    }
+  )
+}
+
+/**
+ * Ayu's orange, taken down until white type holds. Darker and hotter than
+ * Claude's clay, so the two warm themes don't read as the same button.
+ */
+const ember = vivid(
+  "ember",
+  "Ember",
+  "Burnt orange, hotter than clay.",
+  35,
+  "oklch(0.46 0.161 35)",
+  "oklch(0.58 0.203 35)"
+)
+
+/**
+ * Rose Pine's "love" and Tokyo Night's red, on a page that stays paper.
+ * Delete stays the brighter orange-red, so a rose button is not an error.
+ */
+const rose = vivid(
+  "rose",
+  "Rose",
+  "A hot rose on quiet paper.",
+  346,
+  "oklch(0.47 0.199 346)",
+  "oklch(0.58 0.22 346)"
+)
+
+/**
+ * The loud indigo Dusk refuses to be. Dusk is a dusty violet; this one is a
+ * jewel, and the transcript around it is still neutral.
+ */
+const iris = vivid(
+  "iris",
+  "Iris",
+  "A jewel indigo, loud on purpose.",
+  276,
+  "oklch(0.48 0.24 276)",
+  "oklch(0.58 0.231 276)"
+)
+
+export const AUTHORED_THEMES: TweakcnTheme[] = [ink, grove, dusk, ember, rose, iris]

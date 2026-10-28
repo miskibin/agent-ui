@@ -5,7 +5,7 @@
  * Regenerate: node scripts/import-tweakcn.mjs
  *
  * Only Modern Minimal and Claude are taken from the registry — they are the
- * two that hold up in this app. Ink, Grove and Dusk are hand-tuned in
+ * two that hold up in this app. The others are hand-tuned in
  * ./authored.ts and must not be folded back into this file.
  *
  * Registry items are stored verbatim: `cssVars.theme` carries fonts, radius
