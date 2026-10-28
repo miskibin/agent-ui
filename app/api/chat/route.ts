@@ -29,6 +29,7 @@ import {
 import { TurnProcesses } from "@/lib/background-processes"
 import { crossOriginRefusal } from "@/lib/request-origin"
 import { createAskUser } from "@/lib/turn-requests"
+import { bridgeServerFor, requestOrigin } from "@/lib/subagents/bridge"
 import { readSettings } from "@/lib/settings/server"
 import { getSession, readMessages, upsertMessages } from "@/lib/store/sessions"
 import type { SessionPatch, StoredMessage } from "@/lib/store/types"
@@ -71,6 +72,11 @@ type ChatBody = {
    * that is pasted into every later conversation.
    */
   typedText?: string
+  /**
+   * Set by the subagent runner (`lib/subagents/runs`), never by the page: the
+   * chat whose agent wrote this prompt. Stored on the user message.
+   */
+  subagentOf?: string
 }
 
 /**
@@ -143,6 +149,7 @@ export async function POST(req: Request) {
     // Only when it says something `content` does not; an unchanged prompt is
     // its own typed text and does not need storing twice.
     ...(typedText && typedText !== prompt ? { metadata: { typedText } } : null),
+    ...(body.subagentOf ? { metadata: { subagentOf: body.subagentOf } } : null),
   }
 
   const shouldTitle =
@@ -229,6 +236,22 @@ export async function POST(req: Request) {
         .filter(Boolean)
         .join("\n\n") || undefined
 
+  /**
+   * The subagent bridge (`lib/subagents`): lets this chat's agent start other
+   * harnesses as child chats. Only a top-level chat gets it — a subagent that
+   * could start subagents is a fork bomb with a nicer name — and every child
+   * inherits this turn's permission mode.
+   */
+  const mcpServers = session.parentId
+    ? undefined
+    : [
+        await bridgeServerFor({
+          origin: requestOrigin(req),
+          parentId: sessionId,
+          permissionMode,
+        }),
+      ]
+
   const abort = new AbortController()
   const onClientGone = () => abort.abort()
   req.signal.addEventListener("abort", onClientGone)
@@ -282,6 +305,7 @@ export async function POST(req: Request) {
           standingContext,
           turnContext: prepared.handoff?.text,
           sessionId: providerSessionId,
+          mcpServers,
           effort: info.capabilities.effort ? body.effort : undefined,
           permissionMode,
           cwd,

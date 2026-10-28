@@ -3,6 +3,7 @@ import "server-only"
 // Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
 
 import { execFile, type ChildProcess } from "node:child_process"
+import { join } from "node:path"
 
 /**
  * Killing a harness means killing everything it started.
@@ -27,6 +28,17 @@ import { execFile, type ChildProcess } from "node:child_process"
  */
 
 /** Whether a spawn on this platform can lead a process group. */
+
+/**
+ * `taskkill` by absolute path, not by a PATH lookup: a folder earlier on PATH
+ * could otherwise supply a `taskkill.exe` of its own to a process that runs
+ * on every turn's end.
+ */
+const TASKKILL = join(
+  process.env.SystemRoot ?? "C:\\Windows",
+  "System32",
+  "taskkill.exe"
+)
 export const DETACH_CHILDREN = process.platform !== "win32"
 
 /** Spread into a `spawn` options object to put the child in its own group. */
@@ -53,10 +65,18 @@ export function killProcessTree(
 
   if (!DETACH_CHILDREN) {
     try {
-      execFile("taskkill", ["/T", "/F", "/PID", String(child.pid)], () => {
-        // Best effort: the tree may already be gone, and there is nothing left
-        // to report it to.
-      })
+      // `windowsHide`: from a console-less parent (the desktop sidecar)
+      // taskkill would otherwise open a console window of its own, which
+      // takes the foreground from whatever app the user is in.
+      execFile(
+        /*turbopackIgnore: true*/ TASKKILL,
+        ["/T", "/F", "/PID", String(child.pid)],
+        { windowsHide: true },
+        () => {
+          // Best effort: the tree may already be gone, and there is nothing left
+          // to report it to.
+        }
+      )
     } catch {
       try {
         child.kill()

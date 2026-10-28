@@ -2,6 +2,7 @@
 
 import {
   AlarmClockOff,
+  CornerDownRight,
   Archive,
   ArchiveRestore,
   ExternalLink,
@@ -203,31 +204,46 @@ export function useSidebarItems({
             session.messageCount === 0
             ? "New chat"
             : (
-                <AgentLabel
-                  providerId={session.providerId}
-                  providerName={providerName(session.providerId)}
-                  modelName={
-                    session.providerId === providerId
-                      ? (models.find((m) => m.id === session.model)?.name ??
-                        session.model)
-                      : session.model
-                  }
-                />
+                <>
+                  {/* Filed under the chat whose agent started it. */}
+                  {session.parentId ? "Subagent · " : null}
+                  <AgentLabel
+                    providerId={session.providerId}
+                    providerName={providerName(session.providerId)}
+                    modelName={
+                      session.providerId === providerId
+                        ? (models.find((m) => m.id === session.model)?.name ??
+                          session.model)
+                        : session.model
+                    }
+                  />
+                </>
               )
+        // Three colours and no more: amber for a chat waiting on an answer,
+        // the app's own for one that is working, destructive for one that
+        // broke. A chat asking a question outranks one that is merely busy.
+        const status = awaiting.has(session.id)
+          ? ("pending" as const)
+          : run
+            ? ("streaming" as const)
+            : failures[session.id]
+              ? ("fault" as const)
+              : undefined
         return {
           id: session.id,
           title: session.title,
           pinned: session.pinned,
-          // Three colours and no more: amber for a chat waiting on an answer,
-          // the app's own for one that is working, destructive for one that
-          // broke. A chat asking a question outranks one that is merely busy.
-          status: awaiting.has(session.id)
-            ? "pending"
-            : run
-              ? "streaming"
-              : failures[session.id]
-                ? "fault"
-                : undefined,
+          status,
+          // A subagent chat sits right under its parent (`nestUnderParents`);
+          // the corner says so wherever no status dot needs the slot.
+          leading:
+            session.parentId && !status ? (
+              <CornerDownRight
+                aria-hidden
+                data-slot="sidebar-subagent-mark"
+                className="size-3 text-muted-foreground/70"
+              />
+            ) : undefined,
           // Background work should not compete with the chat you are reading:
           // a turn running in another chat dims until you hover it. A chat
           // waiting on an *answer* never recedes — it is the one asking.

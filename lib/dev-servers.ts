@@ -170,13 +170,28 @@ function parseLsofPort(name: string): number | null {
   return port
 }
 
+/**
+ * Windows: started with no console at all (`detached` is `DETACHED_PROCESS`).
+ * `windowsHide` alone still gives a console program a hidden console host,
+ * and one started on a timer while another app has focus can take the
+ * keyboard from it. Safe here because this program starts no console
+ * children of its own, which would otherwise open a visible window.
+ */
+const NO_CONSOLE = process.platform === "win32" ? { detached: true } : {}
+
 /** One bounded `lsof`; null when there is none, or it failed. */
 function runNetstat(): Promise<string | null> {
   return new Promise((resolve) => {
     execFile(
       /*turbopackIgnore: true*/ "netstat",
       ["-ano", "-p", "TCP"],
-      { timeout: LSOF_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: "utf8" },
+      {
+        timeout: LSOF_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+        encoding: "utf8",
+        ...NO_CONSOLE,
+      },
       (error, stdout) => resolve(stdout && stdout.trim() ? stdout : null)
     )
   })
@@ -198,7 +213,13 @@ function runNetstatV6(): Promise<string | null> {
     execFile(
       /*turbopackIgnore: true*/ "netstat",
       ["-ano", "-p", "TCPv6"],
-      { timeout: LSOF_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024, windowsHide: true, encoding: "utf8" },
+      {
+        timeout: LSOF_TIMEOUT_MS,
+        maxBuffer: 4 * 1024 * 1024,
+        windowsHide: true,
+        encoding: "utf8",
+        ...NO_CONSOLE,
+      },
       (error, stdout) => resolve(stdout && stdout.trim() ? stdout : null)
     )
   })

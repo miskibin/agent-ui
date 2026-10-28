@@ -63,7 +63,13 @@ export async function POST(req: Request) {
    * fallback for turns written before that field existed.
    */
   const userMessages = messages
-    .filter((message) => message.sender === "user" && !isInternalMessage(message))
+    .filter(
+      (message) =>
+        message.sender === "user" &&
+        !isInternalMessage(message) &&
+        // A subagent's prompt was written by another agent, not the user.
+        !message.metadata?.subagentOf
+    )
     .map((message) => message.metadata?.typedText ?? message.content)
 
   const result = await extractMemory({

@@ -12,7 +12,7 @@ use std::collections::hash_map::RandomState;
 use std::hash::BuildHasher;
 use std::io::{BufRead, BufReader, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -68,6 +68,14 @@ const LOG_TAIL_BYTES: usize = 4096;
 /// the shell handing the gesture back to the page instead of acting on it.
 const QUIT_HOLD_EVENT: &str = "agent-ui://quit-hold";
 const QUIT_REQUESTED_EVENT: &str = "agent-ui://quit-requested";
+/// The page saying it received a `QUIT_REQUESTED_EVENT` and is handling it.
+const QUIT_ACK_EVENT: &str = "agent-ui://quit-ack";
+
+/// How long a held quit waits for the page to acknowledge it. A page that
+/// does not answer in this time is hung — a renderer frozen after the machine
+/// resumed from hibernation is the case that motivated it — and cannot be
+/// asking to stay open, so the quit goes through.
+const QUIT_ACK_TIMEOUT: Duration = Duration::from_millis(1500);
 
 /// Whether the page has asked for the next quit to be held.
 ///
@@ -78,17 +86,46 @@ const QUIT_REQUESTED_EVENT: &str = "agent-ui://quit-requested";
 /// away. Once the page decides the user meant it, it quits through the process
 /// plugin's `exit`, which arrives here as an `ExitRequested` carrying a code
 /// and is therefore never held.
+///
+/// "Disarms itself when the page goes away" covers a page that unloads, not
+/// one that hangs: a frozen renderer runs no cleanup and never answers. So
+/// every forwarded request is numbered and the page acknowledges each one;
+/// a request still unanswered after `QUIT_ACK_TIMEOUT` exits for real.
 #[derive(Default)]
-struct QuitHold(AtomicBool);
+struct QuitHold {
+    armed: AtomicBool,
+    requested: AtomicU64,
+    acked: AtomicU64,
+}
 
 impl QuitHold {
     fn armed(&self) -> bool {
-        self.0.load(Ordering::Relaxed)
+        self.armed.load(Ordering::Relaxed)
     }
 
     fn set(&self, armed: bool) {
-        self.0.store(armed, Ordering::Relaxed);
+        self.armed.store(armed, Ordering::Relaxed);
     }
+
+    fn ack(&self) {
+        let requested = self.requested.load(Ordering::Relaxed);
+        self.acked.fetch_max(requested, Ordering::Relaxed);
+    }
+}
+
+/// Hands a quit to the page, and quits anyway if the page never answers.
+fn forward_quit(handle: &AppHandle) {
+    let hold = handle.state::<QuitHold>();
+    let request = hold.requested.fetch_add(1, Ordering::Relaxed) + 1;
+    let _ = handle.emit(QUIT_REQUESTED_EVENT, ());
+    let handle = handle.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(QUIT_ACK_TIMEOUT);
+        if handle.state::<QuitHold>().acked.load(Ordering::Relaxed) < request {
+            handle.state::<Sidecar>().kill();
+            handle.exit(0);
+        }
+    });
 }
 
 /// Owns the Node child process. Managed state, so it is killed on app exit
@@ -173,6 +210,10 @@ pub fn run() {
                 let armed = serde_json::from_str::<bool>(event.payload()).unwrap_or(false);
                 handle.state::<QuitHold>().set(armed);
             });
+            let handle = app.handle().clone();
+            app.listen(QUIT_ACK_EVENT, move |_| {
+                handle.state::<QuitHold>().ack();
+            });
 
             // Closing the window is quitting: there is one window and no tray.
             // While the hold is armed the close is refused and forwarded to the
@@ -182,7 +223,7 @@ pub fn run() {
                 if let WindowEvent::CloseRequested { api, .. } = event {
                     if handle.state::<QuitHold>().armed() {
                         api.prevent_close();
-                        let _ = handle.emit(QUIT_REQUESTED_EVENT, ());
+                        forward_quit(&handle);
                     }
                 }
             });
@@ -217,7 +258,7 @@ pub fn run() {
         RunEvent::ExitRequested { code, api, .. } => {
             if code.is_none() && handle.state::<QuitHold>().armed() {
                 api.prevent_exit();
-                let _ = handle.emit(QUIT_REQUESTED_EVENT, ());
+                forward_quit(handle);
                 return;
             }
             handle.state::<Sidecar>().kill();
@@ -351,9 +392,14 @@ fn start_app_server(
         }
 
         // Both the splash and the window background are the app's dark
-        // neutral, so revealing here cannot flash white.
+        // neutral, so revealing here cannot flash white. Focus only a window
+        // that is appearing now: once the splash has been up, the user has
+        // had a window to look at and may have gone to another app while a
+        // cold start ran — pulling them back would be stealing focus.
         let _ = window.show();
-        let _ = window.set_focus();
+        if !splash_shown {
+            let _ = window.set_focus();
+        }
     });
 
     Ok(())

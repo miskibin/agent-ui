@@ -1,6 +1,6 @@
 import type { AgentStreamEvent, AgentTokenUsage } from "@/lib/cursor-agent-types"
 import { exitCodeFrom } from "@/lib/providers/exit-code"
-import type { PermissionMode } from "@/lib/providers/types"
+import type { McpServerConfig, PermissionMode } from "@/lib/providers/types"
 import {
   applyUsageLimitsUpdate,
   clampPercent,
@@ -63,19 +63,47 @@ const FULL_ACCESS_TOOLS = "Bash,Edit,Write,NotebookEdit,WebFetch,WebSearch"
  *   guardrails, and it refuses to start at all under root — which anything
  *   packaged into a container would hit as a plain startup failure.
  */
-export function permissionArgs(mode: PermissionMode): string[] {
+export function permissionArgs(
+  mode: PermissionMode,
+  /** Allow rules for attached MCP servers, e.g. `mcp__agent-ui`. */
+  extraAllowed: string[] = []
+): string[] {
+  const allow = (tools: string[]) =>
+    tools.length ? ["--allowedTools", tools.join(",")] : []
   if (mode === "read-only") {
-    return ["--permission-mode", "dontAsk", "--disallowedTools", WRITE_TOOLS]
+    return [
+      "--permission-mode",
+      "dontAsk",
+      "--disallowedTools",
+      WRITE_TOOLS,
+      ...allow(extraAllowed),
+    ]
   }
   if (mode === "full") {
     return [
       "--permission-mode",
       "acceptEdits",
-      "--allowedTools",
-      FULL_ACCESS_TOOLS,
+      ...allow([FULL_ACCESS_TOOLS, ...extraAllowed]),
     ]
   }
-  return ["--permission-mode", "acceptEdits"]
+  return ["--permission-mode", "acceptEdits", ...allow(extraAllowed)]
+}
+
+/**
+ * The `--mcp-config` document for the servers a turn is given. Written to a
+ * 0600 file by the caller rather than passed inline: the bridge token rides
+ * in its headers, and argv is readable by every process on the machine.
+ */
+export function mcpConfigJson(servers: McpServerConfig[]): string {
+  const mcpServers: Record<string, unknown> = {}
+  for (const server of servers) {
+    mcpServers[server.name] = {
+      type: "http",
+      url: server.url,
+      ...(server.headers ? { headers: server.headers } : null),
+    }
+  }
+  return JSON.stringify({ mcpServers })
 }
 
 /**
@@ -92,6 +120,9 @@ export function buildArgs(options: {
   effort?: string
   sessionId?: string
   permissionMode: PermissionMode
+  /** Path of a file holding `mcpConfigJson`, and the servers it names. */
+  mcpConfigPath?: string
+  mcpServerNames?: string[]
 }): string[] {
   const args = [
     "-p",
@@ -107,7 +138,16 @@ export function buildArgs(options: {
     args.push("--effort", options.effort)
   }
   if (options.sessionId) args.push("--resume", options.sessionId)
-  args.push(...permissionArgs(options.permissionMode))
+  const mcpNames = options.mcpConfigPath ? (options.mcpServerNames ?? []) : []
+  if (options.mcpConfigPath) args.push("--mcp-config", options.mcpConfigPath)
+  // An MCP tool is unapproved in every `-p` mode until a rule names it, and
+  // there is nobody to approve it; the bare server name allows all its tools.
+  args.push(
+    ...permissionArgs(
+      options.permissionMode,
+      mcpNames.map((name) => `mcp__${name}`)
+    )
+  )
   return args
 }
 

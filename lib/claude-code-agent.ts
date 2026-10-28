@@ -1,10 +1,14 @@
 import "server-only"
 
 import { spawn, type ChildProcess } from "node:child_process"
+import { createHash } from "node:crypto"
+import { mkdir, writeFile } from "node:fs/promises"
+import { join } from "node:path"
 
 import {
   buildArgs,
   ClaudeCodeTranslator,
+  mcpConfigJson,
   parseCliLine,
 } from "@/lib/claude-code-protocol"
 import { rememberContextWindow } from "@/lib/claude-code-context"
@@ -18,7 +22,12 @@ import {
   killProcessTree,
   trackChildProcess,
 } from "@/lib/process-tree"
-import type { PermissionMode, TurnProcessScope } from "@/lib/providers/types"
+import type {
+  McpServerConfig,
+  PermissionMode,
+  TurnProcessScope,
+} from "@/lib/providers/types"
+import { dataDir } from "@/lib/settings/server"
 import { LineBuffer } from "@/lib/stream-framing"
 
 /**
@@ -42,6 +51,8 @@ export type ClaudeCodeRunOptions = {
   permissionMode: PermissionMode
   workspace: string
   binPath?: string
+  /** MCP servers to attach for this turn (the app's subagent bridge). */
+  mcpServers?: McpServerConfig[]
   /** Keeps what the agent left running at a normal end; see `AgentRunOptions`. */
   processes?: TurnProcessScope
   signal?: AbortSignal
@@ -55,7 +66,18 @@ export async function* runClaudeCodeAgent(
   const startedAt = Date.now()
   const command = resolveClaudeCodeCommand(options.binPath)
   const { cmd, args: prefix } = command
-  const args = [...prefix, ...buildArgs(options)]
+  const mcpServers = options.mcpServers ?? []
+  const mcpConfigPath = mcpServers.length
+    ? await writeMcpConfig(mcpServers).catch(() => undefined)
+    : undefined
+  const args = [
+    ...prefix,
+    ...buildArgs({
+      ...options,
+      mcpConfigPath,
+      mcpServerNames: mcpServers.map((server) => server.name),
+    }),
+  ]
 
   // Resolved from PATH / settings at runtime, so there is nothing for the
   // bundler to trace — same hint as `lib/cursor-agent.ts` uses.
@@ -259,4 +281,19 @@ function killClaude(child: ChildProcess) {
   } catch {
     /* already gone */
   }
+}
+
+/**
+ * `--mcp-config` takes a path or inline JSON; a path, because the bridge token
+ * is in the headers and argv is world-readable. One file per distinct config
+ * under the app's data directory, owner-only, rewritten in place.
+ */
+async function writeMcpConfig(servers: McpServerConfig[]): Promise<string> {
+  const json = mcpConfigJson(servers)
+  const dir = join(/*turbopackIgnore: true*/ dataDir(), "mcp")
+  await mkdir(dir, { recursive: true, mode: 0o700 })
+  const name = createHash("sha256").update(json).digest("hex").slice(0, 16)
+  const file = join(/*turbopackIgnore: true*/ dir, `claude-code-${name}.json`)
+  await writeFile(file, json, { mode: 0o600 })
+  return file
 }

@@ -51,7 +51,7 @@ export function useFolderStatus(cwd: string, sessionId: string) {
     if (!cwd || !sessionId) return
     let cancelled = false
     const load = () => {
-      if (document.hidden) return
+      if (!pollable()) return
       api
         .fetchGitStatus(sessionId)
         .then((next) => {
@@ -82,6 +82,18 @@ export function useFolderStatus(cwd: string, sessionId: string) {
 }
 
 // Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
+
+/**
+ * Whether a background poll may run: only while this window is the one the
+ * user is in. Each poll spawns processes server-side (`git`, `netstat`), and
+ * on Windows a console process started while another app has focus can take
+ * the keyboard from it — the user typing elsewhere loses their caret every
+ * time the timer fires. A `focus` listener refreshes on the way back, so
+ * nothing is stale by the time anyone looks.
+ */
+export function pollable() {
+  return !document.hidden && document.hasFocus()
+}
 
 /** A dev server comes and goes with a command; the branch state does not. */
 const DEV_SERVER_POLL_MS = 30_000
@@ -131,7 +143,7 @@ export function useDevServers(sessionId: string) {
     if (!sessionId) return
     let cancelled = false
     const load = () => {
-      if (document.hidden) return
+      if (!pollable()) return
       probeDevServers(sessionId)
         .then((next) => {
           if (!cancelled) setServers(next)

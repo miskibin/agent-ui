@@ -120,6 +120,25 @@ serve `/responses`; LiteLLM, OpenRouter, OpenAI and current Ollama do.
 See the [official app-server documentation](https://learn.chatgpt.com/docs/app-server)
 for the protocol used by this integration.
 
+### Subagents on other harnesses
+
+A Claude Code chat can hand work to any other harness — pi, tinyagent, Codex,
+Cursor, Ollama — as a subagent. Each subagent is a real chat, listed under the
+one that started it, streaming live, and resumable later. It works in the same
+folder, under the same permission mode. Claude Code is given the app's
+`agent-ui` MCP server automatically (`run_subagent`, `get_subagent`,
+`list_harnesses`, …). Calls can block until the subagent answers, or run in
+the background so several go at once.
+
+The same tools are on the command line, and can be given to a Claude Code you
+run yourself:
+
+```bash
+node bin/agent-ui.mjs harnesses
+node bin/agent-ui.mjs run pi --model ollama/qwen3:8b "Summarize lib/handoff"
+node bin/agent-ui.mjs mcp-config   # prints the `claude mcp add` line
+```
+
 ## Quick start
 
 Requires Node.js 20.9 or newer and [bun](https://bun.sh) (the package manager).

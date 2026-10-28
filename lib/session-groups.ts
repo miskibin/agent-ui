@@ -239,8 +239,8 @@ export function groupSessions(
   }
 
   const folders = Array.from(buckets, ([id, bucket]) => {
-    const entries = [...bucket.entries].sort(
-      (a, b) => b.meta.updatedAt - a.meta.updatedAt
+    const entries = nestUnderParents(
+      [...bucket.entries].sort((a, b) => b.meta.updatedAt - a.meta.updatedAt)
     )
     // The newest chat is what the header describes: its worktree, else its
     // branch. A folder holding one worktree chat and one plain chat is still
@@ -292,6 +292,32 @@ export function groupSessions(
 }
 
 type Entry = { meta: SessionMeta; item: ChatSidebarItemData }
+
+/**
+ * Moves each subagent chat (`SessionMeta.parentId`) to directly under the chat
+ * that started it, keeping the given order otherwise: a parent sits where its
+ * own activity puts it and carries its children with it, newest first. A
+ * child whose parent is not in this list stays where it was.
+ */
+export function nestUnderParents<T extends { meta: SessionMeta }>(entries: T[]): T[] {
+  const present = new Set(entries.map((entry) => entry.meta.id))
+  const children = new Map<string, T[]>()
+  for (const entry of entries) {
+    const parent = entry.meta.parentId
+    if (!parent || parent === entry.meta.id || !present.has(parent)) continue
+    const list = children.get(parent) ?? []
+    list.push(entry)
+    children.set(parent, list)
+  }
+  if (children.size === 0) return entries
+  const nested = new Set([...children.values()].flat().map((entry) => entry.meta.id))
+  const out: T[] = []
+  for (const entry of entries) {
+    if (nested.has(entry.meta.id)) continue
+    out.push(entry, ...(children.get(entry.meta.id) ?? []))
+  }
+  return out
+}
 
 function sortByWake(entries: Entry[]) {
   return [...entries].sort(
