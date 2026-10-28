@@ -31,7 +31,7 @@ import { folderHue, folderMonogram, type FolderLogo } from "@/lib/folder-logo"
  * before the favicons within each directory. Vector before raster, because a
  * 16px mark on a retina display is the whole point.
  */
-const CANDIDATES = [
+const ROOT_CANDIDATES = [
   "public/logo.svg",
   "public/logo.png",
   "public/icon.svg",
@@ -72,6 +72,28 @@ const CANDIDATES = [
   "favicon.png",
 ]
 
+/**
+ * Where a repository keeps the app that carries its face, when the root is
+ * not that app: a Python backend beside `frontend/`, a monorepo's `apps/web`.
+ * Searched after the root, with the same candidates, and still without a walk
+ * — each is one fixed prefix, probed only when that directory exists.
+ */
+const APP_DIRS = [
+  "frontend",
+  "web",
+  "client",
+  "ui",
+  "app",
+  "site",
+  "webapp",
+  "apps/web",
+  "apps/frontend",
+  "apps/app",
+  "packages/web",
+  "packages/frontend",
+  "packages/ui",
+]
+
 /** Extension → what a `data:` URL has to call it. */
 const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
@@ -83,11 +105,11 @@ const MIME: Record<string, string> = {
  * The cap on one inlined icon.
  *
  * These are base64'd into a JSON answer the sidebar keeps in localStorage, and
- * the budget there is the whole map rather than one entry. 64 KB is a generous
- * favicon and a small logo; a 2 MB press-kit PNG named `logo.png` is not a
+ * the budget there is the whole map rather than one entry. 128 KB covers a
+ * multi-resolution favicon and a small logo; a 2 MB press-kit PNG named `logo.png` is not a
  * sidebar glyph and is skipped rather than shrunk, which would need a decoder.
  */
-const MAX_ICON_BYTES = 64 * 1024
+const MAX_ICON_BYTES = 128 * 1024
 
 /**
  * How long a resolved logo is trusted.
@@ -147,7 +169,7 @@ async function readIcon(folder: string, relative: string): Promise<string | null
   const extension = relative.slice(relative.lastIndexOf("."))
   const mime = MIME[extension]
   if (!mime) return null
-  const path = join(folder, relative)
+  const path = join(/*turbopackIgnore: true*/ folder, relative)
   const info = await stat(path).catch(() => null)
   if (!info?.isFile() || info.size === 0 || info.size > MAX_ICON_BYTES) return null
   const bytes = await readFile(path).catch(() => null)
@@ -183,9 +205,18 @@ async function resolveFolderLogo(path: string): Promise<FolderLogo> {
   if (isGenericFolder(path)) return { kind: "generic" }
   const info = await stat(path).catch(() => null)
   if (!info?.isDirectory()) return { kind: "generic" }
-  for (const candidate of CANDIDATES) {
+  for (const candidate of ROOT_CANDIDATES) {
     const src = await readIcon(path, candidate)
     if (src) return { kind: "icon", src }
+  }
+  for (const dir of APP_DIRS) {
+    const sub = await stat(join(/*turbopackIgnore: true*/ path, dir)).catch(() => null)
+    if (!sub?.isDirectory()) continue
+    for (const candidate of ROOT_CANDIDATES) {
+      if (candidate.startsWith(".github/")) continue
+      const src = await readIcon(path, `${dir}/${candidate}`)
+      if (src) return { kind: "icon", src }
+    }
   }
   return monogram(path)
 }

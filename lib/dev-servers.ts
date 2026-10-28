@@ -4,7 +4,10 @@ import { execFile } from "node:child_process"
 import { readlink } from "node:fs/promises"
 import path from "node:path"
 
+import type { BackgroundProcess } from "@/lib/background-processes"
 import { realPath } from "@/lib/fs-roots"
+import { ancestorsOf, mentionsFolder, sameProcess } from "@/lib/process-list"
+import { scanProcesses } from "@/lib/process-scan"
 
 // Adapted from T3 Code (github.com/pingdotgg/t3code), MIT License, (c) 2026 T3 Tools Inc.
 
@@ -249,20 +252,27 @@ function runLsof(): Promise<string | null> {
 }
 
 /**
- * The working directory of a process, on a platform that publishes one.
- *
- * Linux only, and best effort by design: `/proc/<pid>/cwd` is a symlink only
- * the owner may read, so "unreadable" has to mean "keep the listener" rather
- * than "drop it" — a filter that silently hid every server of a process it
- * could not introspect would be worse than no filter.
+ * The working directory of a process, on a platform that publishes one:
+ * `/proc/<pid>/cwd` on Linux, one `lsof -d cwd` on macOS. Windows publishes
+ * none, and `withinFolder` attributes by other means there.
  */
 async function processCwd(pid: number): Promise<string | null> {
-  if (process.platform !== "linux") return null
-  try {
-    return await readlink(`/proc/${pid}/cwd`)
-  } catch {
-    return null
+  if (process.platform === "linux") {
+    return readlink(`/proc/${pid}/cwd`).catch(() => null)
   }
+  if (process.platform !== "darwin") return null
+  return new Promise((resolve) => {
+    execFile(
+      "lsof",
+      ["-a", "-p", String(pid), "-d", "cwd", "-Fn"],
+      { timeout: LSOF_TIMEOUT_MS, windowsHide: true },
+      (error, stdout) => {
+        if (error) return resolve(null)
+        const line = stdout.split("\n").find((entry) => entry.startsWith("n/"))
+        resolve(line ? line.slice(1) : null)
+      }
+    )
+  })
 }
 
 /* -------------------------------------------------------------------------- */
@@ -375,11 +385,15 @@ async function pooled<T, R>(
 
 export type DiscoverOptions = {
   /**
-   * The chat's folder. When given, a listener whose process publishes a
-   * working directory outside it is dropped — a process that publishes none is
-   * kept, because most do not.
+   * The chat's folder. When given, only listeners that can be attributed to
+   * it are kept: a working directory inside it, a process (or an ancestor)
+   * whose command line names it, or one this chat's turns left running. A
+   * listener nothing attributes is dropped — kept, it would show up under
+   * every folder in the sidebar at once.
    */
   cwd?: string
+  /** The chat, whose recorded background processes count as its own. */
+  sessionId?: string
   /** Ports never published: the app's own, above all. */
   exclude?: readonly number[]
 }
@@ -399,7 +413,7 @@ export async function discoverDevServers(
   const excluded = new Set(options.exclude ?? [])
   const candidates = listeners.filter((entry) => !excluded.has(entry.port))
   const scoped = options.cwd
-    ? await withinFolder(candidates, options.cwd)
+    ? await withinFolder(candidates, options.cwd, options.sessionId)
     : candidates
 
   return probeListeners(scoped)
@@ -428,25 +442,48 @@ export async function probeListeners(
   return probed.filter((entry): entry is DevServer => entry !== null)
 }
 
-/** The listeners whose process is working inside `cwd`, plus the unknowable. */
+/** The listeners attributable to `cwd` (see {@link DiscoverOptions.cwd}). */
 async function withinFolder(
   listeners: readonly Listener[],
-  cwd: string
+  cwd: string,
+  sessionId?: string
 ): Promise<Listener[]> {
   const root = await realPath(cwd)
+  let context: Promise<{
+    procs: Awaited<ReturnType<typeof scanProcesses>>
+    owned: BackgroundProcess[]
+  }> | null = null
   const kept: Listener[] = []
   for (const listener of listeners) {
-    if (listener.pid === undefined) {
-      kept.push(listener)
-      continue
-    }
+    if (listener.pid === undefined) continue
     const dir = await processCwd(listener.pid)
-    if (!dir) {
-      kept.push(listener)
+    if (dir) {
+      const real = await realPath(dir)
+      if (real === root || real.startsWith(root + path.sep)) kept.push(listener)
       continue
     }
-    const real = await realPath(dir)
-    if (real === root || real.startsWith(root + path.sep)) kept.push(listener)
+    context ??= Promise.all([
+      scanProcesses(),
+      // Loaded on demand: the store behind it is heavy, and this module's
+      // pure half is imported by tests that never scope to a folder.
+      sessionId
+        ? import("@/lib/background-processes")
+            .then((store) => store.listBackground(sessionId))
+            .catch((): BackgroundProcess[] => [])
+        : Promise.resolve([]),
+    ]).then(([procs, owned]) => ({ procs, owned }))
+    const { procs, owned } = await context
+    const chain = ancestorsOf(procs, listener.pid)
+    if (
+      chain.some(
+        (proc) =>
+          owned.some((entry) => sameProcess(entry, proc)) ||
+          mentionsFolder(proc.command, cwd) ||
+          mentionsFolder(proc.command, root)
+      )
+    ) {
+      kept.push(listener)
+    }
   }
   return kept
 }

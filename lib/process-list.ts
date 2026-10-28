@@ -271,3 +271,42 @@ export function orphanedDuring(
     return !parent || parent.startedAt > proc.startedAt
   })
 }
+
+/** `pid` and every process above it, by parent links, nearest first. */
+export function ancestorsOf(procs: ProcInfo[], pid: number): ProcInfo[] {
+  const byPid = new Map(procs.map((proc) => [proc.pid, proc]))
+  const out: ProcInfo[] = []
+  const seen = new Set<number>()
+  for (let current = byPid.get(pid); current && !seen.has(current.pid); ) {
+    seen.add(current.pid)
+    out.push(current)
+    const parent = byPid.get(current.ppid)
+    // A parent that started after its child is a recycled pid, not a parent.
+    if (!parent || parent.startedAt > current.startedAt + 2_500) break
+    current = parent
+  }
+  return out
+}
+
+/**
+ * Whether a command line names `folder` or something inside it — how a
+ * listener is attributed to a folder where the platform publishes no working
+ * directory (Windows). Separators are compared as `/`, a drive-letter path
+ * case-insensitively, and the folder must end at a path boundary so `C:\app`
+ * does not claim `C:\app-two`.
+ */
+export function mentionsFolder(command: string, folder: string): boolean {
+  const windows = /^[a-z]:/i.test(folder)
+  const norm = (value: string) => {
+    const slashed = value.replace(/\\/g, "/")
+    return windows ? slashed.toLowerCase() : slashed
+  }
+  const root = norm(folder).replace(/\/+$/, "")
+  if (!root) return false
+  const line = norm(command)
+  for (let at = line.indexOf(root); at !== -1; at = line.indexOf(root, at + 1)) {
+    const next = line[at + root.length]
+    if (next === undefined || /[/\s"']/.test(next)) return true
+  }
+  return false
+}

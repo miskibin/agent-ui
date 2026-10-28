@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic"
  * to find it in the transcript.
  *
  * A `sessionId` narrows the list to servers started inside that chat's folder
- * where the platform can say (see `lib/dev-servers`); without one it is every
+ * that can be attributed to it (see `lib/dev-servers`); without one it is every
  * local dev server on the machine.
  *
  * The port this request arrived on is excluded: the app is itself an HTML
@@ -33,7 +33,7 @@ export async function GET(req: Request) {
     10
   )
   const servers = await discoverDevServers({
-    ...(cwd ? { cwd } : null),
+    ...(cwd ? { cwd, sessionId } : null),
     ...(Number.isInteger(ownPort) ? { exclude: [ownPort] } : null),
   })
   return NextResponse.json({ servers })
