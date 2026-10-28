@@ -521,7 +521,8 @@ one interface:
   service, and the spec is data, never code, so it needs no sandbox. The vocabulary reaches the
   model as `VIEW_SPEC_PROMPT` (~200 tokens) at the head of `standingContext`, before memory and
   under the same once-per-backend-conversation rule; `chat.generativeViews` (Settings → Chat)
-  stops sending it. A view draws while its fence is still streaming (the JSON is closed where it
+  stops sending it, and so does a prompt another agent wrote (`subagentOf`: a subagent run
+  over MCP or the CLI) — its reader is an agent, for whom a `ui` fence is only noise. A view draws while its fence is still streaming (the JSON is closed where it
   stands), and its `button` / `form` blocks talk back the only way a user can: `onViewAction`
   in `app/page.tsx` sends their text as the next user message, or queues it behind a running
   turn like anything typed mid-turn — the view itself never runs anything. Saved per-tool view
