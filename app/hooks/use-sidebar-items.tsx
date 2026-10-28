@@ -24,6 +24,7 @@ import {
 import type { GenerationStage } from "@/components/ui/generation-status"
 import type { ModelOption } from "@/components/ui/model-picker"
 import { RelativeTime } from "@/components/live-time"
+import { AgentLabel } from "@/components/provider-logo"
 import {
   SIDEBAR_ROW_ACTION,
   SnoozeAction,
@@ -201,15 +202,18 @@ export function useSidebarItems({
             // what answered in it.
             session.messageCount === 0
             ? "New chat"
-            : [
-                providerName(session.providerId),
-                session.providerId === providerId
-                  ? (models.find((m) => m.id === session.model)?.name ??
-                    session.model)
-                  : session.model,
-              ]
-                .filter(Boolean)
-                .join(" · ")
+            : (
+                <AgentLabel
+                  providerId={session.providerId}
+                  providerName={providerName(session.providerId)}
+                  model={session.model}
+                  modelName={
+                    session.providerId === providerId
+                      ? models.find((m) => m.id === session.model)?.name
+                      : undefined
+                  }
+                />
+              )
         return {
           id: session.id,
           title: session.title,
