@@ -374,6 +374,7 @@ export async function openExternal(url: string): Promise<void> {
  */
 const QUIT_REQUESTED_EVENT = "agent-ui://quit-requested"
 const QUIT_HOLD_EVENT = "agent-ui://quit-hold"
+const QUIT_ACK_EVENT = "agent-ui://quit-ack"
 
 /**
  * Subscribes to "the user asked to quit". Resolves to an unsubscribe, and to a
@@ -383,7 +384,12 @@ export async function onQuitRequested(cb: () => void): Promise<() => void> {
   const events = tauri()?.event
   if (!events) return () => {}
   try {
-    return await events.listen(QUIT_REQUESTED_EVENT, () => cb())
+    // Acknowledged before anything else: the shell quits anyway when a
+    // request goes unanswered, which is what keeps a hung page quittable.
+    return await events.listen(QUIT_REQUESTED_EVENT, () => {
+      void events.emit(QUIT_ACK_EVENT).catch(() => {})
+      cb()
+    })
   } catch {
     return () => {}
   }

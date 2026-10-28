@@ -809,7 +809,9 @@ one interface:
   dialog, no setting, and nothing at all when nothing is running. The shell is asked to
   intercept the close only while a turn is in flight (`setQuitHoldArmed`), which is what keeps
   the failure mode benign — a page that never loads leaves the app quitting exactly as it
-  always did. macOS delivers ⌘Q only as the shell's `quit-requested` event (once per press and
+  always did — and a page that is loaded but *hung* (a renderer frozen after the machine resumed
+  from hibernation) is covered too: the page acknowledges every `quit-requested` with
+  `quit-ack`, and a request still unanswered after 1.5s quits for real. macOS delivers ⌘Q only as the shell's `quit-requested` event (once per press and
   per key *repeat*) and every other platform as the keystroke itself, so both paths feed one
   state machine. How many chats are running reaches the overlay through a module store
   (`setRunningChats`), written from `app/hooks/use-attention` in the same effect as the dock

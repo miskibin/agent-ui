@@ -53,10 +53,18 @@ export function killProcessTree(
 
   if (!DETACH_CHILDREN) {
     try {
-      execFile("taskkill", ["/T", "/F", "/PID", String(child.pid)], () => {
-        // Best effort: the tree may already be gone, and there is nothing left
-        // to report it to.
-      })
+      // `windowsHide`: from a console-less parent (the desktop sidecar)
+      // taskkill would otherwise open a console window of its own, which
+      // takes the foreground from whatever app the user is in.
+      execFile(
+        "taskkill",
+        ["/T", "/F", "/PID", String(child.pid)],
+        { windowsHide: true },
+        () => {
+          // Best effort: the tree may already be gone, and there is nothing left
+          // to report it to.
+        }
+      )
     } catch {
       try {
         child.kill()
