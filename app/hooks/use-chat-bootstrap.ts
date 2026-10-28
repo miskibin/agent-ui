@@ -57,7 +57,10 @@ export function useChatBootstrap({
     const cachedActive = readCache<string>(CACHE_ACTIVE_KEY)
     queueMicrotask(() => {
       if (cancelled) return
-      seedFromCache(cachedActive, (session) => adoptAgent(session, []))
+      seedFromCache(cachedActive, (session) => {
+        adoptAgent(session, [])
+        if (session) void loadThread(session.id)
+      })
     })
 
     void (async () => {

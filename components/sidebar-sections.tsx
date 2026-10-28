@@ -96,10 +96,6 @@ export const SidebarSessionSection = React.memo(function SidebarSessionSection({
         renameRequest={rest.renameRequest}
         sortable={sortable}
         draggable
-        // Rows ease between their layout positions — a chat arriving, one
-        // being deleted, a drag released. Transform and opacity only, and it
-        // stands down entirely under `prefers-reduced-motion`.
-        motion
         onSelect={rest.onSelect}
         onRename={rest.onRename}
         onTogglePin={rest.onTogglePin}
@@ -197,7 +193,6 @@ export const SidebarShelfSection = React.memo(function SidebarShelfSection({
       listId={shelf.id}
       renameRequest={rest.renameRequest}
       draggable
-      motion
       onSelect={rest.onSelect}
       onRename={rest.onRename}
       onTogglePin={rest.onTogglePin}

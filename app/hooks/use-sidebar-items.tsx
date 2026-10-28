@@ -25,9 +25,8 @@ import {
   type SidebarItemRenderActions,
 } from "@/components/ui/chat-sidebar"
 import type { GenerationStage } from "@/components/ui/generation-status"
-import type { ModelOption } from "@/components/ui/model-picker"
 import { RelativeTime } from "@/components/live-time"
-import { AgentLabel } from "@/components/provider-logo"
+import { HarnessLogo } from "@/components/provider-logo"
 import {
   SIDEBAR_ROW_ACTION,
   SnoozeAction,
@@ -96,8 +95,6 @@ export function useSidebarItems({
   runs,
   failures,
   activeId,
-  providerId,
-  models,
   providerName,
   threads = EMPTY_THREADS,
   closedSections = EMPTY_SECTIONS,
@@ -115,8 +112,6 @@ export function useSidebarItems({
   runs: Record<string, SessionRun>
   failures: Record<string, boolean>
   activeId: string
-  providerId: string
-  models: ModelOption[]
   providerName: (id: string) => string
   /**
    * Loaded transcripts. Only used to find the chats holding an unanswered
@@ -219,15 +214,10 @@ export function useSidebarItems({
                   {session.external && session.cwd
                     ? `${folderName(session.cwd)} · `
                     : null}
-                  <AgentLabel
+                  <HarnessLogo
                     providerId={session.providerId}
-                    providerName={providerName(session.providerId)}
-                    modelName={
-                      session.providerId === providerId
-                        ? (models.find((m) => m.id === session.model)?.name ??
-                          session.model)
-                        : session.model
-                    }
+                    name={providerName(session.providerId)}
+                    className="inline size-3.5 align-[-2px]"
                   />
                 </>
               )
@@ -293,10 +283,8 @@ export function useSidebarItems({
       activeId,
       awaiting,
       failures,
-      models,
       now,
       onMarkVisited,
-      providerId,
       providerName,
       runs,
       sessions,

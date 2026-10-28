@@ -144,8 +144,12 @@ export async function POST(req: Request) {
     ...(attachments.length ? { attachments } : null),
     // Only when it says something `content` does not; an unchanged prompt is
     // its own typed text and does not need storing twice.
-    ...(typedText && typedText !== prompt ? { metadata: { typedText } } : null),
-    ...(body.subagentOf ? { metadata: { subagentOf: body.subagentOf } } : null),
+    ...((typedText && typedText !== prompt) || body.subagentOf
+      ? { metadata: {
+          ...(typedText && typedText !== prompt ? { typedText } : null),
+          ...(body.subagentOf ? { subagentOf: body.subagentOf } : null),
+        } }
+      : null),
   }
 
   const shouldTitle =

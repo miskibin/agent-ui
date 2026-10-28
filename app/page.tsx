@@ -562,8 +562,6 @@ export default function ChatPage() {
     threads,
     closedSections,
     activeId,
-    providerId,
-    models,
     providerName,
     regenerateTitle,
     onTogglePin: togglePin,
