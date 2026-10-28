@@ -3,339 +3,729 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Agent UI — One fast workspace for every coding agent</title>
+    <title>Agent UI — a desktop app for the coding agents you already use</title>
     <meta
       name="description"
-      content="A fast, local-first desktop workspace for Cursor Agent, DeepSeek Harness, pi, Ollama, and any ACP agent."
+      content="A local desktop app for Claude Code, Codex, Cursor, pi, and Ollama. Read the turn, review the diff, undo it, and hand the same chat to another agent."
     >
-    <meta name="theme-color" content="#0b0c0e">
+    <meta name="theme-color" content="#f4f0e8" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#12110f" media="(prefers-color-scheme: dark)">
     <link rel="canonical" href="https://miskibin.github.io/agent-ui/">
     <link rel="icon" href="assets/icon.png">
     <meta property="og:type" content="website">
-    <meta property="og:title" content="Agent UI — Your agents. One workspace.">
+    <meta property="og:title" content="Agent UI — a desktop app for the coding agents you already use">
     <meta
       property="og:description"
-      content="A fast, local-first desktop workspace for coding agents."
+      content="Read the turn, review the diff, undo it, and hand the same chat to another agent. On your computer. No account."
     >
     <meta property="og:url" content="https://miskibin.github.io/agent-ui/">
     <meta property="og:image" content="https://miskibin.github.io/agent-ui/assets/chat-run.png">
     <meta name="twitter:card" content="summary_large_image">
-    <link rel="stylesheet" href="styles.css?v=91c97c8">
+    <meta name="twitter:title" content="Agent UI — a desktop app for the coding agents you already use">
+    <meta
+      name="twitter:description"
+      content="Read the turn, review the diff, undo it, and hand the same chat to another agent. On your computer. No account."
+    >
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:ital,wght@0,400;0,600;0,700;1,400&family=Source+Serif+4:opsz,wght@8..60,480;8..60,560;8..60,650&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="styles.css?v=20261028d">
+    <link rel="preload" as="image" href="assets/chat-run.png">
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "Agent UI",
+        "applicationCategory": "DeveloperApplication",
+        "operatingSystem": "Windows, macOS, Linux",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+        "url": "https://miskibin.github.io/agent-ui/",
+        "downloadUrl": "https://github.com/miskibin/agent-ui/releases/latest",
+        "license": "https://opensource.org/licenses/MIT",
+        "description": "A local desktop app for the coding agents you already use."
+      }
+    </script>
   </head>
   <body>
     <a class="skip-link" href="#main">Skip to content</a>
 
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="Agent UI home">
-        <img src="assets/icon.png" alt="" width="32" height="32">
+      <a class="brand" href="#top">
+        <img src="assets/icon.png" alt="" width="28" height="28">
         <span>Agent UI</span>
       </a>
-      <nav aria-label="Main navigation">
-        <a href="#why">Why Agent UI</a>
-        <a href="#workspaces">Workspaces</a>
-        <a href="#harnesses">Harnesses</a>
+      <nav class="primary-nav" aria-label="Sections">
+        <a href="#what">What it is</a>
+        <a href="#which">Which tool</a>
+        <a href="#run">A run</a>
+        <a href="#agents">Agents</a>
+        <a href="#files">Your files</a>
+        <a href="#install">Install</a>
       </nav>
-      <a class="header-cta" href="https://github.com/miskibin/agent-ui" target="_blank" rel="noreferrer">
-        View on GitHub <span aria-hidden="true">↗</span>
-      </a>
+      <details class="compact-nav">
+        <summary>Menu</summary>
+        <nav aria-label="Sections">
+          <a href="#what">What it is</a>
+          <a href="#which">Which tool</a>
+          <a href="#run">A run</a>
+          <a href="#agents">Agents</a>
+          <a href="#files">Your files</a>
+          <a href="#install">Install</a>
+          <a href="#questions">Questions</a>
+        </nav>
+      </details>
+      <div class="header-actions">
+        <a class="header-quiet" href="https://github.com/miskibin/agent-ui">GitHub</a>
+        <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">Download</a>
+      </div>
     </header>
 
     <main id="main">
       <section class="hero" id="top">
-        <div class="hero-grid" aria-hidden="true"></div>
-        <div class="hero-copy">
-          <p class="eyebrow"><span></span> Local-first agent workspace</p>
-          <h1>Your agents.<br><em>One workspace.</em></h1>
-          <p class="hero-lede">
-            Run Cursor Agent, DeepSeek Harness, pi, Ollama, and any ACP agent from one fast desktop.
-            Keep the folders, files, permissions, and context under your control.
+        <div class="wrap">
+          <p class="eyebrow">Open source · local-first · MIT</p>
+          <h1>A desktop app for the coding agents you already use.</h1>
+          <p class="lede">
+            Claude Code, Codex, Cursor, pi, and Ollama still do the work.
+            Agent UI is the window on your computer where you read a turn, answer what it asks,
+            review the diff, and hand that same chat to a different agent.
+            There is no account. Tokens are billed by the agent or the API you connected.
           </p>
-          <div class="hero-actions">
-            <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">
-              Download the desktop app <span aria-hidden="true">↓</span>
-            </a>
-            <a class="button button-secondary" href="https://github.com/miskibin/agent-ui#quick-start">
-              Build from source <span aria-hidden="true">→</span>
-            </a>
+          <div class="actions">
+            <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">Download for Windows</a>
+            <a class="button button-secondary" href="#run">See a run from the start</a>
           </div>
-          <div class="hero-proof" role="group" aria-label="Product highlights">
-            <span><strong>Local</strong> by default</span>
-            <span><strong>Swappable</strong> backends</span>
-            <span><strong>Visible</strong> tool runs</span>
-          </div>
-        </div>
-
-        <div class="hero-visual" role="group" aria-label="Agent UI product preview">
-          <div class="window-chrome">
-            <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
-            <span>agent-ui — workspace</span>
-            <span class="window-status"><i></i> local</span>
-          </div>
-          <img
-            src="assets/chat-run.png"
-            alt="Agent UI showing a coding-agent conversation, rendered markdown, and a live file diff"
-            width="2880"
-            height="1800"
-            fetchpriority="high"
-          >
-          <div class="visual-note note-stream"><i></i> Streaming</div>
-          <div class="visual-note note-diff">+3 <span>−1</span> file diff</div>
-        </div>
-
-        <div class="harness-marquee" role="group" aria-label="Supported agent backends">
-          <span>Cursor Agent</span><b>·</b><span>DeepSeek Harness</span><b>·</b><span>pi</span><b>·</b>
-          <span>Ollama</span><b>·</b><span>OpenAI-compatible</span><b>·</b><span>ACP</span>
+          <p class="aside">
+            The published installer is Windows x64, with automatic updates.
+            On macOS and Linux, <a href="#install">run it from source</a> — the same app, in a browser or a desktop window.
+          </p>
         </div>
       </section>
 
-      <section class="manifesto section" id="why">
-        <div class="section-heading split-heading">
-          <div>
-            <p class="kicker">The idea</p>
-            <h2>The agent is only half the experience.</h2>
-          </div>
-          <p>
-            Great models still need a place to work. Agent UI adds the durable layer around them:
-            projects, conversations, permissions, files, diffs, and a clear view of what is happening.
-          </p>
-        </div>
-
-        <div class="equation" role="group" aria-label="Model plus harness plus Agent UI makes a complete coding workspace">
-          <article>
-            <span class="equation-number">01</span>
-            <div class="equation-mark">M</div>
-            <h3>Model</h3>
-            <p>The intelligence you choose — local or hosted.</p>
-          </article>
-          <div class="operator" aria-hidden="true">+</div>
-          <article>
-            <span class="equation-number">02</span>
-            <div class="equation-mark">H</div>
-            <h3>Harness</h3>
-            <p>The tools, planning loop, and execution runtime.</p>
-          </article>
-          <div class="operator" aria-hidden="true">+</div>
-          <article class="equation-highlight">
-            <span class="equation-number">03</span>
-            <div class="equation-mark">UI</div>
-            <h3>Workspace</h3>
-            <p>The interface that makes agent work legible and manageable.</p>
-          </article>
-          <div class="operator" aria-hidden="true">=</div>
-          <div class="equation-result">
-            <span>Complete</span>
-            <strong>coding system</strong>
-          </div>
-        </div>
-      </section>
-
-      <section class="statement section-wide">
-        <p class="kicker">Why Agent UI</p>
-        <h2>Switch the engine.<br><em>Keep your cockpit.</em></h2>
-        <p class="statement-copy">
-          Stop relearning a different interface for every agent. Agent UI normalizes the parts you use
-          every day without flattening what makes each harness useful.
-        </p>
-      </section>
-
-      <section class="feature-showcase section" id="workspaces">
-        <div class="feature-copy">
-          <p class="kicker">01 — See the work</p>
-          <h2>Every run has a shape.</h2>
-          <p>
-            Reasoning, status, tool calls, markdown, artifacts, and file changes stream into one coherent
-            timeline. Long runs feel alive instead of frozen, and the result stays reviewable after they end.
-          </p>
-          <ul class="feature-list">
-            <li><span>↳</span> Live reasoning and progress states</li>
-            <li><span>↳</span> Expandable tool calls and permission prompts</li>
-            <li><span>↳</span> Rich markdown, code, math, and diagrams</li>
-            <li><span>↳</span> File previews and inline diffs</li>
+      <div class="hero-stage">
+        <div class="wrap">
+          <figure class="shot">
+            <div class="shot-frame">
+              <div class="shot-bar" aria-hidden="true">
+                <span class="dots"><i></i><i></i><i></i></span>
+                <span>Agent UI</span>
+              </div>
+              <img
+                src="assets/chat-run.png"
+                alt="Agent UI. A sidebar of chats on the left, a rendered answer with a code block in the center, and a composer at the bottom set to the mock agent."
+                width="2880"
+                height="1800"
+                fetchpriority="high"
+              >
+            </div>
+            <figcaption>
+              The built-in mock agent, which needs no API key. A real chat uses this same layout, with Claude Code, Codex, or Cursor in the picker at the bottom.
+            </figcaption>
+          </figure>
+          <ul class="anatomy">
+            <li><strong>Chats</strong> Pinned, then one group for each folder the agent is working in.</li>
+            <li><strong>The turn</strong> The answer, the code, and the files it names. Click a path to open it.</li>
+            <li><strong>Composer</strong> Choose the agent and the model, then type the task.</li>
           </ul>
         </div>
-        <figure class="product-frame product-frame-dark">
-          <figcaption><span>Live run</span><span>Everything in context</span></figcaption>
-          <img
-            src="assets/chat-dark.png"
-            alt="Dark Agent UI conversation with agent output, tool activity, and the composer"
-            width="2720"
-            height="1720"
-            loading="lazy"
-          >
-        </figure>
-      </section>
+      </div>
 
-      <section class="benefit-grid section">
-        <article class="benefit benefit-large">
-          <p class="benefit-index">01</p>
-          <h3>Fast enough to disappear.</h3>
-          <p>
-            Streaming updates are batched, message rows stay stable, and heavy views load when you need them.
-            The desktop shell boots the local app before showing the window, without a white flash.
-          </p>
-          <div class="pulse-line" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
-        </article>
-        <article class="benefit">
-          <p class="benefit-index">02</p>
-          <h3>Local-first, not cloud-dependent.</h3>
-          <p>Your chats and settings live in local JSON. Use local models, hosted APIs, or both.</p>
-          <div class="mini-terminal" aria-hidden="true"><span>data</span><b>~/.agent-ui/</b><i>local</i></div>
-        </article>
-        <article class="benefit">
-          <p class="benefit-index">03</p>
-          <h3>Permissions you can see.</h3>
-          <p>Choose read-only, edits, or full access per session whenever the harness supports it.</p>
-          <div class="permission-scale" aria-hidden="true"><span>read</span><span class="active">edit</span><span>full</span></div>
-        </article>
-        <article class="benefit benefit-wide">
-          <p class="benefit-index">04</p>
-          <h3>Built around real repositories.</h3>
-          <p>
-            Give each chat a working folder. Sessions are grouped by checkout and branch, so parallel work
-            stays organized without pretending your filesystem does not exist.
-          </p>
-        </article>
-      </section>
+      <nav class="contents wrap" aria-label="On this page">
+        <p class="contents-label">On this page</p>
+        <ol>
+          <li><a href="#what"><strong>What it is</strong><span>The app, the agent, and the folder</span></a></li>
+          <li><a href="#which"><strong>Which tool is which</strong><span>Claude Code, OpenCode, T3 Code, Cursor</span></a></li>
+          <li><a href="#run"><strong>A run</strong><span>From the folder to the handoff</span></a></li>
+          <li><a href="#rest"><strong>The rest of the workspace</strong><span>Import, search, memory, quit</span></a></li>
+          <li><a href="#agents"><strong>Agents</strong><span>What each one needs from you</span></a></li>
+          <li><a href="#files"><strong>Your files</strong><span>Where chats and keys live</span></a></li>
+          <li><a href="#install"><strong>Install</strong><span>Windows, or from source</span></a></li>
+          <li><a href="#questions"><strong>Questions</strong><span>The short answers</span></a></li>
+        </ol>
+      </nav>
 
-      <section class="workspace-section section-wide">
-        <div class="workspace-grid">
-          <figure class="product-frame folder-frame">
-            <figcaption><span>Working folder</span><span>Pick the real checkout</span></figcaption>
-            <img
-              src="assets/folder-picker.png"
-              alt="Agent UI working-folder picker showing two local repositories"
-              width="2720"
-              height="1720"
-              loading="lazy"
-            >
-          </figure>
-          <div class="workspace-copy">
-            <p class="kicker">02 — Stay oriented</p>
-            <h2>Your workspaces are the navigation.</h2>
+      <section class="block" id="what">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">01 · What it is</p>
+            <h2>Three parts. This app is the middle one.</h2>
+          </header>
+          <ol class="flow">
+            <li>
+              <strong>You</strong>
+              <span>A task, in plain language, and a folder you are willing to let an agent touch.</span>
+            </li>
+            <li>
+              <strong>Agent UI</strong>
+              <span>The chat, the question waiting for you, the diff, and the record of the turn.</span>
+            </li>
+            <li>
+              <strong>The agent</strong>
+              <span>Claude Code, Codex, Cursor, pi, Ollama, or any tool that speaks ACP.</span>
+            </li>
+            <li>
+              <strong>A folder</strong>
+              <span>The checkout that agent works in. The sidebar groups chats by that folder.</span>
+            </li>
+          </ol>
+          <div class="prose">
             <p>
-              Chats follow the projects they belong to. Pin the important ones, search everything with
-              <kbd>⌘ K</kbd>, and keep two agents working in two checkouts without mixing their context.
+              You already have the agent, or you install one. Agent UI finds it on your machine and gives it a chat pointed at a repository.
+              The agent reads that folder, edits files, and runs commands. The app keeps the conversation, shows what changed, and lets you undo the turn.
             </p>
-            <div class="command-card">
-              <span class="command-icon" aria-hidden="true">⌕</span>
-              <div><strong>Command palette</strong><small>Chats, actions, settings — one shortcut.</small></div>
-              <kbd>⌘ K</kbd>
+            <p>
+              Chats, settings, and optional memory are files under <code>~/.agent-ui</code>.
+              Set <code>AGENT_UI_DIR</code> if you want them somewhere else.
+              A CLI such as Claude Code talks to its own service with the login already on that CLI.
+              A model provider you add is called from this machine, with the key you saved.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="point" id="point" aria-labelledby="point-title">
+        <div class="wrap">
+          <p class="kicker">What it is for</p>
+          <h2 id="point-title">The agent does the work. This is where you read it, answer it, undo it, and hand it on.</h2>
+        </div>
+      </section>
+
+      <section class="block" id="which">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">02 · Which tool is which</p>
+            <h2>These names get mixed up. They do different jobs.</h2>
+            <p class="block-intro">
+              If you want a model that writes code, start with an agent.
+              If you already have two of them and want one local place to run, review, and move work between them, that place is Agent UI.
+            </p>
+          </header>
+          <ul class="which">
+            <li class="which-self">
+              <p class="which-kicker">This app</p>
+              <h3>Agent UI</h3>
+              <p>The local workspace. It runs the agents you already installed, and writes the turn down so you can review it.</p>
+              <dl>
+                <div><dt>Account</dt><dd>None</dd></div>
+                <div><dt>Runs on</dt><dd>This computer</dd></div>
+                <div><dt>Tokens</dt><dd>Billed by the agent or API you connected</dd></div>
+              </dl>
+            </li>
+            <li>
+              <p class="which-kicker">An agent</p>
+              <h3><a href="https://claude.com/product/claude-code">Claude Code</a></h3>
+              <p>Anthropic’s coding agent, in the terminal, an IDE, the web, and on a phone. Agent UI can run the local <code>claude</code> command. The agent itself is Claude Code.</p>
+              <dl>
+                <div><dt>Account</dt><dd>Anthropic</dd></div>
+                <div><dt>Runs on</dt><dd>Terminal, IDE, web, phone</dd></div>
+                <div><dt>Tokens</dt><dd>Your Claude plan</dd></div>
+              </dl>
+            </li>
+            <li>
+              <p class="which-kicker">An agent</p>
+              <h3><a href="https://opencode.ai/">OpenCode</a></h3>
+              <p>An open-source agent with its own terminal, desktop app, and IDE extension. You connect any model, including local ones. It does the coding. Agent UI hosts agents.</p>
+              <dl>
+                <div><dt>Account</dt><dd>Optional</dd></div>
+                <div><dt>Runs on</dt><dd>Terminal, desktop, IDE</dd></div>
+                <div><dt>Tokens</dt><dd>Free models, or your provider</dd></div>
+              </dl>
+            </li>
+            <li>
+              <p class="which-kicker">A control plane</p>
+              <h3><a href="https://t3.codes/">T3 Code</a></h3>
+              <p>Also runs several agents from one surface, including from a phone, and a thread can commit, push, and open a pull request. Agent UI stays on this machine and spends its attention on the turn itself.</p>
+              <dl>
+                <div><dt>Account</dt><dd>None</dd></div>
+                <div><dt>Runs on</dt><dd>Desktop, browser, phone</dd></div>
+                <div><dt>Tokens</dt><dd>Your existing subscriptions</dd></div>
+              </dl>
+            </li>
+          </ul>
+          <div class="prose prose-after">
+            <p>
+              <a href="https://cursor.com/">Cursor</a>, the editor, is the other name people reach for.
+              A lot of code gets written there, and its agent CLI is one of the agents this app runs.
+              Files open in the editor you already have — Cursor, VS Code, Zed, or whichever one this machine has.
+            </p>
+            <p>
+              An agent that keeps working on a remote machine after you close the laptop is a different product again.
+              A turn in Agent UI runs on the computer in front of you.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="block" id="run">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">03 · A run</p>
+            <h2>From the first click to the handoff.</h2>
+            <p class="block-intro">
+              The same loop every time. The pictures are the real app.
+              The mock agent is standing in, so nothing below depends on a login.
+            </p>
+          </header>
+
+          <article class="step has-shot">
+            <div class="step-copy">
+              <p class="step-index">Step 1</p>
+              <h3>Give the chat a folder.</h3>
+              <p>
+                The folder is the workspace. The sidebar groups chats by that checkout and shows the branch, how far ahead or behind it is, and whether the tree is dirty.
+              </p>
+              <p>
+                A chat can get its own git worktree, on its own branch, stored under the app’s data folder rather than inside your checkout.
+                Two agents can then work on one repository without editing the same files.
+                Removing the last chat that used a worktree offers to remove the worktree too.
+              </p>
             </div>
-          </div>
+            <figure class="shot">
+              <div class="shot-frame">
+                <div class="shot-bar" aria-hidden="true">
+                  <span class="dots"><i></i><i></i><i></i></span>
+                  <span>Chats, by folder</span>
+                </div>
+                <img
+                  src="assets/sidebar-shelves.png"
+                  alt="Sidebar grouped into Pinned, a storefront folder on main, Design-system, Snoozed, and Settled. The open chat shows an answer and a card titled 4 Files Changed."
+                  width="2560"
+                  height="1600"
+                  loading="lazy"
+                >
+              </div>
+              <figcaption>
+                Chats follow the project. A chat that finished while you were in another one is marked Woke until you open it. Snoozed and settled chats sit on their own shelves, out of the way.
+              </figcaption>
+            </figure>
+          </article>
+
+          <article class="step">
+            <div class="step-copy">
+              <p class="step-index">Step 2</p>
+              <h3>Choose the agent, then the model.</h3>
+              <p>
+                The picker is three steps: which program runs the loop, which model that program uses, and how much it is allowed to change.
+                A Claude Code chat resumes the <code>claude</code> session. A Codex chat resumes the Codex thread. Switching agents keeps the other one’s session.
+              </p>
+            </div>
+            <figure class="stage">
+              <div class="stage-screen" aria-hidden="true">
+                <div class="composer">
+                  <p>Describe the task…</p>
+                  <div class="composer-bar">
+                    <span>Claude Code</span>
+                    <span>Sonnet</span>
+                    <span>Edits</span>
+                    <b>Send</b>
+                  </div>
+                </div>
+              </div>
+              <figcaption>
+                <ol>
+                  <li><strong>Harness.</strong> The program with the tools and the loop. Claude Code, Codex, Cursor, pi, Ollama, or an ACP agent.</li>
+                  <li><strong>Model.</strong> Which model that program calls. The list comes from the agent, or from a provider you added.</li>
+                  <li><strong>Permission.</strong> Read-only, plan, edits, or full. The control only lists modes that agent can enforce.</li>
+                </ol>
+              </figcaption>
+            </figure>
+          </article>
+
+          <article class="step">
+            <div class="step-copy">
+              <p class="step-index">Step 3</p>
+              <h3>If it needs a decision, it stops and asks.</h3>
+              <p>
+                A question or a permission request stays above the composer until you answer it.
+                You can skip a question. You can queue a follow-up while a turn is still running, and it sends when the turn ends.
+                The sidebar shows that the chat is waiting, so a run in another chat does not look frozen.
+              </p>
+            </div>
+            <figure class="stage">
+              <div class="stage-screen" aria-hidden="true">
+                <div class="ask">
+                  <p class="ask-kicker">Waiting for your answer</p>
+                  <p class="ask-title">Allow this write?</p>
+                  <p class="ask-body">This chat is read-only. Creating the file needs a write in the project folder.</p>
+                  <div class="choice"><i class="dot on"></i> Allow once</div>
+                  <div class="choice"><i class="dot"></i> Reject</div>
+                  <div class="ask-actions"><span class="ghost">Deny</span><span class="go">Send</span></div>
+                </div>
+              </div>
+              <figcaption>
+                Read-only means a write stops and asks, in the chat, instead of failing in a terminal you are not watching.
+                Cursor offers read-only, plan, and full. Claude Code and Codex offer read-only, edits, and full.
+              </figcaption>
+            </figure>
+          </article>
+
+          <article class="step has-shot">
+            <div class="step-copy">
+              <p class="step-index">Step 4</p>
+              <h3>Review the diff, then keep the turn or throw it away.</h3>
+              <p>
+                The files a turn changed open beside the conversation. You can read the whole review as one scroll, commit from the chat, or revert a single file.
+                The commit message is written from the diff, in the style of that repository’s recent commits. The first push sets the upstream. Committing on the default branch asks you first.
+              </p>
+              <p>
+                Every turn in a git folder is bracketed by a checkpoint, including untracked files, and nothing you had staged is touched.
+                One action puts the files back to the way they were before that turn.
+                Checkpoints are on by default. Settings → Chat turns them off.
+              </p>
+            </div>
+            <figure class="shot">
+              <div class="shot-frame">
+                <div class="shot-bar" aria-hidden="true">
+                  <span class="dots"><i></i><i></i><i></i></span>
+                  <span>The diff beside the chat</span>
+                </div>
+                <img
+                  src="assets/file-actions.png"
+                  alt="A conversation on the left and a red and green diff of totals.ts on the right. A menu is open with Open in editor, Show in file manager, Open in terminal, Copy path, and Revert changes."
+                  width="2560"
+                  height="1600"
+                  loading="lazy"
+                >
+              </div>
+              <figcaption>
+                The diff for the file this turn changed. The menu opens it in your editor, reveals it in the file manager, or reverts that file.
+              </figcaption>
+            </figure>
+          </article>
+
+          <article class="step has-shot">
+            <div class="step-copy">
+              <p class="step-index">Step 5</p>
+              <h3>Hand the same chat to another agent.</h3>
+              <p>
+                You were on Cursor. You switch the picker to Claude Code and send the next message.
+                Claude receives a short brief of what it missed: what you asked, which files changed, which commands ran, and which ones failed.
+                Cursor’s session is still there when you switch back. Each agent keeps its own resumable session, tied to this folder.
+              </p>
+              <p>
+                The brief is saved on the message, so you can read what was handed over.
+                It is a summary, capped, and it leaves out the streamed text — the transcript is already in the chat.
+                Handoff is on by default. Settings → Chat turns the brief off. The sessions stay either way.
+              </p>
+            </div>
+            <figure class="shot">
+              <div class="shot-frame">
+                <div class="shot-bar" aria-hidden="true">
+                  <span class="dots"><i></i><i></i><i></i></span>
+                  <span>Handed off</span>
+                </div>
+                <img
+                  src="assets/handoff.png"
+                  alt="An assistant reply with an open panel titled Handed off. The panel lists requests, files changed, and commands, and says another agent worked in this chat."
+                  width="2560"
+                  height="1800"
+                  loading="lazy"
+                >
+              </div>
+              <figcaption>
+                The panel is the brief. Files, commands, and the failing test — a summary the next agent can use, kept visible in the chat.
+              </figcaption>
+            </figure>
+          </article>
+
+          <article class="step has-shot">
+            <div class="step-copy">
+              <p class="step-index">Step 6</p>
+              <h3>See the cost, including the turns with no price.</h3>
+              <p>
+                Usage is counted per chat, per model, and per folder, over 7 days, 30 days, or all time.
+                Ollama is free. A model with no public price is counted in tokens and left out of the dollar sum, and the page says how many of those turns there were.
+                A partial total never pretends to be the whole bill.
+              </p>
+            </div>
+            <figure class="shot">
+              <div class="shot-frame">
+                <div class="shot-bar" aria-hidden="true">
+                  <span class="dots"><i></i><i></i><i></i></span>
+                  <span>Settings → Usage</span>
+                </div>
+                <img
+                  src="assets/settings-usage.png"
+                  alt="Usage settings. Totals of 475 thousand input tokens, 33 thousand output tokens, and an estimated cost of $1.19 across 10 turns. A note says 3 turns are not in that cost. Ollama is listed as free."
+                  width="2880"
+                  height="1800"
+                  loading="lazy"
+                >
+              </div>
+              <figcaption>
+                Ten chats, an estimated $1.19, and three turns kept out of that sum because their model has no price in the app. The local model is marked free.
+              </figcaption>
+            </figure>
+          </article>
         </div>
       </section>
 
-      <section class="harness-section section" id="harnesses">
-        <div class="section-heading split-heading">
-          <div>
-            <p class="kicker">03 — Bring your agent</p>
-            <h2>One UI. No backend lock-in.</h2>
-          </div>
-          <p>
-            Pick a harness, then pick its model source. Agent UI keeps those choices separate, so a new model
-            does not require a new desktop — and an ACP-compatible agent needs configuration, not a fork.
+      <section class="block" id="rest">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">04 · Also in the workspace</p>
+            <h2>The things you stop doing by hand.</h2>
+          </header>
+          <ul class="rest">
+            <li>
+              <h3>Import the history you already have</h3>
+              <p>Conversations Claude Code and Codex have already had on this machine can be brought in. The next message resumes that CLI session. Nothing is imported until you check the box.</p>
+            </li>
+            <li>
+              <h3>Search what was said</h3>
+              <p><kbd>⌘K</kbd> <span class="kbd-or">or</span> <kbd>Ctrl</kbd><kbd>K</kbd> matches a chat by its title and by the words in the messages, then opens the chat on that message.</p>
+            </li>
+            <li>
+              <h3>Skills and slash commands</h3>
+              <p>Skills installed on this machine show up in the composer. <kbd>/</kbd> lists the app’s commands and the CLI’s own. Each agent receives the invocation it actually understands.</p>
+            </li>
+            <li>
+              <h3>Memory, off until you turn it on</h3>
+              <p>Optional preferences live in markdown files on this machine. The writer only sees what you typed — not files the agent read, and not tool output. It needs a local Ollama.</p>
+            </li>
+            <li>
+              <h3>Leave the dev server running</h3>
+              <p>A turn that finishes leaves the server the agent started, and lists it. A turn you stop still stops that process. Quitting the app while a turn is running takes a held press, so one stray key does not kill an edit.</p>
+            </li>
+            <li>
+              <h3>Settle what you are done with</h3>
+              <p>Settle a chat you have finished, or snooze one until later. The sidebar stays about the work in front of you, and a settled chat can still be opened.</p>
+            </li>
+          </ul>
+        </div>
+      </section>
+
+      <section class="block" id="agents">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">05 · Agents</p>
+            <h2>What you install is the agent.</h2>
+            <p class="block-intro">
+              Agent UI looks for programs already on your machine. If one is missing, the picker says why.
+              Logins for Claude, Codex, and Cursor stay in those tools.
+              Keys you add are for model providers you configure yourself, and they live in <code>settings.json</code> on this computer.
+            </p>
+          </header>
+          <ul class="agents">
+            <li>
+              <h3>Claude Code</h3>
+              <p class="agent-need">The <code>claude</code> command, already signed in.</p>
+              <p>Edits files, runs commands, and resumes the CLI’s own session on the next message. Permission is read-only, edits, or full. Read-only is a deny list the CLI enforces, including in subagents.</p>
+            </li>
+            <li>
+              <h3>Codex</h3>
+              <p class="agent-need">The Codex CLI. <code>codex login</code>, or a model provider that speaks the Responses API.</p>
+              <p>The app talks to <code>codex app-server</code> and resumes the original thread. Your <code>~/.codex/config.toml</code> stays untouched. Permission is read-only, edits, or full. In edits mode, command and file approvals come back to you. A provider you configured also works while you are signed out of ChatGPT, if that endpoint speaks the Responses API.</p>
+            </li>
+            <li>
+              <h3>Cursor Agent</h3>
+              <p class="agent-need">The Cursor <code>agent</code> CLI, already logged in.</p>
+              <p>Tools, and a resumable session. The modes are read-only, plan, and full — there is no step between “cannot write” and “can write anywhere”. Changing the mode starts a new Cursor session. The chat in Agent UI stays put.</p>
+            </li>
+            <li>
+              <h3>Ollama</h3>
+              <p class="agent-need">A local Ollama install. If it is installed and stopped, the app starts it.</p>
+              <p>Chat only: no tools and no file edits. The app replays the transcript each turn, because Ollama does not keep a session. Models that can think show their reasoning. Usage marks the price as free.</p>
+            </li>
+            <li>
+              <h3>Chat (direct)</h3>
+              <p class="agent-need">Any OpenAI-compatible endpoint. Ten presets, or a base URL of your own.</p>
+              <p>The same shape as Ollama: a conversation, no tools, the transcript replayed by the app. Presets include OpenAI, Anthropic, Google, xAI, DeepSeek, Groq, Mistral, OpenRouter, Together AI, and Fireworks. The key stays in settings on this machine.</p>
+            </li>
+            <li>
+              <h3>pi</h3>
+              <p class="agent-need">The <code>pi</code> CLI, plus Ollama or any model provider you added.</p>
+              <p>A small harness with tools, over the model you picked. Sessions resume. Commands run as your user — pi has no sandbox. Treat that the way you would a terminal.</p>
+            </li>
+            <li class="span">
+              <h3>Any ACP agent</h3>
+              <p class="agent-need">A command under Settings → Harnesses. DeepSeek Harness and tinyagent are already in the list.</p>
+              <p>
+                <a href="https://agentclientprotocol.com/">ACP</a> is the Agent Client Protocol.
+                If a tool speaks it, you add the command and it shows up as an agent, with no change to this app.
+                The process stays up between turns and closes after 15 idle minutes.
+                If the agent cannot reload a session, the new one is briefed with the transcript.
+                An agent installed inside WSL is a setting on that entry, “Runs inside WSL”.
+              </p>
+            </li>
+          </ul>
+          <p class="note">
+            A mock agent is built in. It scripts a turn so you can learn the interface before any of the above is installed.
           </p>
         </div>
-
-        <div class="harness-grid">
-          <article class="harness-card featured">
-            <div class="harness-top"><span class="provider-mark cursor">›_</span><span class="available">Available</span></div>
-            <h3>Cursor Agent</h3>
-            <p>Full agentic runs in the folder you choose, backed by the local Cursor CLI.</p>
-            <span class="card-meta">Native sessions · tools · resume</span>
-          </article>
-          <article class="harness-card">
-            <div class="harness-top"><span class="provider-mark dsh">DS</span><span class="available">ACP</span></div>
-            <h3>DeepSeek Harness</h3>
-            <p>DeepSeek's tool-rich harness, integrated over its ACP profile with sandbox controls.</p>
-            <span class="card-meta">25 tools · plans · permissions</span>
-          </article>
-          <article class="harness-card">
-            <div class="harness-top"><span class="provider-mark pi">π</span><span class="available">Lean</span></div>
-            <h3>pi</h3>
-            <p>A small agent harness that gives local and hosted models room to reason and act.</p>
-            <span class="card-meta">Files · shell · compact context</span>
-          </article>
-          <article class="harness-card">
-            <div class="harness-top"><span class="provider-mark ollama">◌</span><span class="available">Local</span></div>
-            <h3>Ollama</h3>
-            <p>Direct chat with local models, including thinking support and honest cold-start status.</p>
-            <span class="card-meta">Private · offline · model catalog</span>
-          </article>
-          <article class="harness-card">
-            <div class="harness-top"><span class="provider-mark direct">↗</span><span class="available">Direct</span></div>
-            <h3>Model providers</h3>
-            <p>Connect OpenAI-compatible endpoints from ten presets or add your own base URL.</p>
-            <span class="card-meta">Hosted · self-hosted · tested</span>
-          </article>
-          <article class="harness-card dashed">
-            <div class="harness-top"><span class="provider-mark acp">+</span><span class="available">Open</span></div>
-            <h3>Any ACP agent</h3>
-            <p>Add a command, arguments, workspace, and permission policy. No application code required.</p>
-            <span class="card-meta">Configure, don't integrate</span>
-          </article>
-        </div>
       </section>
 
-      <section class="settings-section section-wide">
-        <div class="settings-copy">
-          <p class="kicker">04 — Make it yours</p>
-          <h2>Your setup, without the setup tax.</h2>
-          <p>
-            Configure harness paths, model providers, defaults, memory, sound, and themes once. Agent UI
-            checks availability at runtime and tells you what needs attention.
-          </p>
-          <div class="theme-chips" role="group" aria-label="Included visual themes">
-            <span>Modern Minimal</span><span>Graphite</span><span>T3 Chat</span><span>Perpetuity</span><span>+5</span>
+      <section class="block" id="files">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">06 · Your files</p>
+            <h2>Chats are files on this machine.</h2>
+            <p class="block-intro">
+              Move the whole directory by setting <code>AGENT_UI_DIR</code>. Treat it as sensitive: it holds transcripts, and any API keys you saved for a hosted model.
+            </p>
+          </header>
+          <div class="files-grid">
+            <div class="dir">
+              <p class="dir-root"><code>~/.agent-ui/</code></p>
+              <dl>
+                <div>
+                  <dt><code>settings.json</code></dt>
+                  <dd>Appearance, which agents are enabled, and keys for model providers you added.</dd>
+                </div>
+                <div>
+                  <dt><code>sessions/index.json</code></dt>
+                  <dd>The sidebar: titles, folders, which agent ran last.</dd>
+                </div>
+                <div>
+                  <dt><code>sessions/&lt;id&gt;.json</code></dt>
+                  <dd>One transcript.</dd>
+                </div>
+                <div>
+                  <dt><code>sessions/&lt;id&gt;.journal.json</code></dt>
+                  <dd>The handoff log. Requests, files, commands, errors. The streamed answer stays in the transcript.</dd>
+                </div>
+                <div>
+                  <dt><code>memory/*.md</code></dt>
+                  <dd>Optional cross-chat memory. Off by default. One markdown file per category.</dd>
+                </div>
+                <div>
+                  <dt><code>imports.json</code></dt>
+                  <dd>Which chats were imported, and from which CLI.</dd>
+                </div>
+                <div>
+                  <dt><code>worktrees/</code></dt>
+                  <dd>Git worktrees the app created for chats that asked for one.</dd>
+                </div>
+              </dl>
+            </div>
+            <aside class="callout">
+              <h3>What an agent is allowed to touch</h3>
+              <p>It works in the folder you gave that chat, up to the permission you set. Read-only, plan, edits, or full — whichever that agent can actually enforce.</p>
+              <p>pi is the exception to the sandbox: its commands run as your user.</p>
+              <p>Logins for Claude Code, Codex, and Cursor stay in those tools. This app does not ask you to paste them.</p>
+            </aside>
           </div>
         </div>
-        <figure class="product-frame settings-frame">
-          <figcaption><span>Appearance</span><span>Nine themes, light and dark</span></figcaption>
-          <img
-            src="assets/settings.png"
-            alt="Agent UI appearance settings with a grid of built-in themes"
-            width="1360"
-            height="860"
-            loading="lazy"
-          >
-        </figure>
       </section>
 
-      <section class="principles section">
-        <p class="kicker">Small details, serious workspace</p>
-        <div class="principle-list">
-          <article><span>01</span><h3>Cold model?</h3><p>The app says it is loading — and names it — instead of pretending it is thinking.</p></article>
-          <article><span>02</span><h3>Long task?</h3><p>The latest plan stays above the composer, with progress visible at a glance.</p></article>
-          <article><span>03</span><h3>Agent waiting?</h3><p>Status appears in the conversation and the sidebar, so background work never looks dead.</p></article>
-          <article><span>04</span><h3>Run finished?</h3><p>Completion sound, file summary, and diff review put the result back in your hands.</p></article>
+      <section class="block" id="install">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">07 · Install</p>
+            <h2>Windows installer, or from source anywhere.</h2>
+          </header>
+          <div class="install-grid">
+            <article class="install-card">
+              <h3>Windows</h3>
+              <p>A signed x64 installer on GitHub Releases, with automatic updates. It is large on purpose: it carries a Node.js runtime and serves the app on <code>127.0.0.1</code>, so there is nothing else to install first.</p>
+              <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">Download for Windows</a>
+            </article>
+            <article class="install-card">
+              <h3>Any system, from source</h3>
+              <p>Needs <a href="https://nodejs.org/">Node.js</a> 20.9 or newer and <a href="https://bun.sh/">bun</a>. The mock agent works with nothing else installed.</p>
+              <pre><code>git clone https://github.com/<wbr>miskibin/<wbr>agent-ui.git
+cd agent-ui
+bun install
+bun run dev</code></pre>
+              <p class="install-follow">Open <a href="http://localhost:3000">http://localhost:3000</a>.</p>
+            </article>
+          </div>
+          <div class="install-desktop">
+            <h3>Desktop window, from source</h3>
+            <p>
+              Install the <a href="https://v2.tauri.app/start/prerequisites/">Tauri prerequisites</a>, then:
+            </p>
+            <pre><code>bun run desktop:dev
+bun run desktop:build</code></pre>
+            <p class="install-follow"><code>desktop:build</code> makes the installer for the machine you are on: dmg, deb, AppImage, or the Windows setup.</p>
+          </div>
         </div>
       </section>
 
-      <section class="final-cta section-wide">
-        <div class="final-grid" aria-hidden="true"></div>
-        <img class="final-icon" src="assets/icon.png" alt="" width="76" height="76">
-        <p class="kicker">Open source · local first · built for agents</p>
-        <h2>Give your agents<br><em>a better place to work.</em></h2>
-        <div class="hero-actions">
-          <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">
-            Download Agent UI <span aria-hidden="true">↓</span>
-          </a>
-          <a class="button button-secondary" href="https://github.com/miskibin/agent-ui">
-            Star on GitHub <span aria-hidden="true">↗</span>
-          </a>
+      <section class="block" id="questions">
+        <div class="wrap">
+          <header class="block-head">
+            <p class="kicker">08 · Questions</p>
+            <h2>Short answers.</h2>
+          </header>
+          <div class="faq">
+            <details>
+              <summary>Is Agent UI a model?</summary>
+              <p>No. It is the desktop app around an agent. The model is whichever one that agent calls — Claude, GPT, Gemini, a local Ollama model, or a model behind a URL you added.</p>
+            </details>
+            <details>
+              <summary>Do I need an API key?</summary>
+              <p>For the agents you already use, you need the login those tools already have. Claude Code, Codex, and Cursor keep their own credentials. You add a key only for a model provider you configure under Settings, or for a local Ollama, which needs none. The mock agent needs nothing at all.</p>
+            </details>
+            <details>
+              <summary>Will it change files in my repository?</summary>
+              <p>When you send a task to an agent that has tools, and the permission mode allows it, that agent can edit the folder the chat is pointed at. Read-only stops writes. A turn in a git folder can be undone from the checkpoint taken before it ran. You can also revert a single file from its menu.</p>
+            </details>
+            <details>
+              <summary>What is ACP?</summary>
+              <p>The <a href="https://agentclientprotocol.com/">Agent Client Protocol</a>, a way for an editor — or this app — to talk to an agent. DeepSeek Harness and tinyagent ship as ready-made entries. Any other agent that speaks the protocol is a command, arguments, and a permission policy in Settings.</p>
+            </details>
+            <details>
+              <summary>Can I use it on macOS or Linux?</summary>
+              <p>Yes, from source. <code>bun run dev</code> opens it in the browser. <code>bun run desktop:build</code> makes a native installer on that machine. The file published on GitHub Releases today is the Windows x64 installer.</p>
+            </details>
+            <details>
+              <summary>How is this different from running Claude Code in the terminal?</summary>
+              <p>You get the same Claude Code session either way. In Agent UI that session sits in a sidebar with your other chats, the diff opens beside the answer, a question stays on screen until you answer it, and a turn in a git folder can be undone. Switching the picker to Codex writes Codex a brief and keeps both sessions. If the terminal is enough, you do not need this app.</p>
+            </details>
+            <details>
+              <summary>How is this different from T3 Code or OpenCode?</summary>
+              <p>OpenCode is an agent. It writes the code, and it has its own terminal, desktop, and IDE. T3 Code is a control plane for several agents: desktop, browser, and phone, and a thread can open a pull request. Agent UI is the local record of the work. It runs on this computer, keeps each agent’s session, and is built around reading a turn — the question, the diff, the checkpoint, and the handoff. Pick the one whose job you actually want.</p>
+            </details>
+            <details>
+              <summary>Where does my data go?</summary>
+              <p>Transcripts and settings stay in <code>~/.agent-ui</code> on this machine. There is no Agent UI account to upload them to. A CLI agent still talks to its own service — Claude to Anthropic, Codex to OpenAI — with the login on that CLI. A model provider you added is called from this machine. Optional memory is off by default, stored as markdown, and the writer only sees text you typed.</p>
+            </details>
+            <details>
+              <summary>Where is the source?</summary>
+              <p>The app is MIT, on <a href="https://github.com/miskibin/agent-ui">GitHub</a>. The conversation view — messages, tools, diffs, the composer — is also published on its own as <a href="https://github.com/miskibin/chat-components">chat-components</a>, a shadcn registry. Agent UI is the app around those components.</p>
+            </details>
+          </div>
         </div>
-        <p class="version-note">Windows x64 · signed automatic updates</p>
+      </section>
+
+      <section class="close">
+        <div class="wrap">
+          <h2>Put it next to the agent you already use.</h2>
+          <p>Windows installer, or the same app from source on any system. The mock agent is there if you want to look around first.</p>
+          <div class="actions">
+            <a class="button button-primary" href="https://github.com/miskibin/agent-ui/releases/latest">Download for Windows</a>
+            <a class="button button-secondary" href="#install">Run from source</a>
+          </div>
+        </div>
       </section>
     </main>
 
     <footer class="site-footer">
-      <a class="brand" href="#top"><img src="assets/icon.png" alt="" width="28" height="28"><span>Agent UI</span></a>
-      <p>One fast workspace for every coding agent.</p>
-      <div>
-        <a href="https://github.com/miskibin/agent-ui">GitHub</a>
-        <a href="https://github.com/miskibin/agent-ui/releases">Releases</a>
-        <a href="https://github.com/miskibin/agent-ui/blob/main/LICENSE">License</a>
+      <div class="wrap footer-row">
+        <a class="brand" href="#top">
+          <img src="assets/icon.png" alt="" width="24" height="24">
+          <span>Agent UI</span>
+        </a>
+        <p>A desktop app for the coding agents you already use.</p>
+        <nav aria-label="Footer">
+          <a href="https://github.com/miskibin/agent-ui">GitHub</a>
+          <a href="https://github.com/miskibin/agent-ui/releases">Releases</a>
+          <a href="https://github.com/miskibin/chat-components">chat-components</a>
+          <a href="https://github.com/miskibin/agent-ui/blob/main/LICENSE">MIT</a>
+        </nav>
       </div>
     </footer>
+    <script>
+      document.querySelectorAll(".compact-nav a").forEach((link) => {
+        link.addEventListener("click", () => {
+          const menu = link.closest("details")
+          if (menu) menu.open = false
+        })
+      })
+    </script>
   </body>
 </html>
