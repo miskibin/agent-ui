@@ -4,12 +4,15 @@
  *
  *   node scripts/import-tweakcn.mjs
  *
- * Adding a theme is one line in CURATED below plus a rerun — the registry item
- * is stored verbatim (`cssVars.theme` / `.light` / `.dark`), so there is no
- * per-theme mapping to maintain. `lib/theme/apply.ts` emits every variable it
- * finds; the only thing the app knows about individual tokens is which font
- * families it preloads (`lib/theme/fonts.ts`), and this script warns when a
- * curated theme asks for a family that is not in that map.
+ * CURATED is only Modern Minimal and Claude. The rest of the tweakcn catalog
+ * does not hold up in this app; Ink, Grove and Dusk are hand-tuned in
+ * `lib/theme/themes/authored.ts` and must not be added back here.
+ *
+ * A registry item is stored verbatim (`cssVars.theme` / `.light` / `.dark`).
+ * `lib/theme/apply.ts` emits every variable it finds; the only thing the app
+ * knows about individual tokens is which font families it preloads
+ * (`lib/theme/fonts.ts`), and this script warns when a curated theme asks for
+ * a family that is not in that map.
  */
 
 import { mkdir, writeFile } from "node:fs/promises"
@@ -21,8 +24,9 @@ const OUT = join(ROOT, "lib/theme/themes/generated.ts")
 const REGISTRY = "https://tweakcn.com/r/themes"
 
 /**
- * The shipped set. `id` is the registry item name and the value stored in
+ * The registry pair. `id` is the item name and the value stored in
  * settings.json; `name` / `description` are what the settings page shows.
+ * Ink, Grove and Dusk are not in this list — see `lib/theme/themes/authored.ts`.
  */
 const CURATED = [
   {
@@ -31,79 +35,9 @@ const CURATED = [
     description: "Clean whites under a clear blue.",
   },
   {
-    id: "graphite",
-    name: "Graphite",
-    description: "Neutral greys, no hue at all.",
-  },
-  {
-    id: "t3-chat",
-    name: "T3 Chat",
-    description: "Warm pink on cream, system fonts.",
-  },
-  {
-    id: "catppuccin",
-    name: "Catppuccin",
-    description: "Soft pastels and a mauve lead.",
-  },
-  {
-    id: "mocha-mousse",
-    name: "Mocha Mousse",
-    description: "Coffee and clay, quiet chroma.",
-  },
-  {
-    id: "cosmic-night",
-    name: "Cosmic Night",
-    description: "Deep violet with a lilac lead.",
-  },
-  {
-    id: "amethyst-haze",
-    name: "Amethyst Haze",
-    description: "Hazy lilac over stone greys.",
-  },
-  {
-    id: "perpetuity",
-    name: "Perpetuity",
-    description: "Teal terminal, monospaced UI.",
-  },
-  {
-    id: "notebook",
-    name: "Notebook",
-    description: "Hand-drawn paper and pencil.",
-  },
-  {
-    id: "vercel",
-    name: "Vercel",
-    description: "Black, white, and nothing else.",
-  },
-  {
     id: "claude",
     name: "Claude",
     description: "Warm clay on paper.",
-  },
-  {
-    id: "supabase",
-    name: "Supabase",
-    description: "Signal green over near-black.",
-  },
-  {
-    id: "bold-tech",
-    name: "Bold Tech",
-    description: "Saturated violet, high energy.",
-  },
-  {
-    id: "tangerine",
-    name: "Tangerine",
-    description: "Bright orange against cool slate.",
-  },
-  {
-    id: "ocean-breeze",
-    name: "Ocean Breeze",
-    description: "Sea green on a cool white.",
-  },
-  {
-    id: "soft-pop",
-    name: "Soft Pop",
-    description: "Primary colours, hard edges.",
   },
 ]
 
@@ -169,6 +103,10 @@ const banner = `/**
  *
  * Source: ${REGISTRY}/<id>.json (tweakcn's shadcn theme registry)
  * Regenerate: node scripts/import-tweakcn.mjs
+ *
+ * Only Modern Minimal and Claude are taken from the registry — they are the
+ * two that hold up in this app. Ink, Grove and Dusk are hand-tuned in
+ * ./authored.ts and must not be folded back into this file.
  *
  * Registry items are stored verbatim: \`cssVars.theme\` carries fonts, radius
  * and tracking, \`cssVars.light\` / \`cssVars.dark\` carry the full token set

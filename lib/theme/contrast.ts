@@ -8,8 +8,8 @@
  *    author picked, and the app leans on it hard: every hover, every selected
  *    sidebar row, every focused menu item. Some of those picks are a tint of
  *    the background (fine), and some are a near-white slab in dark mode
- *    (`notebook`: `accent` oklch(0.907) under a foreground of oklch(0.895) —
- *    a 1.04:1 pair, i.e. white on white). So the app derives the accent itself:
+ *    (the retired `notebook` theme: `accent` oklch(0.907) under a foreground of
+ *    oklch(0.895) — a 1.04:1 pair, i.e. white on white). So the app derives the accent itself:
  *    a few percent of the theme's *own* ink over its *own* surface — the
  *    neutral highlight T3 Code uses, where a hover is a shade of the page
  *    rather than a colour. It is the same shape in every theme, reads against
