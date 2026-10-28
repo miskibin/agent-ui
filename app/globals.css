@@ -281,6 +281,10 @@
   border-top: 0;
 }
 
+[data-slot="sidebar-item"]:has([data-slot="app-sidebar-chat-card"]) {
+  contain-intrinsic-size: auto 80px;
+}
+
 /* ---------------------------------------------------------------------------
  * Desktop chrome, reserved before hydration. `data-desktop` is stamped by the
  * pre-paint guard from a localStorage flag the header wrote on a previous run,

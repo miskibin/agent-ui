@@ -12,6 +12,7 @@ import {
   type ChatSidebarItemData,
   type SidebarItemMenuAction,
   type SidebarItemRenderActions,
+  type SidebarItemRenderContent,
 } from "@/components/ui/chat-sidebar"
 import {
   Popover,
@@ -45,6 +46,7 @@ export type SidebarSectionProps = {
   getMenuActions?: (item: ChatSidebarItemData) => SidebarItemMenuAction[]
   /** Pin and delete in the row's meta slot, on hover or keyboard focus. */
   renderActions?: SidebarItemRenderActions
+  renderContent?: SidebarItemRenderContent
 }
 
 export const SidebarSessionSection = React.memo(function SidebarSessionSection({
@@ -103,6 +105,7 @@ export const SidebarSessionSection = React.memo(function SidebarSessionSection({
         onDeleteMany={rest.onDeleteMany}
         getMenuActions={rest.getMenuActions}
         renderActions={rest.renderActions}
+        renderContent={rest.renderContent}
       />
     </SidebarCollapsibleSection>
   )
@@ -200,6 +203,7 @@ export const SidebarShelfSection = React.memo(function SidebarShelfSection({
       onDeleteMany={rest.onDeleteMany}
       getMenuActions={rest.getMenuActions}
       renderActions={rest.renderActions}
+      renderContent={rest.renderContent}
     />
   )
 

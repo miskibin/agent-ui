@@ -16,6 +16,8 @@ import * as React from "react"
 import { toast } from "sonner"
 
 import { SidebarLoading } from "@/components/chat-skeletons"
+import { FolderLogoMark } from "@/components/folder-logo"
+import { HarnessLogo } from "@/components/provider-logo"
 import {
   SidebarFolderSection,
   SidebarSessionSection,
@@ -34,10 +36,12 @@ import {
   type ChatSidebarItemData,
   type SidebarItemMenuAction,
   type SidebarItemRenderActions,
+  type SidebarItemRenderContent,
 } from "@/components/ui/chat-sidebar"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import * as api from "@/lib/api-client"
 import { errorMessage } from "@/lib/chat-helpers"
+import { folderName } from "@/lib/folder"
 import {
   AGENTS_SHELF_ID,
   PINNED_GROUP_ID,
@@ -80,6 +84,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   activeId,
   sessionsLoaded,
   sessionsRef,
+  sessions,
+  providerName,
   closedSections,
   onToggleSection,
   renameRequest,
@@ -119,6 +125,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   sessionsLoaded: boolean
   /** Read on drop only: the drag indices are per-list, the ids are not. */
   sessionsRef: React.RefObject<SessionMeta[]>
+  sessions: SessionMeta[]
+  providerName: (id: string) => string
   closedSections: Record<string, boolean>
   onToggleSection: (id: string) => void
   renameRequest: { id: string; token: number }
@@ -142,6 +150,34 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   sidebarWidth: number
   onSidebarWidthChange: (width: number) => void
 }) {
+  const sessionsById = React.useMemo(
+    () => new Map(sessions.map((session) => [session.id, session])),
+    [sessions]
+  )
+  const renderContent = React.useCallback<SidebarItemRenderContent>((item) => {
+    const session = sessionsById.get(item.id)
+    // Shelved and newly woken rows have their own compact/interactive content.
+    if (!session || !item.subtitle || (session.wokeAt && (!session.lastVisitedAt || session.wokeAt > session.lastVisitedAt))) return undefined
+    const detail = item.status === "streaming" && typeof item.subtitle === "string" &&
+      !["Thinking", "Searching", "Responding"].includes(item.subtitle)
+      ? item.subtitle
+      : session.gitBranch || session.worktree?.branch || "\u00a0"
+    return (
+      <span data-slot="app-sidebar-chat-card" className="flex min-w-0 flex-1 flex-col gap-0.5 py-1">
+        <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+          {session.cwd ? <FolderLogoMark cwd={session.cwd} /> : null}
+          {item.leading}
+          <span className="min-w-0 flex-1 truncate">{session.cwd ? folderName(session.cwd) : "Chat"}</span>
+          <span className="shrink-0 group-hover/sidebar-item:opacity-0 group-focus-within/sidebar-item:opacity-0">{item.meta}</span>
+        </span>
+        <span className="truncate text-[13px] font-semibold leading-5">{item.title}</span>
+        <span className="flex min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground">
+          <span className="min-w-0 flex-1 truncate" title={detail}>{detail}</span>
+          <HarnessLogo providerId={session.providerId} name={providerName(session.providerId)} className="size-3.5 shrink-0" />
+        </span>
+      </span>
+    )
+  }, [providerName, sessionsById])
   /**
    * The list a chat is filed under — the pinned group, its folder's section,
    * or the folderless one. It is what makes a drag across sections mean
@@ -298,7 +334,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
       renderOverlay={(id) => {
         const item = sessionItems.find((session) => session.id === id)
         if (!item) return null
-        return <ChatSidebarItemGhost item={item} active={item.id === activeId} />
+        return <ChatSidebarItemGhost item={item} active={item.id === activeId} renderContent={renderContent} />
       }}
     >
       <ChatSidebar
@@ -404,6 +440,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
             onDeleteMany={onDeleteMany}
             getMenuActions={getMenuActions}
             renderActions={renderActions}
+            renderContent={renderContent}
           />
         ) : null}
 
@@ -422,6 +459,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
             onDeleteMany={onDeleteMany}
             getMenuActions={getMenuActions}
             renderActions={renderActions}
+            renderContent={renderContent}
           />
         ))}
 
@@ -446,6 +484,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
               onDeleteMany={onDeleteMany}
               getMenuActions={getMenuActions}
               renderActions={renderActions}
+              renderContent={renderContent}
             />
           ) : null
         )}

@@ -196,3 +196,20 @@ test("a chat deleted mid-turn is not re-created by the write that lands after", 
     false
   )
 })
+
+test("concurrent updates to different chats stay isolated when one is deleted", async () => {
+  const first = await createSession({ title: "first concurrent chat" })
+  const second = await createSession({ title: "second concurrent chat" })
+  await Promise.all([
+    upsertMessages(first.id, [{ id: "first-row", sender: "user", content: "first" }]),
+    upsertMessages(second.id, [{ id: "second-row", sender: "user", content: "second" }]),
+  ])
+  await Promise.all([
+    deleteSession(first.id),
+    upsertMessages(second.id, [{ id: "second-reply", sender: "assistant", content: "reply" }]),
+    upsertMessages(first.id, [{ id: "late-row", sender: "assistant", content: "late" }]),
+  ])
+  assert.deepEqual(await readMessages(first.id), [])
+  assert.deepEqual((await readMessages(second.id)).map((message) => message.id), ["second-row", "second-reply"])
+  assert.equal((await listSessions()).find((session) => session.id === second.id)?.messageCount, 2)
+})

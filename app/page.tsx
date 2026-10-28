@@ -890,6 +890,8 @@ export default function ChatPage() {
           activeId={activeId}
           sessionsLoaded={sessionsLoaded}
           sessionsRef={sessionsRef}
+          sessions={sessions}
+          providerName={providerName}
           closedSections={closedSections}
           onToggleSection={toggleSection}
           renameRequest={renameRequest}

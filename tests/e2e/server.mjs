@@ -5,6 +5,7 @@ import fs, { mkdtemp, rm } from "node:fs/promises"
 import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { performance } from "node:perf_hooks"
 import { fileURLToPath } from "node:url"
 
 /**
@@ -143,6 +144,7 @@ export async function startApp() {
   await fs.mkdir(folder, { recursive: true })
 
   const port = await freePort()
+  const startedAt = performance.now()
   const child = spawn(process.execPath, [path.join(STANDALONE, "server.js")], {
     // `process.cwd()` is one of the roots the file routes resolve against, so
     // the server is started where a user would start it.
@@ -170,6 +172,7 @@ export async function startApp() {
   }
 
   return {
+    startupMs: performance.now() - startedAt,
     baseUrl,
     dataDir,
     workDir,

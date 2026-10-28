@@ -22,10 +22,44 @@ try {
   }))
   await writeFile(path.join(app.dataDir, "sessions", `${session.id}.json`), JSON.stringify(messages))
   browser = await launchChromium(await loadPlaywright())
-  const result = { cold: [], reload: [], typing: [], send: [], domNodes: [] }
+  const result = { cold: [], reload: [], typing: [], keyboardFrame: [], send: [], responseHeaders: [], domNodes: [] }
+  if (process.env.AGENT_UI_BENCH_STREAM === "1") result.firstContent = []
   for (let i = 0; i < iterations; i++) {
     const context = await browser.newContext({ viewport: { width: 1400, height: 900 } })
     const page = await context.newPage()
+    if (result.firstContent) {
+      await page.addInitScript(() => {
+        const original = window.fetch
+        window.fetch = async (...args) => {
+          const response = await original(...args)
+          if (String(args[0]).endsWith("/api/chat") && response.ok && response.body) {
+            void (async () => {
+              const reader = response.clone().body.getReader()
+              const decoder = new TextDecoder()
+              let buffer = ""
+              while (true) {
+                const { value, done } = await reader.read()
+                if (done) break
+                buffer += decoder.decode(value, { stream: true })
+                const lines = buffer.split("\n")
+                buffer = lines.pop()
+                for (const line of lines) {
+                  if (!line.startsWith("data: ")) continue
+                  try {
+                    const event = JSON.parse(line.slice(6))
+                    if ((event.type === "text" || event.type === "thinking") && event.text) {
+                      window.__benchFirstContent = performance.now()
+                      return
+                    }
+                  } catch { /* partial frame or end marker */ }
+                }
+              }
+            })().catch(() => {})
+          }
+          return response
+        }
+      })
+    }
     let start = performance.now()
     await page.goto(app.baseUrl, { waitUntil: "domcontentloaded" })
     await page.getByText(`Benchmark message ${count - 1}.`, { exact: false }).waitFor({ timeout: 30000 })
@@ -35,6 +69,7 @@ try {
     await page.getByText(`Benchmark message ${count - 1}.`, { exact: false }).waitFor({ timeout: 30000 })
     result.reload.push(performance.now() - start)
     result.domNodes.push(await page.locator("*").count())
+    await page.locator('[data-slot="provider-picker-trigger"][aria-label="Provider: Mock agent"]').waitFor({ timeout: 30000 })
     const input = page.locator('[data-slot="chat-input-textarea"]')
     await input.click()
     const elapsed = await page.evaluate(async () => {
@@ -48,11 +83,33 @@ try {
       return samples
     })
     result.typing.push(...elapsed)
-    await input.fill(`Benchmark send ${i}`)
+    await input.fill("")
+    await page.evaluate(() => {
+      window.__benchKeyFrames = []
+      document.querySelector('[data-slot="chat-input-textarea"]').addEventListener("keydown", (event) => {
+        if (event.key.length !== 1) return
+        const start = performance.now()
+        requestAnimationFrame(() => window.__benchKeyFrames.push(performance.now() - start))
+      })
+    })
+    await input.pressSequentially("representative typing", { delay: 20 })
+    result.keyboardFrame.push(...await page.evaluate(() => window.__benchKeyFrames))
+    await input.fill(`Benchmark send stream ${i}`)
+    const responseStarted = page.waitForResponse((response) =>
+      response.url().endsWith("/api/chat") && response.request().method() === "POST"
+    ).then((response) => ({ response, at: performance.now() }))
+    if (result.firstContent) await page.evaluate(() => { window.__benchSendAt = performance.now() })
     start = performance.now()
     await input.press("Enter")
-    await page.locator('[data-slot="message"][data-sender="user"]').filter({ hasText: `Benchmark send ${i}` }).waitFor({ timeout: 30000 })
+    await page.locator('[data-slot="message"][data-sender="user"]').filter({ hasText: `Benchmark send stream ${i}` }).waitFor({ timeout: 30000 })
     result.send.push(performance.now() - start)
+    const { response: chatResponse, at: responseAt } = await responseStarted
+    if (!chatResponse.ok()) throw new Error(`chat returned ${chatResponse.status()}`)
+    result.responseHeaders.push(responseAt - start)
+    if (result.firstContent) {
+      await page.waitForFunction(() => window.__benchFirstContent !== undefined, null, { timeout: 30000 })
+      result.firstContent.push(await page.evaluate(() => window.__benchFirstContent - window.__benchSendAt))
+    }
     await context.close()
   }
   const summarize = (values) => {
