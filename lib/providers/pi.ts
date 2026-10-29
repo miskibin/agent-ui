@@ -16,7 +16,7 @@ import {
 } from "@/lib/model-providers/server"
 import { sniffImageMimeType } from "@/lib/attachments"
 import { ollamaOutputBudget } from "@/lib/ollama-context"
-import { writePiExtension } from "@/lib/pi-extension"
+import { writePiExtension, writePiSubagentExtension } from "@/lib/pi-extension"
 import { hasPiBinary } from "@/lib/pi-runtime"
 import { withPromptContext } from "@/lib/providers/system-prefix"
 import {
@@ -48,8 +48,8 @@ const OLLAMA_SOURCE = "ollama"
  * The `pi` CLI (https://pi.dev) driving whatever model sources are configured —
  * the local Ollama server, the OpenAI-compatible providers under
  * `settings.modelProviders`, or either on its own. The minimal agentic harness:
- * four tools (read / write / edit / bash), one subprocess per turn, sessions on
- * disk.
+ * file and shell tools plus app-owned question and subagent extensions, one
+ * subprocess per turn, sessions on disk.
  *
  * Ollama is one source among several here, not a requirement: a machine with no
  * local server but a DeepSeek key still gets the harness, and a machine with
@@ -93,7 +93,7 @@ export function createPiProvider(
       const base: ProviderInfo = {
         id: PI_PROVIDER_ID,
         name: "pi",
-        description: `Agentic harness over ${sourceSummary(baseUrl, sources)} — read, write, edit, bash, ask.`,
+        description: `Agentic harness over ${sourceSummary(baseUrl, sources)} — file tools, shell, questions and subagents.`,
         capabilities: {
           tools: true,
           // pi keeps the transcript in its own session file on disk.
@@ -244,6 +244,8 @@ export function createPiProvider(
       // pi resolves `--model` against its own catalog, so the config has to
       // know about the tag before the process starts.
       let extensionPath: string | undefined
+      let subagentExtensionPath: string | undefined
+      const bridge = options.mcpServers?.find((server) => server.name === "agent-ui")
       try {
         // Listed together: one unreachable source must not add its whole
         // timeout to the wait before the first token.
@@ -271,6 +273,7 @@ export function createPiProvider(
           contexts
         )
         extensionPath = await writePiExtension(configDir)
+        if (bridge) subagentExtensionPath = await writePiSubagentExtension(configDir)
       } catch (err) {
         yield { type: "error", message: ollamaReachErrorMessage(err, baseUrl) }
         return
@@ -291,9 +294,11 @@ export function createPiProvider(
         // A per-chat folder beats the one workspace from settings.
         workspace: options.cwd?.trim() || workspace,
         configDir,
-        bridgeUrl: options.mcpServers?.find((server) => server.name === "agent-ui")?.url,
+        bridgeUrl: bridge?.url,
+        bridgeHeaders: bridge?.headers,
         sessionDir,
         extensionPath,
+        subagentExtensionPath,
         // The media type is gone by the time a payload reaches a provider —
         // `AgentRunOptions.images` is raw base64 — and pi's RPC `images` want
         // one, so it is read back off the bytes.

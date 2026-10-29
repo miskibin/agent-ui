@@ -61,12 +61,23 @@ export function AgentMessageList({
       ),
     [rawMessages, agentRuns, props.conversationKey]
   )
+  const last = props.messages.at(-1)
+  const liveMessageId = (props.isGenerating || (props.generationStage && props.generationStage !== "idle")) && last?.sender === "assistant" ? last.id : undefined
+  const liveCards = React.useMemo(
+    () => [...data.cards.keys()].filter((id) => JSON.parse(decodeURIComponent(id))[0] === liveMessageId),
+    [data.cards, liveMessageId]
+  )
   const messages = React.useMemo(
     () =>
-      props.messages.map((message) =>
-        withSubagentCards(message, data.cards, data.hidden)
-      ),
-    [props.messages, data]
+      props.messages.flatMap((message) => {
+        const view = withSubagentCards(message, data.cards, data.hidden, message.id !== liveMessageId)
+        // A live delegation is drawn below the streaming markdown renderer:
+        // its animated text wrappers cannot reliably render pattern cards.
+        // Keep an otherwise empty assistant from adding a second status row.
+        return message.id === liveMessageId && liveCards.length && !view.content &&
+          !view.parts?.length && !view.tools?.length && !view.reasoning ? [] : [view]
+      }),
+    [props.messages, data, liveMessageId, liveCards.length]
   )
   const context = React.useMemo(
     () => ({ cards: data.cards, open: onOpenAgent }),
@@ -122,7 +133,10 @@ export function AgentMessageList({
             rawMessages.find((raw) => raw.id === message.id) ?? message
           )
         }
-      />
+      >
+        {liveCards.map((id) => <SubagentCard key={id} id={id} />)}
+        {props.children}
+      </MessageList>
     </CardContext>
   )
 }

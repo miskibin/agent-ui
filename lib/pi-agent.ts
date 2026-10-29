@@ -57,9 +57,11 @@ export type PiRunOptions = {
   configDir: string
   /** Parent-scoped bridge URL passed to commands launched by pi. */
   bridgeUrl?: string
+  bridgeHeaders?: Record<string, string>
   sessionDir: string
   /** Our generated ask-user extension; absent means the model cannot ask. */
   extensionPath?: string
+  subagentExtensionPath?: string
   images?: PiImage[]
   /** Where a mid-turn question goes. Absent = every request is cancelled. */
   askUser?: AskUser
@@ -91,6 +93,7 @@ export async function* runPiAgent(
       sessionId: options.sessionId,
       thinking: options.thinking,
       extensionPath: options.extensionPath,
+      subagentExtensionPath: options.subagentExtensionPath,
     }),
   ]
 
@@ -101,6 +104,7 @@ export async function* runPiAgent(
     env: {
       ...process.env,
       AGENT_UI_MCP_URL: options.bridgeUrl ?? "",
+      AGENT_UI_MCP_HEADERS: options.bridgeUrl ? JSON.stringify(options.bridgeHeaders ?? {}) : "",
       PI_CODING_AGENT_DIR: options.configDir,
       // Startup update checks would add seconds to a local-only run.
       PI_OFFLINE: "1",
@@ -149,11 +153,13 @@ export async function* runPiAgent(
     if (child.stdin?.writable) child.stdin.write(`${JSON.stringify(value)}\n`)
   }
 
+  let abortKillTimer: ReturnType<typeof setTimeout> | undefined
   const onAbort = () => {
-    // Best effort: pi tears its own tool subprocesses down on an abort, and
-    // gets the signal below either way.
+    // Let extension tools cancel delegated work before killing the process.
+    // A CLI that ignores abort still loses its whole tree within one second.
     send(ABORT_COMMAND)
-    killProcessTree(child)
+    abortKillTimer = setTimeout(() => killProcessTree(child), 1000)
+    abortKillTimer.unref?.()
   }
   options.signal?.addEventListener("abort", onAbort)
 
@@ -343,6 +349,7 @@ export async function* runPiAgent(
       ...(translator.lastUsage ? { usage: translator.lastUsage } : null),
     }
   } finally {
+    clearTimeout(abortKillTimer)
     options.signal?.removeEventListener("abort", onAbort)
     child.stdin?.end()
     // A stopped turn takes the tree; one that ended keeps the agent's work.

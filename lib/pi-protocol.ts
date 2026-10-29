@@ -34,13 +34,15 @@ export type PiArgsOptions = {
   thinking?: string
   /** Our generated ask-user extension, loaded explicitly past discovery. */
   extensionPath?: string
+  /** The app's subagent tools, only for a top-level chat with a bridge. */
+  subagentExtensionPath?: string
 }
 
 /**
  * `--no-extensions` turns *discovery* off — the user's own `~/.pi` extensions,
  * every one of which is context the model would pay for — while an explicit
  * `--extension` still loads. That pairing is the whole point: exactly one
- * extension, ours, and nothing else.
+ * app-owned extension set, and nothing else.
  */
 export function buildPiArgs(options: PiArgsOptions): string[] {
   const args = [
@@ -54,6 +56,7 @@ export function buildPiArgs(options: PiArgsOptions): string[] {
     "--no-themes",
   ]
   if (options.extensionPath) args.push("--extension", options.extensionPath)
+  if (options.subagentExtensionPath) args.push("--extension", options.subagentExtensionPath)
   if (options.sessionId) args.push("--session-id", options.sessionId)
   if (options.thinking) args.push("--thinking", options.thinking)
   return args
@@ -102,6 +105,7 @@ export type PiEvent = {
   toolName?: string
   args?: unknown
   result?: unknown
+  partialResult?: unknown
   isError?: boolean
   error?: unknown
   message?: PiMessage | unknown
@@ -266,6 +270,16 @@ export class PiTranslator {
           input: stringify(event.args),
         },
       ]
+    }
+
+    if (event.type === "tool_execution_update" && event.toolCallId) {
+      return [{
+        type: "tool",
+        id: event.toolCallId,
+        name: event.toolName ?? "tool",
+        status: "running",
+        output: toolOutput(event.partialResult),
+      }]
     }
 
     if (event.type === "tool_execution_end" && event.toolCallId) {

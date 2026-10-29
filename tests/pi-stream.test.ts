@@ -97,6 +97,26 @@ test("a new session and a text-only turn leave their flags off", () => {
   assert.equal(args.includes("--"), false)
 })
 
+test("a top-level Pi chat explicitly loads both app extensions", () => {
+  const args = buildPiArgs({ model: "ollama/qwen", sessionDir: "/s",
+    extensionPath: "/e/ask-user.ts", subagentExtensionPath: "/e/subagents.ts" })
+  assert.deepEqual(args.filter((_, i) => args[i - 1] === "--extension"), ["/e/ask-user.ts", "/e/subagents.ts"])
+})
+
+test("Pi publishes a running subagent receipt before the tool finishes", () => {
+  const receipt = { run_id: "r1", session_id: "child", status: "running" }
+  const result = run([{ type: "tool_execution_update", toolCallId: CALL, toolName: "run_subagent",
+    partialResult: { content: [{ type: "text", text: JSON.stringify(receipt) }], details: receipt } }])
+  assert.equal(result.events.length, 1)
+  const event = result.events[0]
+  assert.equal(event.type, "tool")
+  if (event.type === "tool") {
+    assert.equal(event.status, "running")
+    assert.equal(event.name, "run_subagent")
+    assert.equal(JSON.parse(event.output!).session_id, "child")
+  }
+})
+
 test("the prompt command carries images only when there are some", () => {
   assert.deepEqual(promptCommand("hi"), {
     id: "prompt",
