@@ -1,13 +1,11 @@
 "use client"
 
 import * as React from "react"
-import { Plus, RotateCw, Trash2 } from "lucide-react"
+import { Plus, Trash2 } from "lucide-react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Switch } from "@/components/ui/switch"
-import { SourceLogo } from "@/components/provider-logo"
 import { probeModelProvider } from "@/lib/api-client"
 import {
   MODEL_PROVIDER_PRESETS,
@@ -17,16 +15,19 @@ import {
 import type { ModelProviderEntry } from "@/lib/settings/schema"
 
 import { SettingsRow, SettingsSection } from "./section"
+import { ProviderField, ProviderRow, RefreshButton } from "./provider-row"
 import type { AppSettingsApi } from "./use-app-settings"
 
 /**
  * OpenAI-compatible model sources: presets ship disabled and keyless, and
  * anyone can add a custom endpoint. This mirrors the ACP agent list's CRUD
  * idiom (`acp-agents.tsx`) — writes only ever go through `update`, and the
- * "Test" button is the one place that talks to the API directly.
+ * refresh action is the one place that talks to the API directly.
  */
 
-const PRESET_SLUGS = new Set(MODEL_PROVIDER_PRESETS.map((preset) => preset.slug))
+const PRESET_SLUGS = new Set(
+  MODEL_PROVIDER_PRESETS.map((preset) => preset.slug)
+)
 
 export function ModelProvidersSection({
   settings,
@@ -35,14 +36,58 @@ export function ModelProvidersSection({
   flush,
 }: AppSettingsApi) {
   const entries = settings.modelProviders
+  const [refreshing, setRefreshing] = React.useState<string | null>(null)
+  const refreshLock = React.useRef(false)
+  const [results, setResults] = React.useState<Record<string, ProbeResult>>({})
+  const refresh = React.useCallback(
+    async (slug?: string) => {
+      if (refreshLock.current) return
+      refreshLock.current = true
+      setRefreshing(slug ?? "all")
+      try {
+        await flush()
+        const targets = slug
+          ? [slug]
+          : Object.keys(entries).filter((key) => entries[key].enabled)
+        await Promise.all(
+          targets.map(async (key) => {
+            const entry = entries[key]
+            if (!entry) return
+            let result
+            try {
+              result = await probeModelProvider(key, AbortSignal.timeout(15_000))
+            } catch (error) {
+              result = {
+                ok: false,
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Couldn't refresh provider.",
+              }
+            }
+            setResults((current) => ({
+              ...current,
+              [key]: { ...result, config: entryConfig(entry) },
+            }))
+          })
+        )
+      } catch {
+        // flush reports a failed save. Do not test the previous configuration.
+      } finally {
+        refreshLock.current = false
+        setRefreshing(null)
+      }
+    },
+    [entries, flush]
+  )
 
   // Presets in their shipped order, then user-added slugs alphabetically —
   // same ordering `enabledModelSources` uses server-side, so the list reads
   // the same way here and in the model picker.
   const orderedSlugs = React.useMemo(() => {
-    const presetOrder = MODEL_PROVIDER_PRESETS.map((preset) => preset.slug).filter(
-      (slug) => slug in entries
-    )
+    const presetOrder = MODEL_PROVIDER_PRESETS.map(
+      (preset) => preset.slug
+    ).filter((slug) => slug in entries)
     const customSlugs = Object.keys(entries)
       .filter((slug) => !PRESET_SLUGS.has(slug))
       .sort((a, b) => a.localeCompare(b))
@@ -91,7 +136,16 @@ export function ModelProvidersSection({
     <SettingsSection
       id="models"
       title="Model providers"
-      description="OpenAI-compatible endpoints that supply models to pi, Codex, tinyagent and direct chat — this is where API keys live. Codex needs an endpoint that serves the Responses API (/responses)."
+      action={
+        <RefreshButton
+          name="model providers"
+          busy={refreshing !== null}
+          disabled={
+            !loaded || !Object.values(entries).some((entry) => entry.enabled)
+          }
+          onClick={() => void refresh()}
+        />
+      }
     >
       {loaded
         ? orderedSlugs.map((slug) => (
@@ -102,14 +156,30 @@ export function ModelProvidersSection({
               removable={!PRESET_SLUGS.has(slug)}
               onPatch={patchEntry}
               onRemove={removeEntry}
-              onFlush={flush}
+              result={results[slug]}
+              refreshing={refreshing === "all" || refreshing === slug}
+              onRefresh={refresh}
             />
           ))
         : null}
 
-      <AddModelProviderRow existing={entries} onAdd={addEntry} />
+      <AddModelProviderRow
+        existing={entries}
+        onAdd={addEntry}
+        loaded={loaded}
+      />
     </SettingsSection>
   )
+}
+
+type ProbeResult = {
+  ok: boolean
+  count?: number
+  error?: string
+  config: string
+}
+function entryConfig(entry: ModelProviderEntry) {
+  return JSON.stringify([entry.baseUrl, entry.apiKey, entry.models])
 }
 
 type ModelProviderRowProps = {
@@ -118,7 +188,9 @@ type ModelProviderRowProps = {
   removable: boolean
   onPatch: (slug: string, changes: Partial<ModelProviderEntry>) => void
   onRemove: (slug: string) => void
-  onFlush: () => Promise<void>
+  result?: ProbeResult
+  refreshing: boolean
+  onRefresh: (slug: string) => void
 }
 
 function ModelProviderRow({
@@ -127,13 +199,11 @@ function ModelProviderRow({
   removable,
   onPatch,
   onRemove,
-  onFlush,
+  result: probeResult,
+  refreshing,
+  onRefresh,
 }: ModelProviderRowProps) {
-  const [probing, setProbing] = React.useState(false)
-  const [result, setResult] = React.useState<
-    { ok: boolean; count?: number; error?: string } | null
-  >(null)
-  const inputId = `model-provider-${slug}`
+  const result = probeResult?.config === entryConfig(entry) ? probeResult : null
   // A comma-separated list over a string[]: held raw while typing so the
   // separator being typed is not swallowed, committed when the field is left.
   const [modelsDraft, setModelsDraft] = React.useState<string | null>(null)
@@ -150,44 +220,31 @@ function ModelProviderRow({
     setModelsDraft(null)
   }, [modelsDraft, patch])
 
-  const test = React.useCallback(async () => {
-    setProbing(true)
-    setResult(null)
-    try {
-      // The route reads settings.json, so a base URL or key typed a moment ago
-      // has to be on disk before the probe — otherwise this tests the old one.
-      await onFlush()
-      const outcome = await probeModelProvider(slug)
-      setResult(outcome)
-    } catch (err) {
-      setResult({
-        ok: false,
-        error: err instanceof Error ? err.message : "Failed to reach provider",
-      })
-    } finally {
-      setProbing(false)
-    }
-  }, [slug, onFlush])
-
   return (
-    <SettingsRow
-      title={
-        <span className="flex items-center gap-2">
-          <SourceLogo source={slug} className="size-4" />
-          {entry.name || slug}
+    <ProviderRow
+      id={slug}
+      name={entry.name || slug}
+      source
+      enabled={entry.enabled}
+      onEnabledChange={(enabled) => patch({ enabled })}
+      status={
+        <span className="text-[11.5px] text-muted-foreground">
+          {!entry.enabled
+            ? "Disabled"
+            : refreshing
+              ? "Checking…"
+              : result
+                ? result.ok
+                  ? `${result.count} ${result.count === 1 ? "model" : "models"}`
+                  : "Check failed"
+                : "Not checked"}
         </span>
       }
-      htmlFor={inputId}
-      control={
-        <Switch
-          id={inputId}
-          checked={entry.enabled}
-          onCheckedChange={(enabled) => patch({ enabled })}
-        />
-      }
+      onRefresh={() => void onRefresh(slug)}
+      refreshing={refreshing}
     >
       <div className="grid gap-2">
-        <div className="flex items-center gap-2">
+        <ProviderField label="Base URL">
           <Input
             aria-label={`${entry.name || slug} base URL`}
             spellCheck={false}
@@ -197,75 +254,76 @@ function ModelProviderRow({
             value={entry.baseUrl}
             onChange={(event) => patch({ baseUrl: event.target.value })}
           />
-          {removable ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              aria-label={`Remove ${entry.name || slug}`}
-              onClick={() => onRemove(slug)}
-              className="shrink-0"
-            >
-              <Trash2 />
-            </Button>
-          ) : null}
-        </div>
-        <Input
-          aria-label={`${entry.name || slug} API key`}
-          type="password"
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="API key"
-          className="h-8 font-mono text-[12px]"
-          value={entry.apiKey}
-          onChange={(event) => patch({ apiKey: event.target.value })}
-        />
-        <Input
-          aria-label={`${entry.name || slug} model ids`}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Model ids, comma separated — empty lists them from /models"
-          className="h-8 font-mono text-[12px]"
-          value={modelsDraft ?? entry.models.join(", ")}
-          onChange={(event) => setModelsDraft(event.target.value)}
-          onBlur={commitModels}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur()
-          }}
-        />
-        <div className="flex items-center gap-2">
+        </ProviderField>
+        <ProviderField label="API key">
+          <Input
+            aria-label={`${entry.name || slug} API key`}
+            type="password"
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="API key (optional for local endpoints)"
+            className="h-8 font-mono text-[12px]"
+            value={entry.apiKey}
+            onChange={(event) => patch({ apiKey: event.target.value })}
+          />
+        </ProviderField>
+        <ProviderField label="Models">
+          <Input
+            aria-label={`${entry.name || slug} model ids`}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Auto-detect from /models"
+            className="h-8 font-mono text-[12px]"
+            value={modelsDraft ?? entry.models.join(", ")}
+            onChange={(event) => setModelsDraft(event.target.value)}
+            onBlur={commitModels}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.currentTarget.blur()
+            }}
+          />
+        </ProviderField>
+        <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+          Use an OpenAI-compatible endpoint. Leave Models empty to discover
+          them, or enter comma-separated IDs. Codex requires /responses.
+        </p>
+        {result && entry.enabled ? (
+          <p
+            role="status"
+            className={
+              result.ok
+                ? "text-[12px] text-muted-foreground"
+                : "text-[12px] break-words text-destructive"
+            }
+          >
+            {result.ok
+              ? `${result.count} ${result.count === 1 ? "model" : "models"} available`
+              : result.error}
+          </p>
+        ) : null}
+        {removable ? (
           <Button
             type="button"
             variant="ghost"
             size="sm"
-            disabled={probing || !entry.baseUrl}
-            onClick={() => void test()}
-            className="h-7 shrink-0 text-[12px]"
+            aria-label={`Remove ${entry.name || slug}`}
+            onClick={() => onRemove(slug)}
+            className="w-fit text-[12px] text-muted-foreground"
           >
-            <RotateCw className={probing ? "animate-spin" : undefined} />
-            Test
+            <Trash2 />
+            Remove
           </Button>
-          {result ? (
-            <p
-              className={
-                result.ok
-                  ? "text-[12px] text-muted-foreground"
-                  : "text-[12px] text-destructive"
-              }
-            >
-              {result.ok ? `${result.count} models` : result.error}
-            </p>
-          ) : null}
-        </div>
+        ) : null}
       </div>
-    </SettingsRow>
+    </ProviderRow>
   )
 }
 
 function AddModelProviderRow({
   existing,
   onAdd,
+  loaded,
 }: {
+  loaded: boolean
   existing: Record<string, ModelProviderEntry>
   onAdd: (slug: string, entry: ModelProviderEntry) => void
 }) {
@@ -289,7 +347,9 @@ function AddModelProviderRow({
     // The slug defaults to the name, slugged — "LiteLLM" → `litellm`.
     const normalizedSlug = (slug.trim() || slugFromName(name)).toLowerCase()
     if (!MODEL_PROVIDER_SLUG_RE.test(normalizedSlug)) {
-      toast.error("Slug must be lowercase letters, digits or hyphens (1-32 chars).")
+      toast.error(
+        "Slug must be lowercase letters, digits or hyphens (1-32 chars)."
+      )
       return
     }
     if (RESERVED_MODEL_PROVIDER_SLUGS.includes(normalizedSlug)) {
@@ -303,7 +363,9 @@ function AddModelProviderRow({
     const trimmedName = name.trim() || normalizedSlug
     const trimmedBaseUrl = baseUrl.trim().replace(/\/+$/, "")
     if (!/^https?:\/\/\S+$/i.test(trimmedBaseUrl)) {
-      toast.error("Base URL must start with http:// or https:// — e.g. http://localhost:4000/v1")
+      toast.error(
+        "Base URL must start with http:// or https:// — e.g. http://localhost:4000/v1"
+      )
       return
     }
     // Added switched on: a provider someone just typed a URL for is one they
@@ -322,13 +384,13 @@ function AddModelProviderRow({
     return (
       <SettingsRow
         title="Add custom provider"
-        description="Any OpenAI-compatible endpoint not covered by the presets above."
         control={
           <Button
             type="button"
             variant="ghost"
             size="sm"
             onClick={() => setOpen(true)}
+            disabled={!loaded}
             className="text-[12.5px]"
           >
             <Plus />
@@ -342,7 +404,7 @@ function AddModelProviderRow({
   return (
     <SettingsRow
       title="Add custom provider"
-      description="Any OpenAI-compatible endpoint — LiteLLM, vLLM, LM Studio, a gateway. The slug becomes the model id prefix, e.g. litellm/gpt-4o."
+      description="OpenAI-compatible endpoint, such as LiteLLM, vLLM or LM Studio."
     >
       <div className="grid gap-2.5">
         <AddField label="Name" htmlFor="add-provider-name">
@@ -457,5 +519,12 @@ function slugFromName(name: string): string {
 }
 
 function parseModelIds(value: string): string[] {
-  return [...new Set(value.split(/[,\n]/).map((id) => id.trim()).filter(Boolean))]
+  return [
+    ...new Set(
+      value
+        .split(/[,\n]/)
+        .map((id) => id.trim())
+        .filter(Boolean)
+    ),
+  ]
 }

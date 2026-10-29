@@ -40,6 +40,11 @@ type ModelsCache = { at: number; models: ModelOption[]; error?: unknown }
 const modelsCache = new Map<string, ModelsCache>()
 const modelsInFlight = new Map<string, Promise<ModelOption[]>>()
 
+/** Explicit settings refresh bypasses the normal picker cache, including failures. */
+export function forgetCodexModels() {
+  modelsCache.clear()
+}
+
 /** Emits a completed agent message only when no delta for that item arrived. */
 export function completedAgentMessageText(
   message: unknown,

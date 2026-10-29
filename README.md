@@ -86,6 +86,11 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 
 Provider availability is detected at runtime. Configure binaries, endpoints,
 API keys, models, workspaces, and supported permission modes in Settings.
+Provider rows show their icon and status; expand a row for setup commands and
+configuration. Refresh one provider or the whole list to recheck availability
+and reload models. Pending settings changes are saved before the check.
+
+![Compact provider settings with expandable configuration and refresh controls](.github/screenshots/provider-settings.png)
 
 ### Pi and subagents
 

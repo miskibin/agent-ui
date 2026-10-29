@@ -109,6 +109,11 @@ const MODEL_CACHE_MS = 5 * 60 * 1000
 type ModelCacheEntry = { at: number; models: ModelOption[]; raw: Map<string, string> }
 const modelCache = new Map<string, ModelCacheEntry>()
 
+/** Refresh the catalog without terminating pooled agents or their sessions. */
+export function forgetAcpModels(id: string) {
+  modelCache.delete(id)
+}
+
 /**
  * What each agent said it accepts beside text, learned from the one `initialize`
  * the model probe already pays for. It is kept apart from `modelCache` and

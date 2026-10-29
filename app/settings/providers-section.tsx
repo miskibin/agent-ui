@@ -1,10 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { RotateCw, TriangleAlert } from "lucide-react"
+import { TriangleAlert } from "lucide-react"
 import { toast } from "sonner"
 
-import { Button } from "@/components/ui/button"
+import { HarnessLogo } from "@/components/provider-logo"
 import { Input } from "@/components/ui/input"
 import {
   Select,
@@ -14,26 +14,60 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
-import { Switch } from "@/components/ui/switch"
 import type { PermissionMode } from "@/lib/providers/types"
 import type { AppSettings } from "@/lib/settings/schema"
 
 import { AcpAgentRows } from "./acp-agents"
+import {
+  ProviderField,
+  ProviderRow,
+  RefreshButton,
+  SetupCommand,
+  SetupLink,
+} from "./provider-row"
 import { StatusBadge, statusKey, useProviderStatus } from "./provider-status"
 import { SettingsRow, SettingsSection } from "./section"
 import type { AppSettingsApi } from "./use-app-settings"
 
+const CLIS = [
+  {
+    id: "pi",
+    name: "pi",
+    binary: "pi",
+    docs: "https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent",
+    install: "npm install -g @mariozechner/pi-coding-agent",
+    hint: "Uses Ollama and your model providers. Add API keys in Model providers, then refresh.",
+  },
+  {
+    id: "cursorAgent",
+    name: "Cursor Agent",
+    binary: "cursor-agent",
+    docs: "https://cursor.com/docs/cli/installation",
+    login: "agent login",
+  },
+  {
+    id: "claudeCode",
+    name: "Claude Code",
+    binary: "claude",
+    docs: "https://code.claude.com/docs/en/setup",
+    login: "claude auth login",
+  },
+  {
+    id: "codex",
+    name: "Codex",
+    binary: "codex",
+    docs: "https://developers.openai.com/codex/cli",
+    install: "npm install -g @openai/codex",
+    login: "codex login",
+    hint: "Your existing CLI login is reused. Custom model providers must support the Responses API.",
+  },
+] as const
 const BUILT_IN_PROVIDERS = [
   { id: "mock", label: "Mock" },
   { id: "ollama", label: "Ollama" },
-  { id: "pi", label: "pi" },
-  { id: "cursorAgent", label: "Cursor Agent" },
-  { id: "claudeCode", label: "Claude Code" },
-  { id: "codex", label: "Codex" },
-] as const
-
-/** Each label is what the CLI's flags actually enforce, not a suggestion. */
-const HARNESS_PERMISSION_MODES = [
+  ...CLIS.map(({ id, name }) => ({ id, label: name })),
+]
+const PERMISSION_MODES = [
   { id: "read-only", label: "Read only" },
   { id: "edits", label: "Edit files" },
   { id: "full", label: "Full access" },
@@ -45,10 +79,10 @@ export function ProvidersSection({
   update,
   flush,
 }: AppSettingsApi) {
-  const { phase, map, refresh } = useProviderStatus()
-  const [testing, setTesting] = React.useState(false)
+  const { phase, map, refresh } = useProviderStatus(loaded)
+  const [refreshing, setRefreshing] = React.useState<string | null>(null)
+  const refreshLock = React.useRef(false)
   const providers = settings.providers
-
   const setProviders = React.useCallback(
     (patch: Partial<AppSettings["providers"]>) =>
       update((current) => ({
@@ -57,17 +91,13 @@ export function ProvidersSection({
       })),
     [update]
   )
-
   const setAcp = React.useCallback(
     (acp: AppSettings["providers"]["acp"]) => setProviders({ acp }),
     [setProviders]
   )
-
-  // ACP agents are configured rather than coded, so the default-provider list
-  // has to be derived from settings instead of a static const.
   const choices = React.useMemo(
     () => [
-      ...BUILT_IN_PROVIDERS.map((provider) => ({ ...provider })),
+      ...BUILT_IN_PROVIDERS,
       ...Object.entries(providers.acp.agents).map(([key, agent]) => ({
         id: `acp:${key}`,
         label: agent.name || key,
@@ -76,51 +106,94 @@ export function ProvidersSection({
     [providers.acp.agents]
   )
 
-  const testOllama = React.useCallback(async () => {
-    setTesting(true)
-    // The status route reads settings.json, so a base URL typed a moment ago
-    // has to be written before the probe — otherwise this tests the old one.
-    let next
-    try {
-      await flush()
-      next = await refresh()
-    } catch {
-      // flush already reported the failed save; do not test stale settings.
-      return
-    } finally {
-      setTesting(false)
-    }
-    if (!next) {
-      toast.error("Provider status is unavailable.")
-      return
-    }
-    const status = next[statusKey("ollama")]
-    if (status?.available) toast.success("Ollama is reachable.")
-    else toast.error(status?.detail ?? "Ollama did not respond.")
-  }, [flush, refresh])
+  const refreshProviders = React.useCallback(
+    async (id?: string) => {
+      if (refreshLock.current) return
+      refreshLock.current = true
+      setRefreshing(id ?? "all")
+      try {
+        // The probe must see even a URL/path typed immediately before clicking.
+        await flush()
+        const statuses = await refresh(true)
+        if (!statuses) {
+          toast.error("Couldn't refresh providers. Try again.")
+          return
+        }
+        const ids = id ? [id] : Object.keys(statuses)
+        const outcomes = await Promise.all(
+          ids
+            .filter((key) => statuses[statusKey(key)]?.available)
+            .map(async (key) => {
+              // Status keys are normalized; map them back to the runtime provider ids.
+              const providerId = choices.find(
+                (choice) => statusKey(choice.id) === statusKey(key)
+              )?.id
+              if (!providerId) return null
+              try {
+                const res = await fetch(
+                  `/api/models?provider=${encodeURIComponent(providerId)}&refresh=1`,
+                  { cache: "no-store", signal: AbortSignal.timeout(30_000) }
+                )
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+                const data = (await res.json()) as { error?: string }
+                return data.error
+                  ? `${choices.find((choice) => choice.id === providerId)?.label}: ${data.error}`
+                  : null
+              } catch {
+                return `Couldn't refresh models for ${providerId}.`
+              }
+            })
+        )
+        const error = outcomes.find(Boolean)
+        if (error) toast.error(error)
+      } catch {
+        // Saving reports its own error; never probe the old persisted config.
+      } finally {
+        refreshLock.current = false
+        setRefreshing(null)
+      }
+    },
+    [flush, refresh, choices]
+  )
 
   return (
     <SettingsSection
       id="providers"
       title="Harnesses"
-      description="The agent backends that run your chats — each harness brings its own tools and session handling."
+      action={
+        <RefreshButton
+          name="provider status"
+          busy={refreshing !== null || phase === "loading"}
+          disabled={!loaded}
+          onClick={() => void refreshProviders()}
+        />
+      }
     >
       <SettingsRow
-        title="Default provider"
-        description="Used for new chats."
+        title="Default for new chats"
         control={
           loaded ? (
             <Select
               value={providers.active}
               onValueChange={(active) => setProviders({ active })}
             >
-              <SelectTrigger size="sm" className="w-40 text-[12.5px]">
+              <SelectTrigger
+                size="sm"
+                aria-label="Default provider"
+                className="w-40 text-[12.5px]"
+              >
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
                 {choices.map((provider) => (
                   <SelectItem key={provider.id} value={provider.id}>
-                    {provider.label}
+                    <span className="flex items-center gap-2">
+                      <HarnessLogo
+                        providerId={provider.id}
+                        name={provider.label}
+                      />
+                      {provider.label}
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -131,347 +204,216 @@ export function ProvidersSection({
         }
       />
 
-      <SettingsRow
-        title="Mock"
-        htmlFor="provider-mock"
-        description="Scripted local agent. No network, no binaries."
-        control={
-          <Switch
-            id="provider-mock"
-            checked={providers.mock.enabled}
-            onCheckedChange={(enabled) => setProviders({ mock: { enabled } })}
-          />
-        }
-      />
-
-      <SettingsRow
-        title="Ollama"
-        htmlFor="provider-ollama"
-        description="Local models over the Ollama HTTP API."
-        control={
-          <>
-            <StatusBadge phase={phase} status={map[statusKey("ollama")]} />
-            <Switch
-              id="provider-ollama"
-              checked={providers.ollama.enabled}
-              onCheckedChange={(enabled) =>
-                setProviders({ ollama: { ...providers.ollama, enabled } })
-              }
-            />
-          </>
-        }
-      >
-        <div className="flex items-center gap-2">
-          <Input
-            aria-label="Ollama base URL"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="http://localhost:11434"
-            className="h-8 text-[12.5px]"
-            value={providers.ollama.baseUrl}
-            onChange={(event) =>
-              setProviders({
-                ollama: { ...providers.ollama, baseUrl: event.target.value },
-              })
+      {CLIS.map((cli) => {
+        const config = providers[cli.id]
+        const status = map[statusKey(cli.id)]
+        return (
+          <ProviderRow
+            key={cli.id}
+            id={cli.id}
+            name={cli.name}
+            enabled={config.enabled}
+            disabled={!loaded}
+            onEnabledChange={(enabled) =>
+              setProviders({ [cli.id]: { ...config, enabled } })
             }
-          />
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={testing}
-            onClick={() => void testOllama()}
-            className="shrink-0 text-[12.5px]"
+            status={
+              <StatusBadge
+                phase={phase}
+                status={status}
+                enabled={config.enabled}
+              />
+            }
+            onRefresh={() => void refreshProviders(cli.id)}
+            refreshing={refreshing === "all" || refreshing === cli.id}
           >
-            <RotateCw className={testing ? "animate-spin" : undefined} />
-            Test
-          </Button>
-        </div>
-      </SettingsRow>
+            <div className="grid gap-4">
+              {config.enabled &&
+              status?.detail &&
+              !status.available &&
+              !/^Disabled/i.test(status.detail) ? (
+                <p
+                  role="status"
+                  className="text-[12px] break-words text-muted-foreground"
+                >
+                  {status.detail}
+                </p>
+              ) : null}
+              <div className="grid gap-2">
+                <SetupLink href={cli.docs}>Install {cli.name}</SetupLink>
+                {"install" in cli ? (
+                  <SetupCommand command={cli.install} />
+                ) : null}
+                {"login" in cli ? <SetupCommand command={cli.login} /> : null}
+                {"hint" in cli ? (
+                  <p className="text-[11.5px] leading-relaxed text-muted-foreground">
+                    {cli.hint}
+                  </p>
+                ) : null}
+              </div>
+              <div className="grid gap-2.5">
+                <ProviderField label="Binary path">
+                  <Input
+                    aria-label={`${cli.name} binary path`}
+                    spellCheck={false}
+                    autoComplete="off"
+                    placeholder={`${cli.binary} (auto-detect)`}
+                    className="h-8 font-mono text-[12px]"
+                    value={config.binPath}
+                    onChange={(event) =>
+                      setProviders({
+                        [cli.id]: { ...config, binPath: event.target.value },
+                      })
+                    }
+                  />
+                </ProviderField>
+                {cli.id !== "cursorAgent" ? (
+                  <ProviderField label="Workspace">
+                    <Input
+                      aria-label={`${cli.name} workspace`}
+                      spellCheck={false}
+                      autoComplete="off"
+                      placeholder="Use the chat's folder"
+                      className="h-8 font-mono text-[12px]"
+                      value={providers[cli.id].workspace}
+                      onChange={(event) =>
+                        setProviders({
+                          [cli.id]: {
+                            ...config,
+                            workspace: event.target.value,
+                          },
+                        })
+                      }
+                    />
+                  </ProviderField>
+                ) : null}
+                {cli.id === "claudeCode" || cli.id === "codex" ? (
+                  <ProviderField
+                    label="Permissions"
+                    htmlFor={`${cli.id}-permissions`}
+                  >
+                    <Select
+                      value={providers[cli.id].permissionMode}
+                      onValueChange={(permissionMode) =>
+                        setProviders({
+                          [cli.id]: {
+                            ...config,
+                            permissionMode: permissionMode as PermissionMode,
+                          },
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        id={`${cli.id}-permissions`}
+                        size="sm"
+                        aria-label={`${cli.name} default permissions`}
+                        className="w-full text-[12.5px]"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PERMISSION_MODES.map((mode) => (
+                          <SelectItem key={mode.id} value={mode.id}>
+                            {mode.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </ProviderField>
+                ) : null}
+              </div>
+              {cli.id === "pi" ? (
+                <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
+                  <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
+                  pi can edit files and run commands without a sandbox or
+                  approval prompt.
+                </p>
+              ) : null}
+            </div>
+          </ProviderRow>
+        )
+      })}
 
-      <SettingsRow
-        title="pi"
-        htmlFor="provider-pi"
-        description="Agentic harness: the pi CLI drives the Ollama models above and every enabled model provider with read, write, edit and bash tools."
-        control={
-          <>
-            <StatusBadge phase={phase} status={map[statusKey("pi")]} />
-            <Switch
-              id="provider-pi"
-              checked={providers.pi.enabled}
-              onCheckedChange={(enabled) =>
-                setProviders({ pi: { ...providers.pi, enabled } })
-              }
-            />
-          </>
+      <ProviderRow
+        id="ollama"
+        name="Ollama"
+        enabled={providers.ollama.enabled}
+        disabled={!loaded}
+        onEnabledChange={(enabled) =>
+          setProviders({ ollama: { ...providers.ollama, enabled } })
         }
+        status={
+          <StatusBadge
+            phase={phase}
+            status={map[statusKey("ollama")]}
+            enabled={providers.ollama.enabled}
+          />
+        }
+        onRefresh={() => void refreshProviders("ollama")}
+        refreshing={refreshing === "all" || refreshing === "ollama"}
       >
-        <div className="grid gap-2">
-          <Input
-            aria-label="pi binary path"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="Leave empty to autodetect pi on PATH"
-            className="h-8 font-mono text-[12px]"
-            value={providers.pi.binPath}
-            onChange={(event) =>
-              setProviders({
-                pi: { ...providers.pi, binPath: event.target.value },
-              })
-            }
-          />
-          <Input
-            aria-label="pi workspace"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="Workspace directory — leave empty to use the app's cwd"
-            className="h-8 font-mono text-[12px]"
-            value={providers.pi.workspace}
-            onChange={(event) =>
-              setProviders({
-                pi: { ...providers.pi, workspace: event.target.value },
-              })
-            }
-          />
-          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-            pi runs shell commands and edits files in this directory with no
-            sandbox and no approval prompt.
+        <div className="grid gap-3">
+          <SetupLink href="https://ollama.com/download">
+            Install Ollama
+          </SetupLink>
+          <SetupCommand command="ollama serve" />
+          <p className="text-[11.5px] text-muted-foreground">
+            Download a model in Ollama, then refresh. Local servers start
+            automatically when available.
           </p>
-        </div>
-      </SettingsRow>
-
-      <SettingsRow
-        title="Cursor Agent"
-        htmlFor="provider-cursor"
-        description="Drives the cursor-agent CLI in a subprocess."
-        control={
-          <>
-            <StatusBadge phase={phase} status={map[statusKey("cursorAgent")]} />
-            <Switch
-              id="provider-cursor"
-              checked={providers.cursorAgent.enabled}
-              onCheckedChange={(enabled) =>
+          <ProviderField label="Server URL">
+            <Input
+              aria-label="Ollama base URL"
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="http://localhost:11434"
+              className="h-8 font-mono text-[12px]"
+              value={providers.ollama.baseUrl}
+              onChange={(event) =>
                 setProviders({
-                  cursorAgent: { ...providers.cursorAgent, enabled },
+                  ollama: { ...providers.ollama, baseUrl: event.target.value },
                 })
               }
             />
-          </>
-        }
-      >
-        <Input
-          aria-label="Cursor Agent binary path"
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Leave empty to autodetect on PATH"
-          className="h-8 font-mono text-[12px]"
-          value={providers.cursorAgent.binPath}
-          onChange={(event) =>
-            setProviders({
-              cursorAgent: {
-                ...providers.cursorAgent,
-                binPath: event.target.value,
-              },
-            })
-          }
-        />
-      </SettingsRow>
-
-      <SettingsRow
-        title="Claude Code"
-        htmlFor="provider-claude-code"
-        description="Agentic harness: the claude CLI with its full tool set, your project's CLAUDE.md, hooks and MCP servers."
-        control={
-          <>
-            <StatusBadge phase={phase} status={map[statusKey("claudeCode")]} />
-            <Switch
-              id="provider-claude-code"
-              checked={providers.claudeCode.enabled}
-              onCheckedChange={(enabled) =>
-                setProviders({
-                  claudeCode: { ...providers.claudeCode, enabled },
-                })
-              }
-            />
-          </>
-        }
-      >
-        <div className="grid gap-2">
-          <Input
-            aria-label="Claude Code binary path"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="Leave empty to autodetect claude on PATH"
-            className="h-8 font-mono text-[12px]"
-            value={providers.claudeCode.binPath}
-            onChange={(event) =>
-              setProviders({
-                claudeCode: {
-                  ...providers.claudeCode,
-                  binPath: event.target.value,
-                },
-              })
-            }
-          />
-          <Input
-            aria-label="Claude Code workspace"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="Workspace directory — leave empty to use the app's cwd"
-            className="h-8 font-mono text-[12px]"
-            value={providers.claudeCode.workspace}
-            onChange={(event) =>
-              setProviders({
-                claudeCode: {
-                  ...providers.claudeCode,
-                  workspace: event.target.value,
-                },
-              })
-            }
-          />
-          <div className="flex items-center justify-between gap-2">
-            <label
-              htmlFor="claude-code-permission"
-              className="text-[11.5px] text-muted-foreground"
+          </ProviderField>
+          {providers.ollama.enabled && map[statusKey("ollama")]?.detail ? (
+            <p
+              role="status"
+              className="text-[12px] break-words text-muted-foreground"
             >
-              Default permission for new chats
-            </label>
-            <Select
-              value={providers.claudeCode.permissionMode}
-              onValueChange={(mode) =>
-                setProviders({
-                  claudeCode: {
-                    ...providers.claudeCode,
-                    permissionMode: mode as PermissionMode,
-                  },
-                })
-              }
-            >
-              <SelectTrigger
-                id="claude-code-permission"
-                size="sm"
-                className="w-36 shrink-0 text-[12.5px]"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {HARNESS_PERMISSION_MODES.map((mode) => (
-                  <SelectItem key={mode.id} value={mode.id}>
-                    {mode.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-            Read only genuinely blocks the editing and shell tools; the other
-            two let Claude write files — and, on full access, run commands —
-            without an approval prompt. A chat can pick its own mode.
-          </p>
+              {map[statusKey("ollama")]?.detail}
+            </p>
+          ) : null}
         </div>
-      </SettingsRow>
-
-      <SettingsRow
-        title="Codex"
-        htmlFor="provider-codex"
-        description="Agentic harness: the Codex CLI with its full tool set and project instructions."
-        control={
-          <>
-            <StatusBadge phase={phase} status={map[statusKey("codex")]} />
-            <Switch
-              id="provider-codex"
-              checked={providers.codex.enabled}
-              onCheckedChange={(enabled) =>
-                setProviders({ codex: { ...providers.codex, enabled } })
-              }
-            />
-          </>
-        }
-      >
-        <div className="grid gap-2">
-          <Input
-            aria-label="Codex binary path"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="Leave empty to autodetect codex on PATH"
-            className="h-8 font-mono text-[12px]"
-            value={providers.codex.binPath}
-            onChange={(event) =>
-              setProviders({
-                codex: { ...providers.codex, binPath: event.target.value },
-              })
-            }
-          />
-          <Input
-            aria-label="Codex workspace"
-            spellCheck={false}
-            autoComplete="off"
-            placeholder="Workspace directory — leave empty to use the app's cwd"
-            className="h-8 font-mono text-[12px]"
-            value={providers.codex.workspace}
-            onChange={(event) =>
-              setProviders({
-                codex: { ...providers.codex, workspace: event.target.value },
-              })
-            }
-          />
-          <div className="flex items-center justify-between gap-2">
-            <label
-              htmlFor="codex-permission"
-              className="text-[11.5px] text-muted-foreground"
-            >
-              Default permission for new chats
-            </label>
-            <Select
-              value={providers.codex.permissionMode}
-              onValueChange={(mode) =>
-                setProviders({
-                  codex: {
-                    ...providers.codex,
-                    permissionMode: mode as PermissionMode,
-                  },
-                })
-              }
-            >
-              <SelectTrigger
-                id="codex-permission"
-                size="sm"
-                className="w-36 shrink-0 text-[12.5px]"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {HARNESS_PERMISSION_MODES.map((mode) => (
-                  <SelectItem key={mode.id} value={mode.id}>
-                    {mode.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-            Read only blocks edits and shell commands; the other modes let Codex
-            write files, and full access permits commands without an approval
-            prompt. A chat can pick its own mode.
-          </p>
-        </div>
-      </SettingsRow>
+      </ProviderRow>
 
       <AcpAgentRows
         acp={providers.acp}
         phase={phase}
         statuses={map}
         onChange={setAcp}
+        loaded={loaded}
+        onRefresh={(id) => void refreshProviders(id)}
+        refreshing={refreshing}
       />
-
+      <ProviderRow
+        id="mock"
+        name="Mock"
+        enabled={providers.mock.enabled}
+        disabled={!loaded}
+        onEnabledChange={(enabled) => setProviders({ mock: { enabled } })}
+        status={
+          <span className="text-[11.5px] text-muted-foreground">
+            {providers.mock.enabled ? "Demo" : "Disabled"}
+          </span>
+        }
+      />
       {phase === "unavailable" ? (
-        <p className="flex items-center gap-2 bg-muted/40 px-4 py-2.5 text-[11.5px] text-muted-foreground">
-          <TriangleAlert className="size-3.5 shrink-0" />
-          Provider status is unavailable — <code>/api/providers</code>{" "}
-          isn&apos;t responding yet. Settings still save.
+        <p
+          role="status"
+          className="px-4 py-3 text-[12px] text-muted-foreground"
+        >
+          Couldn&apos;t check provider status. Use refresh to try again.
         </p>
       ) : null}
     </SettingsSection>

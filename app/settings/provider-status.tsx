@@ -2,7 +2,7 @@
 
 import * as React from "react"
 
-import { Badge } from "@/components/ui/badge"
+import { Check, CircleHelp, Minus, TriangleAlert } from "lucide-react"
 import { Skeleton } from "@/components/ui/skeleton"
 
 /**
@@ -12,7 +12,10 @@ import { Skeleton } from "@/components/ui/skeleton"
 
 export type ProviderStatus = { available: boolean; detail?: string }
 export type StatusPhase = "loading" | "ready" | "unavailable"
-export type StatusState = { phase: StatusPhase; map: Record<string, ProviderStatus> }
+export type StatusState = {
+  phase: StatusPhase
+  map: Record<string, ProviderStatus>
+}
 
 /** "cursor-agent", "cursorAgent" and "Cursor Agent" all collapse to one key. */
 export function statusKey(id: string) {
@@ -77,21 +80,26 @@ export function parseStatus(data: unknown): Record<string, ProviderStatus> {
   return map
 }
 
-export function useProviderStatus() {
+export function useProviderStatus(enabled = true) {
+  const requestId = React.useRef(0)
   const [state, setState] = React.useState<StatusState>({
     phase: "loading",
     map: {},
   })
 
-  const refresh = React.useCallback(async () => {
+  const refresh = React.useCallback(async (force = false) => {
+    const id = ++requestId.current
     try {
-      const res = await fetch("/api/providers", { cache: "no-store" })
+      const res = await fetch(
+        force ? "/api/providers?refresh=1" : "/api/providers",
+        { cache: "no-store", signal: AbortSignal.timeout(15_000) }
+      )
       if (!res.ok) throw new Error(String(res.status))
       const map = parseStatus(await res.json())
-      setState({ phase: "ready", map })
+      if (id === requestId.current) setState({ phase: "ready", map })
       return map
     } catch {
-      setState({ phase: "unavailable", map: {} })
+      if (id === requestId.current) setState({ phase: "unavailable", map: {} })
       return null
     }
   }, [])
@@ -99,8 +107,16 @@ export function useProviderStatus() {
   React.useEffect(() => {
     // Microtask defer keeps the effect body setState-free for the strict
     // react-hooks rules; the fetch itself is async anyway.
-    queueMicrotask(() => void refresh())
-  }, [refresh])
+    if (!enabled) return
+    let cancelled = false
+    queueMicrotask(() => {
+      if (!cancelled) void refresh()
+    })
+    return () => {
+      cancelled = true
+      requestId.current += 1
+    }
+  }, [enabled, refresh])
 
   return { ...state, refresh }
 }
@@ -108,28 +124,40 @@ export function useProviderStatus() {
 export function StatusBadge({
   phase,
   status,
+  enabled = true,
 }: {
   phase: StatusPhase
   status: ProviderStatus | undefined
+  enabled?: boolean
 }) {
-  if (phase === "loading") return <Skeleton className="h-5 w-20" />
-  if (phase === "unavailable") return null
-  const available = status?.available ?? false
-
+  if (!enabled)
+    return (
+      <span className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground">
+        <Minus aria-hidden="true" className="size-3" />
+        Disabled
+      </span>
+    )
+  if (phase === "loading") return <Skeleton className="h-4 w-14" />
+  const unknown =
+    phase === "unavailable" || !status || /^Disabled/i.test(status.detail ?? "")
+  const available = !unknown && status.available
+  const label = unknown
+    ? "Not checked"
+    : available
+      ? "Ready"
+      : /signed out|sign in|log.?in|auth/i.test(status.detail ?? "")
+        ? "Sign in"
+        : /binary|not found|no .* at/i.test(status.detail ?? "")
+          ? "Not installed"
+          : "Unavailable"
+  const Icon = unknown ? CircleHelp : available ? Check : TriangleAlert
   return (
-    <Badge
-      variant={available ? "secondary" : "outline"}
-      title={status?.detail}
-      className="gap-1.5 text-[11px] font-normal"
+    <span
+      title={unknown ? "Refresh to check availability" : status?.detail}
+      className="inline-flex items-center gap-1 text-[11.5px] text-muted-foreground"
     >
-      <span
-        className={
-          available
-            ? "size-1.5 rounded-full bg-emerald-500"
-            : "size-1.5 rounded-full bg-muted-foreground/50"
-        }
-      />
-      {available ? "Reachable" : "Unreachable"}
-    </Badge>
+      <Icon aria-hidden="true" className="size-3" />
+      {label}
+    </span>
   )
 }

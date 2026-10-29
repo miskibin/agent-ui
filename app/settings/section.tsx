@@ -9,6 +9,7 @@ export type SettingsSectionProps = {
   id: string
   title: string
   description?: string
+  action?: React.ReactNode
   children: React.ReactNode
 }
 
@@ -16,19 +17,23 @@ export function SettingsSection({
   id,
   title,
   description,
+  action,
   children,
 }: SettingsSectionProps) {
   return (
     <section id={id} data-slot="settings-section" className="scroll-mt-16">
-      <div className="mb-5 px-0.5">
-        <h1 className="text-[19px] font-semibold tracking-tight text-foreground">
-          {title}
-        </h1>
-        {description ? (
-          <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
-            {description}
-          </p>
-        ) : null}
+      <div className="mb-5 flex items-start justify-between gap-3 px-0.5">
+        <div className="min-w-0">
+          <h1 className="text-[19px] font-semibold tracking-tight text-foreground">
+            {title}
+          </h1>
+          {description ? (
+            <p className="mt-1 text-[12.5px] leading-relaxed text-muted-foreground">
+              {description}
+            </p>
+          ) : null}
+        </div>
+        {action}
       </div>
       <Card
         data-slot="settings-panel"
