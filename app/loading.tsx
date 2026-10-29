@@ -29,7 +29,7 @@ export default function Loading() {
 
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {/* Mirrors components/app-header.tsx — borderless, 40px tall. */}
-        <header className="flex h-10 w-full shrink-0 items-center gap-2 bg-background px-3 sm:gap-3 sm:px-4">
+        <header className="flex h-12 w-full shrink-0 items-center gap-2 bg-background px-3 sm:gap-3 sm:px-4">
           <div className="ml-auto flex shrink-0 items-center gap-1">
             <Skeleton className="size-7 opacity-40" />
             <Skeleton className="size-7 opacity-40" />
@@ -38,7 +38,7 @@ export default function Loading() {
           <div
             aria-hidden
             data-slot="window-controls-reserve"
-            className="-mr-3 ml-2 h-10 w-[126px] shrink-0 self-stretch sm:-mr-4"
+            className="-mr-3 ml-2 h-12 w-[126px] shrink-0 self-stretch sm:-mr-4"
           />
         </header>
 
