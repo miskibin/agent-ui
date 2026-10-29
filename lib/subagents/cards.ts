@@ -86,11 +86,11 @@ export function subagentCards(messages: StoredMessage[], runs: Record<string, Su
 }
 
 /** View-only markers use MessageMarkdown's public pattern renderer. Never stored or sent. */
-export function withSubagentCards(message: StoredMessage, cards: Map<string, SubagentCardData>, hidden: Map<string, Set<string>>): StoredMessage {
+export function withSubagentCards(message: StoredMessage, cards: Map<string, SubagentCardData>, hidden: Map<string, Set<string>>, appendCards = true): StoredMessage {
   const ids = hidden.get(message.id)
   const owned = [...cards.keys()].filter((id) => JSON.parse(decodeURIComponent(id))[0] === message.id)
   if (!owned.length) return message
-  const signature = JSON.stringify([owned, [...(ids ?? [])]])
+  const signature = JSON.stringify([owned, [...(ids ?? [])], appendCards])
   const cached = viewCache.get(message)
   if (cached?.signature === signature) return cached.value
   const parts = message.parts ?? [
@@ -102,7 +102,7 @@ export function withSubagentCards(message: StoredMessage, cards: Map<string, Sub
     tools: message.tools?.filter((tool) => !ids?.has(tool.id)),
     parts: [
       ...parts.filter((part) => part.type !== "tool" || !ids?.has(part.tool.id)),
-      ...owned.map((id) => ({ type: "text" as const, id: `card:${id}`, text: `\uE000subagent:${id}\uE001` })),
+      ...(appendCards ? owned.map((id) => ({ type: "text" as const, id: `card:${id}`, text: `\uE000subagent:${id}\uE001` })) : []),
     ],
   }
   viewCache.set(message, { signature, value })

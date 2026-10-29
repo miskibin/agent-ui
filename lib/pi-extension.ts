@@ -3,9 +3,10 @@ import "server-only"
 import { randomBytes } from "node:crypto"
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises"
 import { join } from "node:path"
+import { PI_SUBAGENT_EXTENSION_FILE, PI_SUBAGENT_SOURCE } from "@/lib/pi-subagents"
 
 /**
- * The one pi extension this app ships, generated onto disk the same way
+ * The pi extensions this app ships, generated onto disk the same way
  * `models.json` is: a string constant here, written under
  * `$AGENT_UI_DIR/pi/extensions` and loaded with an explicit `--extension`.
  *
@@ -103,13 +104,22 @@ export default function askUser(pi: any) {
  * this exact file, and it must see a whole one.
  */
 export async function writePiExtension(configDir: string): Promise<string> {
-  const dir = join(configDir, "extensions")
-  const path = join(dir, PI_EXTENSION_FILE)
+  return writeExtension(configDir, PI_EXTENSION_FILE, SOURCE)
+}
+
+/** Installed automatically for top-level Agent UI chats, with no pi package setup. */
+export async function writePiSubagentExtension(configDir: string): Promise<string> {
+  return writeExtension(configDir, PI_SUBAGENT_EXTENSION_FILE, PI_SUBAGENT_SOURCE)
+}
+
+async function writeExtension(configDir: string, filename: string, source: string): Promise<string> {
+  const dir = join(/*turbopackIgnore: true*/ configDir, "extensions")
+  const path = join(/*turbopackIgnore: true*/ dir, filename)
   const current = await readFile(path, "utf8").catch(() => null)
-  if (current === SOURCE) return path
+  if (current === source) return path
   await mkdir(dir, { recursive: true, mode: 0o700 })
   const tmp = `${path}.${process.pid.toString(36)}${randomBytes(3).toString("hex")}.tmp`
-  await writeFile(tmp, SOURCE, { encoding: "utf8", mode: 0o600 })
+  await writeFile(tmp, source, { encoding: "utf8", mode: 0o600 })
   await rename(tmp, path)
   return path
 }

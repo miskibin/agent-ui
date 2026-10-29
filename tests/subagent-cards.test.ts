@@ -56,3 +56,21 @@ test("pi shell delegation is visible and tracks the live run, not the launch rec
   const ordinary = { ...message, tools: [{ ...message.tools![0], input: JSON.stringify({ command: "echo hello" }) }] }
   assert.equal(subagentCards([ordinary], {}).cards.size, 0)
 })
+
+test("Pi extension receipts link running cards to the right child and follow terminal status", () => {
+  const receipt = { run_id: "r1", session_id: "child", status: "running", title: "Review" }
+  const message: StoredMessage = { id: "m", sender: "assistant", content: "", tools: [{
+    id: "delegate", name: "run_subagent", status: "running", input: JSON.stringify({ prompt: "Check files" }), output: JSON.stringify(receipt),
+  }] }
+  const run = { runId: "r1", sessionId: "child", parentId: "parent", title: "Review", harness: "pi", model: "ollama/nemotron", prompt: "Check files", status: "running" as const, startedAt: 1, userMessageId: "u", assistantMessageId: "a" }
+  assert.equal([...subagentCards([message], { child: run }).cards.values()][0].status, "running")
+  assert.equal([...subagentCards([message], { child: { ...run, status: "done" } }).cards.values()][0].status, "done")
+  assert.equal([...subagentCards([message], { child: { ...run, status: "cancelled" } }).cards.values()][0].status, "cancelled")
+  assert.equal(subagentCards([message], { child: run }).hidden.get("m")?.has("delegate"), true)
+  const live = subagentCards([message], { child: run })
+  const outsideMarkdown = withSubagentCards(message, live.cards, live.hidden, false)
+  assert.ok(outsideMarkdown.parts?.every((part) => part.type === "text" && part.text === ""))
+  assert.equal(outsideMarkdown.tools?.length, 0)
+  assert.ok(withSubagentCards(message, live.cards, live.hidden).parts?.some((part) => part.type === "text" && part.text.includes("\uE000subagent:")))
+  assert.equal(message.tools?.length, 1)
+})

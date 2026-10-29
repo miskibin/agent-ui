@@ -196,8 +196,8 @@ one interface:
   `ollama` (direct NDJSON streaming, stateless — the chat route replays stored history),
   `pi` (spawns the `pi` CLI in `--mode rpc` as an agentic harness over *every* configured
   model source — the local Ollama server, the hosted providers under `settings.modelProviders`,
-  or either on its own; it is unavailable only when neither is there. Four tools plus one of
-  ours, resumes by pi session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-protocol.ts` is
+  or either on its own; it is unavailable only when neither is there. File/shell tools,
+  questions and subagents, resumes by pi session id; `lib/pi-runtime.ts` finds the binary, `lib/pi-protocol.ts` is
   the pure half — the argv, the stdin commands and the event translation, importing nothing
   `node --test` cannot load — and `lib/pi-agent.ts` owns the subprocess. RPC rather than json
   mode because json mode is one-way: the prompt goes over stdin as a `prompt` command, which is
@@ -208,6 +208,21 @@ one interface:
   per source — with `compat.supportsReasoningEffort` off for Ollama's shim, which rejects it, and
   on for the hosted ones, which read it, and `input` per model, without which pi drops an
   attached image from the request without a word.
+
+  **Subagent tools are installed automatically** as `extensions/subagents.ts` from
+  `lib/pi-subagents.ts`, alongside the ask-user extension. A top-level turn explicitly loads
+  both with `--extension`; a child loads ask-user alone. The tool definitions come from the
+  bridge's `TOOL_DEFINITIONS`, so Pi exposes `run_subagent`, discovery, status, waiting,
+  messaging and cancellation without shell commands or an extra `pi install`. The scoped
+  bridge URL and authorization headers travel in the subprocess environment, never in
+  generated extension files or argv. A per-turn system prompt reminder also reaches resumed
+  sessions. Blocking launches publish their child receipt through `onUpdate` before waiting;
+  `PiTranslator` maps `tool_execution_update` onto a running tool row, so cards can attach to
+  the correct live child immediately. Stopping a blocking tool cancels its child; explicitly
+  backgrounded work stays independently controllable in the app. The existing chat route,
+  run registry and event stream own persistence and terminal status for both MCP and Pi.
+  Live cards render as app-owned children of `MessageList` while the parent streams; settled
+  turns retain their markdown markers. This keeps animation wrappers from hiding a live card.
 
   Two things that config directory now carries beside the catalog. **A generated extension**,
   `extensions/ask-user.ts` from a string constant in `lib/pi-extension.ts`, loaded with an

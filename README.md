@@ -87,6 +87,22 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 Provider availability is detected at runtime. Configure binaries, endpoints,
 API keys, models, workspaces, and supported permission modes in Settings.
 
+### Pi and subagents
+
+Install Pi with `npm i -g @earendil-works/pi-coding-agent`, then select it in
+Agent UI. The app automatically installs and loads its question and subagent
+extensions; no separate `pi install` or shell command is needed. Existing Pi
+sessions receive the tools on their next turn too.
+
+Pi can discover models, start child tasks, check progress, wait, send follow-ups
+and cancel work. Children appear as live chats under their parent, with cards
+that follow the actual running, completed, failed or cancelled state. For a code
+review using a local model, keep **Pi** as the harness and select the model from
+**Ollama**; the standalone Ollama harness is chat-only. Child chats do not get
+recursive delegation tools.
+
+![Pi delegating a code review](.github/screenshots/pi-subagent-running.png)
+
 ### ACP agents and tinyagent
 
 An ACP agent's process is kept between turns (and closed after 15 idle
