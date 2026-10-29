@@ -55,7 +55,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ ...empty, exists: true })
   }
 
-  const git = await readGit(path)
+  // New-chat selection needs only stat; branch discovery is deferred until
+  // the project surface mounts rather than spawning three git processes here.
+  const git = new URL(req.url).searchParams.get("git") === "0" ? {} : await readGit(path)
   return NextResponse.json({ ...empty, exists: true, isDir: true, ...git })
 }
 

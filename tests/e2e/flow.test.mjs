@@ -128,7 +128,8 @@ describe("a chat with the mock agent", () => {
       .waitFor({ timeout: UI_TIMEOUT })
 
     const [source] = await sessions()
-    await page.getByText("New chat", { exact: true }).click()
+    await page.getByRole("button", { name: "New chat", exact: true }).last().click()
+    await page.getByRole("dialog", { name: "New chat", exact: true }).getByRole("button", { name: "No folder", exact: true }).click()
 
     await page
       .getByText("How can I help?", { exact: true })
@@ -221,16 +222,23 @@ describe("the file routes as the server applies them", () => {
     assert.equal((await response.json()).content, "hello from the flow suite\n")
   })
 
-  test("traversal out of the chat's folder is refused", async () => {
-    for (const query of [
-      `path=../../../../etc/passwd&session=${chat.id}`,
-      `path=project/../../../etc/passwd&session=${chat.id}`,
-      `path=/etc/passwd&session=${chat.id}`,
-    ]) {
-      const response = await file(query)
-      assert.equal(response.status, 403, query)
-      assert.match((await response.json()).error, /outside the workspace/)
-    }
+  test("traversal out of the chat's folder is refused when external file access is disabled", async () => {
+    const settings = await (await fetch(`${app.baseUrl}/api/settings`)).json()
+    const save = (value) => fetch(`${app.baseUrl}/api/settings`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify(value),
+    })
+    await save({ ...settings, files: { ...settings.files, anyPath: false } })
+    try {
+      for (const query of [
+        `path=../../../../etc/passwd&session=${chat.id}`,
+        `path=project/../../../etc/passwd&session=${chat.id}`,
+        `path=/etc/passwd&session=${chat.id}`,
+      ]) {
+        const response = await file(query)
+        assert.equal(response.status, 403, query)
+        assert.match((await response.json()).error, /outside the workspace/)
+      }
+    } finally { await save(settings) }
   })
 
   test("the app's own data directory is refused even from inside the folder", async () => {

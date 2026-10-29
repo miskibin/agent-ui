@@ -4,13 +4,14 @@ import { normalizeFolderForComparison } from "@/lib/folder-identity"
 import type { FolderLogoMap } from "@/lib/folder-logo"
 import { folderLogo } from "@/lib/folder-logo-scan"
 import { crossOriginRefusal } from "@/lib/request-origin"
+import { readSettings } from "@/lib/settings/server"
 import { listSessions } from "@/lib/store/sessions"
 
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
 /**
- * `GET /api/folder-logos` — one logo per working folder in the sidebar.
+ * `GET /api/folder-logos` — one logo per working folder and remembered project.
  *
  * Takes no arguments on purpose. Every other file route reads its root back
  * from a stored chat so a page on another origin cannot point it anywhere;
@@ -27,14 +28,14 @@ export async function GET(req: Request) {
   const refused = crossOriginRefusal(req)
   if (refused) return refused
 
-  const sessions = await listSessions().catch(() => [])
+  const [sessions, settings] = await Promise.all([listSessions().catch(() => []), readSettings()])
   // Keyed by the comparison form, on both sides of the wire: a folder stored
   // as `C:\\repo` by one chat and `c:/repo` by another is one folder, scanned
   // once, and the sidebar looks its group up under the same key rather than
   // under whichever spelling happened to be stored first.
   const folders = new Map<string, string>()
-  for (const session of sessions) {
-    const cwd = session.cwd?.trim()
+  for (const path of [...sessions.map((session) => session.cwd), ...settings.recentFolders]) {
+    const cwd = path?.trim()
     if (!cwd) continue
     const key = normalizeFolderForComparison(cwd)
     if (key && !folders.has(key)) folders.set(key, cwd)

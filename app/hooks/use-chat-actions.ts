@@ -675,20 +675,22 @@ export function useChatActions({
     [removeSessions]
   )
 
-  const handleNewChat = React.useCallback(async () => {
+  const handleNewChat = React.useCallback(async (folder?: FolderSelection) => {
     closeNav()
     closePreview()
     const empty = sessions.find(
       (session) =>
+        (session.cwd ?? "") === (folder?.cwd ?? "") &&
         session.messageCount === 0 &&
         (threadsRef.current[session.id]?.length ?? 0) === 0
     )
     if (empty) {
       selectSession(empty.id)
-      return
+      return true
     }
     try {
       const created = await api.createSession({
+        ...folder,
         providerId,
         model,
         permissionMode: chosenPermission || undefined,
@@ -700,8 +702,10 @@ export function useChatActions({
       } else {
         setActiveId(created.id)
       }
+      return true
     } catch (err) {
       toast.error(errorMessage(err, "Could not start a new chat"))
+      return false
     }
   }, [
     chosenPermission,
