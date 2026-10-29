@@ -106,10 +106,16 @@ export async function bridgeServerFor(input: {
   origin: string
   parentId: string
   permissionMode?: string
+  harness?: string
+  model?: string
+  effort?: string
 }): Promise<McpServerConfig> {
   const url = new URL("/api/mcp", input.origin)
   url.searchParams.set("parent", input.parentId)
   if (input.permissionMode) url.searchParams.set("mode", input.permissionMode)
+  if (input.harness) url.searchParams.set("harness", input.harness)
+  if (input.model) url.searchParams.set("model", input.model)
+  if (input.effort) url.searchParams.set("effort", input.effort)
   return {
     name: MCP_SERVER_NAME,
     url: url.toString(),

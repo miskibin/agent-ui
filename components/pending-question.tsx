@@ -71,7 +71,7 @@ export const PendingQuestion = React.memo(function PendingQuestion({
   messageId: string
   toolId: string
   input?: string
-  onAnswer: (messageId: string, toolId: string, result: AskQuestionResult) => void
+  onAnswer: (messageId: string, toolId: string, result: AskQuestionResult) => void | Promise<boolean>
 }) {
   const question = React.useMemo(() => parseAskQuestionInput(input), [input])
   /**
@@ -83,7 +83,9 @@ export const PendingQuestion = React.memo(function PendingQuestion({
   const handleSubmit = React.useCallback(
     (result: AskQuestionResult) => {
       setSent(true)
-      onAnswer(messageId, toolId, result)
+      void Promise.resolve(onAnswer(messageId, toolId, result))
+        .then((saved) => { if (saved === false) setSent(false) })
+        .catch(() => setSent(false))
     },
     [messageId, toolId, onAnswer]
   )
@@ -121,6 +123,7 @@ function askItem(request: UserRequest): AskQuestionItem {
   return {
     id: request.id,
     prompt: request.title,
+    allowMultiple: request.allowMultiple,
     options: options.map((option) => ({
       id: option.id,
       label: RECOMMENDED_KINDS.has(option.kind ?? "")
@@ -183,10 +186,15 @@ function UserRequestChoice({
   const questions = React.useMemo(() => [question], [question])
   const handleSubmit = React.useCallback(
     (result: AskQuestionResult) => {
-      const optionId = result.answers[question.id]?.optionIds[0]
-      onAnswer(optionId ? { optionId } : { cancelled: true })
+      const selection = result.answers[question.id]
+      const optionIds = selection?.optionIds ?? []
+      const text = selection?.other?.trim()
+      const optionId = optionIds[0]
+      onAnswer(text ? { text } : optionId
+        ? { optionId, ...(request.allowMultiple ? { optionIds } : null) }
+        : { cancelled: true })
     },
-    [onAnswer, question.id]
+    [onAnswer, question.id, request.allowMultiple]
   )
   const handleSkip = React.useCallback(
     () => onAnswer({ cancelled: true }),
@@ -197,11 +205,16 @@ function UserRequestChoice({
       {request.description ? (
         <p
           data-slot="pending-request-detail"
-          className="truncate border-b px-3.5 pt-2.5 pb-2 text-[11.5px] text-muted-foreground"
+          className="whitespace-pre-wrap break-words border-b px-3.5 pt-2.5 pb-2 text-[11.5px] text-muted-foreground [overflow-wrap:anywhere]"
           title={request.description}
         >
           {request.description}
         </p>
+      ) : null}
+      {request.kind === "permission" && request.tool ? (
+        <pre data-slot="pending-request-tool" className="max-h-48 overflow-auto border-b px-3.5 py-2 text-[11.5px] whitespace-pre-wrap break-words">
+          {request.tool.name}{"\n"}{typeof request.tool.input === "string" ? request.tool.input : JSON.stringify(request.tool.input, null, 2)}
+        </pre>
       ) : null}
       <AskQuestion
         title={
@@ -212,7 +225,7 @@ function UserRequestChoice({
         questions={questions}
         className={FORM_IN_DRAWER}
         disabled={disabled}
-        hideOther
+        hideOther={!request.allowCustom || request.kind === "permission" || request.kind === "confirm"}
         skipLabel={request.kind === "permission" ? "Deny" : "Cancel"}
         submitLabel="Send"
         onSkip={handleSkip}

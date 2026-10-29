@@ -267,7 +267,10 @@ export async function POST(req: Request) {
         await bridgeServerFor({
           origin: requestOrigin(req),
           parentId: sessionId,
-          permissionMode,
+          permissionMode: permissionMode ?? info.capabilities.defaultPermissionMode,
+          harness: providerId,
+          model,
+          effort: info.capabilities.effort ? body.effort : undefined,
         }),
       ]
 

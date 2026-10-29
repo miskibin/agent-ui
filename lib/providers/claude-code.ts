@@ -55,6 +55,7 @@ const MODELS: ModelOption[] = [
  */
 const CLAUDE_CODE_PERMISSION_MODES: PermissionMode[] = [
   "read-only",
+  "plan",
   "edits",
   "full",
 ]
@@ -170,10 +171,7 @@ export function createClaudeCodeProvider(
           // Maps straight onto `--effort`; the app's four ids are a subset of
           // the CLI's low | medium | high | xhigh | max.
           effort: true,
-          // `-p` takes a text prompt only. An image has to already be a file
-          // on disk for the Read tool to open, which is not what this flag
-          // promises the composer.
-          vision: false,
+          vision: true,
           // `--mcp-config`, written per turn (`lib/claude-code-agent`).
           mcp: true,
           permissionModes: CLAUDE_CODE_PERMISSION_MODES,
@@ -200,6 +198,10 @@ export function createClaudeCodeProvider(
       return modelOptions(handshake?.model)
     },
 
+    async visionModels() {
+      return (await this.listModels()).map((model) => model.id)
+    },
+
     async *run(options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> {
       // Startup is genuinely slow — settings, hooks, plugins and the project's
       // CLAUDE.md all load before the first token — and the CLI says nothing
@@ -216,6 +218,8 @@ export function createClaudeCodeProvider(
         model: options.model,
         sessionId: options.sessionId,
         effort: options.effort,
+        images: options.images,
+        askUser: options.askUser,
         // Absent means "whatever settings say" — the chat route only sends a
         // mode the chat itself picked.
         permissionMode: options.permissionMode ?? settings.permissionMode,

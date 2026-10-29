@@ -16,6 +16,8 @@ export type AppSettingsApi = {
   settings: AppSettings
   /** False until the first GET settles; sections render skeletons meanwhile. */
   loaded: boolean
+  loadError: boolean
+  retry: () => void
   /** Optimistic: state updates now, the merged object is PUT on a debounce. */
   update: (updater: (current: AppSettings) => AppSettings) => void
   /**
@@ -40,6 +42,9 @@ export type AppSettingsApi = {
 export function useAppSettings(): AppSettingsApi {
   const [settings, setSettings] = React.useState<AppSettings>(DEFAULT_SETTINGS)
   const [loaded, setLoaded] = React.useState(false)
+  const [loadError, setLoadError] = React.useState(false)
+  const [loadToken, setLoadToken] = React.useState(0)
+  const ready = React.useRef(false)
   const latest = React.useRef<AppSettings>(DEFAULT_SETTINGS)
   const pending = React.useRef<AppSettings | null>(null)
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -64,7 +69,9 @@ export function useAppSettings(): AppSettingsApi {
         usage: next.usage,
       }))
     } catch {
+      if (!pending.current) pending.current = next
       toast.error("Couldn't save settings.")
+      throw new Error("Could not save settings")
     }
   }, [])
 
@@ -79,44 +86,49 @@ export function useAppSettings(): AppSettingsApi {
     let cancelled = false
     const controller = new AbortController()
     fetch("/api/settings", { signal: controller.signal })
-      .then((res) => (res.ok ? res.json() : null))
+      .then((res) => {
+        if (!res.ok) throw new Error("Could not load settings")
+        return res.json()
+      })
       .then((data: unknown) => {
         if (cancelled || data == null) return
         const next = normalizeSettings(data)
         latest.current = next
+        ready.current = true
         setSettings(next)
+        setLoaded(true)
+        setLoadError(false)
       })
       .catch(() => {
-        // Route not up yet: defaults stay on screen, nothing is written.
-      })
-      .finally(() => {
-        if (!cancelled) setLoaded(true)
+        if (!cancelled) setLoadError(true)
       })
     return () => {
       cancelled = true
       controller.abort()
     }
-  }, [])
+  }, [loadToken])
 
   React.useEffect(() => {
     const timerRef = timer
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
-      void flush()
+      void flush().catch(() => {})
     }
   }, [flush])
 
   const update = React.useCallback<AppSettingsApi["update"]>(
     (updater) => {
+      if (!ready.current) return
       const next = normalizeSettings(updater(latest.current))
       latest.current = next
       pending.current = next
       setSettings(next)
       if (timer.current) clearTimeout(timer.current)
-      timer.current = setTimeout(() => void flush(), SAVE_DELAY)
+      timer.current = setTimeout(() => void flush().catch(() => {}), SAVE_DELAY)
     },
     [flush]
   )
 
-  return { settings, loaded, update, flush: flushNow }
+  const retry = React.useCallback(() => setLoadToken((token) => token + 1), [])
+  return { settings, loaded, loadError, retry, update, flush: flushNow }
 }

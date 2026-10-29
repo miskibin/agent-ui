@@ -71,6 +71,11 @@ export async function POST(req: Request) {
   const parentParam = url.searchParams.get("parent") ?? ""
   const parentId = isValidSessionId(parentParam) ? parentParam : undefined
   const permissionMode = url.searchParams.get("mode")?.trim() || undefined
+  const defaults = parentId ? {
+    harness: url.searchParams.get("harness")?.trim() || undefined,
+    model: url.searchParams.get("model")?.trim() || undefined,
+    effort: url.searchParams.get("effort")?.trim() || undefined,
+  } : undefined
   const origin = requestOrigin(req)
   void rememberOrigin(origin)
 
@@ -83,6 +88,9 @@ export async function POST(req: Request) {
         harness: args.harness,
         prompt: args.prompt,
         model: args.model,
+        effort: args.effort,
+        isolation: args.isolation,
+        defaults,
         cwd: args.cwd,
         title: args.title,
         sessionId: args.sessionId,
@@ -99,6 +107,7 @@ export async function POST(req: Request) {
         runId: args.runId,
         sessionId: args.sessionId,
         message: args.message,
+        defaults,
         interrupt: args.interrupt,
         parentId,
         permissionMode,

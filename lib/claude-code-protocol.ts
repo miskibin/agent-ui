@@ -80,6 +80,7 @@ export function permissionArgs(
       ...allow(extraAllowed),
     ]
   }
+  if (mode === "plan") return ["--permission-mode", "plan", ...allow(extraAllowed)]
   if (mode === "full") {
     return [
       "--permission-mode",
@@ -124,6 +125,8 @@ export function buildArgs(options: {
   /** Path of a file holding `mcpConfigJson`, and the servers it names. */
   mcpConfigPath?: string
   mcpServerNames?: string[]
+  /** Opt-in: probes and other one-shot callers keep their text input contract. */
+  streamingInput?: boolean
 }): string[] {
   const args = [
     "-p",
@@ -134,6 +137,7 @@ export function buildArgs(options: {
     "--verbose",
     "--include-partial-messages",
   ]
+  if (options.streamingInput) args.push("--input-format", "stream-json", "--permission-prompt-tool", "stdio")
   if (options.model) args.push("--model", options.model)
   if (options.effort && EFFORT_LEVELS.has(options.effort)) {
     args.push("--effort", options.effort)

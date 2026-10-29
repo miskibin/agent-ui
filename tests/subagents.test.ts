@@ -174,8 +174,8 @@ describe("orchestration tools", () => {
 })
 
 describe("parseRunArgs", () => {
-  test("requires a harness and a prompt", () => {
-    assert.equal(typeof parseRunArgs({ prompt: "x" }), "string")
+  test("requires a prompt and allows inheriting the harness", () => {
+    assert.equal(typeof parseRunArgs({ prompt: "x" }), "object")
     assert.equal(typeof parseRunArgs({ harness: "pi", prompt: "   " }), "string")
   })
 

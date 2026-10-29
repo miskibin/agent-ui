@@ -38,6 +38,9 @@ export type UserRequest = {
   description?: string
   /** permission / select / confirm. */
   options?: UserRequestOption[]
+  allowMultiple?: boolean
+  /** Offer a written alternative only when the backend can consume it. */
+  allowCustom?: boolean
   /** input. */
   placeholder?: string
   /** What the agent is about to do, when the request is about a tool call. */
@@ -46,6 +49,7 @@ export type UserRequest = {
 
 export type UserRequestAnswer = {
   optionId?: string
+  optionIds?: string[]
   text?: string
   cancelled?: boolean
 }
@@ -55,7 +59,7 @@ export type UserRequestAnswer = {
  * `AgentRunOptions.askUser`; a run given none has no interactive channel and
  * must fall back to a policy.
  */
-export type AskUser = (request: UserRequest) => Promise<UserRequestAnswer>
+export type AskUser = (request: UserRequest, options?: { signal?: AbortSignal }) => Promise<UserRequestAnswer>
 
 /** The `name` a waiting tool event carries, per kind. */
 export function userRequestToolName(kind: UserRequestKind): string {
@@ -139,6 +143,8 @@ export function parseUserRequestInput(input?: string): UserRequest | null {
     title,
     ...(description ? { description } : null),
     ...(options ? { options } : null),
+    ...(record.allowMultiple === true ? { allowMultiple: true } : null),
+    ...(record.allowCustom === true ? { allowCustom: true } : null),
     ...(placeholder ? { placeholder } : null),
     ...(toolName ? { tool: { name: toolName, input: tool!.input } } : null),
   }
@@ -203,9 +209,13 @@ export function createAskUser({
   sessionId: string
   signal?: AbortSignal
 }): AskUser {
-  return (request) =>
-    new Promise<UserRequestAnswer>((resolve) => {
-      if (signal?.aborted) {
+  return (request, options) => {
+    const requestSignal = options?.signal
+    const waitSignal = signal && requestSignal
+      ? AbortSignal.any([signal, requestSignal])
+      : signal ?? requestSignal
+    return new Promise<UserRequestAnswer>((resolve) => {
+      if (waitSignal?.aborted) {
         resolve({ cancelled: true })
         return
       }
@@ -218,7 +228,7 @@ export function createAskUser({
         if (settled) return
         settled = true
         if (pending.get(key)?.settle === settle) pending.delete(key)
-        signal?.removeEventListener("abort", onAbort)
+        waitSignal?.removeEventListener("abort", onAbort)
         resolve(answer)
       }
       function onAbort() {
@@ -226,8 +236,9 @@ export function createAskUser({
       }
 
       pending.set(key, { sessionId, request, createdAt: Date.now(), settle })
-      signal?.addEventListener("abort", onAbort)
+      waitSignal?.addEventListener("abort", onAbort)
     })
+  }
 }
 
 /** Resolves one waiting request. False when nothing is waiting under that id. */
@@ -271,11 +282,15 @@ export function sanitizeUserRequestAnswer(input: unknown): UserRequestAnswer | n
   const record = asRecord(input)
   if (!record) return null
   const optionId = asText(record.optionId)
+  const optionIds = Array.isArray(record.optionIds)
+    ? [...new Set(record.optionIds.filter((id): id is string => typeof id === "string" && !!id.trim()))]
+    : undefined
   const text = typeof record.text === "string" ? record.text : undefined
   const cancelled = record.cancelled === true
-  if (!optionId && text === undefined && !cancelled) return null
+  if (!optionId && !optionIds?.length && text === undefined && !cancelled) return null
   return {
     ...(optionId ? { optionId } : null),
+    ...(optionIds?.length ? { optionIds } : null),
     ...(text === undefined ? null : { text }),
     ...(cancelled ? { cancelled: true } : null),
   }

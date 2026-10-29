@@ -23,6 +23,16 @@ export type SessionRun = {
 export type QueuedMessage = ChatInputQueuedMessage & {
   files: File[]
   skills: string[]
+  config?: QueuedRunConfig
+}
+
+/** Capture the sender's choices before another chat takes over the pickers. */
+export type QueuedRunConfig = {
+  providerId: string
+  model: string
+  effort?: string
+  permissionMode?: PermissionMode
+  vision: boolean
 }
 
 /*

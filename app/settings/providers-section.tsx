@@ -80,9 +80,16 @@ export function ProvidersSection({
     setTesting(true)
     // The status route reads settings.json, so a base URL typed a moment ago
     // has to be written before the probe — otherwise this tests the old one.
-    await flush()
-    const next = await refresh()
-    setTesting(false)
+    let next
+    try {
+      await flush()
+      next = await refresh()
+    } catch {
+      // flush already reported the failed save; do not test stale settings.
+      return
+    } finally {
+      setTesting(false)
+    }
     if (!next) {
       toast.error("Provider status is unavailable.")
       return
@@ -463,8 +470,8 @@ export function ProvidersSection({
       {phase === "unavailable" ? (
         <p className="flex items-center gap-2 bg-muted/40 px-4 py-2.5 text-[11.5px] text-muted-foreground">
           <TriangleAlert className="size-3.5 shrink-0" />
-          Provider status is unavailable — <code>/api/providers</code> isn&apos;t
-          responding yet. Settings still save.
+          Provider status is unavailable — <code>/api/providers</code>{" "}
+          isn&apos;t responding yet. Settings still save.
         </p>
       ) : null}
     </SettingsSection>

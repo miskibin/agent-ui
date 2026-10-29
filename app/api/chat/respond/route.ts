@@ -46,7 +46,7 @@ export async function POST(req: Request) {
   const answer = sanitizeUserRequestAnswer(body.answer)
   if (!answer) {
     return NextResponse.json(
-      { error: "answer must carry an optionId, text, or cancelled" },
+      { error: "answer must carry an optionId, optionIds, text, or cancelled" },
       { status: 400 }
     )
   }

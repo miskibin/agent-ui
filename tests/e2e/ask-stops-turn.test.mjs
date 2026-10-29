@@ -60,14 +60,14 @@ test("a question is answerable mid-turn, and answering stops the turn", async ()
     body: JSON.stringify({
       messages: [
         { id: "request", sender: "user", content: "Fix the empty chat." },
-        { id: "reply", sender: "assistant", content: "Looking.", tools: [ASK] },
+        { id: "reply", sender: "assistant", content: "Looking." },
       ],
     }),
   })
 
   const page = await browser.newPage({ viewport: { width: 1400, height: 900 } })
   await page.addInitScript(
-    (id) => localStorage.setItem("agent-ui:active-session", id),
+    (id) => localStorage.setItem("agent-ui:active-session", JSON.stringify(id)),
     session.id
   )
 
@@ -78,18 +78,40 @@ test("a question is answerable mid-turn, and answering stops the turn", async ()
    * assertions below run without waiting on a real model.
    */
   let turns = 0
-  let hangingRoute = null
+  // Publish a question in the *new* running turn. A question from a prior
+  // turn is intentionally skipped when the user sends another prompt.
+  await page.addInitScript((ask) => {
+    const originalFetch = window.fetch.bind(window)
+    let first = true
+    window.fetch = async (url, options) => {
+      const response = await originalFetch(url, options)
+      if (String(url) !== "/api/chat" || !first) return response
+      first = false
+      return new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(
+              new TextEncoder().encode(
+                `data: ${JSON.stringify({ type: "tool", ...ask })}\n\n`
+              )
+            )
+            options.signal.addEventListener(
+              "abort",
+              () => controller.error(new DOMException("Aborted", "AbortError")),
+              { once: true }
+            )
+          },
+        }),
+        { headers: { "Content-Type": "text/event-stream" } }
+      )
+    }
+  }, ASK)
   await page.route("**/api/chat", (route) => {
     turns += 1
-    if (turns === 1) {
-      hangingRoute = route
-      // Headers only: the stream stays open with nothing on it.
-      return
-    }
     return route.fulfill({
       status: 200,
       contentType: "text/event-stream",
-      body: 'data: {"type":"done"}\n\n',
+      body: turns === 1 ? "" : 'data: {"type":"done"}\n\n',
     })
   })
 
@@ -139,11 +161,12 @@ test("a question is answerable mid-turn, and answering stops the turn", async ()
   const stored = await (
     await fetch(`${app.baseUrl}/api/sessions/${session.id}`)
   ).json()
-  const reply = stored.messages.find((message) => message.id === "reply")
+  const reply = stored.messages.find((message) =>
+    message.tools?.some((tool) => tool.id === ASK.id)
+  )
   const answer = JSON.parse(reply.tools[0].output)
   assert.deepEqual(answer.answers.scope.optionIds, ["minimal"])
   assert.equal(answer.source, "user")
 
-  await hangingRoute?.abort().catch(() => {})
   await page.close()
 })

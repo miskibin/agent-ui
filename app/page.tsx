@@ -4,10 +4,15 @@ import { PanelLeft, PanelRight, Search } from "lucide-react"
 import dynamic from "next/dynamic"
 import * as React from "react"
 
-import { AppHeader, AppHeaderActions, AppHeaderButton } from "@/components/app-header"
+import {
+  AppHeader,
+  AppHeaderActions,
+  AppHeaderButton,
+} from "@/components/app-header"
 import { FilePanel } from "@/components/file-panel"
 import { PendingLineComments } from "@/components/line-comments"
 import { ChangesPanel } from "@/components/changes-panel"
+import { ChatComposer } from "@/components/chat-composer"
 import { AgentsPanel } from "@/components/agents-panel"
 import { AgentBreadcrumbs } from "@/components/agent-breadcrumbs"
 import { WorkspaceDock } from "@/components/workspace-dock"
@@ -27,7 +32,10 @@ import { DiffWorkers } from "@/components/diff-workers"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
 import { MessageActions } from "@/components/message-actions"
-import { PendingQuestion, PendingUserRequest } from "@/components/pending-question"
+import {
+  PendingQuestion,
+  PendingUserRequest,
+} from "@/components/pending-question"
 import {
   PermissionMenuItems,
   PermissionPicker,
@@ -36,9 +44,11 @@ import { PlanPanel } from "@/components/plan-panel"
 import { ChatProcesses, ProcessesPanel } from "@/components/processes-panel"
 import { ProviderPicker } from "@/components/provider-picker"
 import { StashMenu } from "@/components/stash-menu"
-import { ChatInput } from "@/components/ui/chat-input"
 import { AgentMessageList } from "@/components/agent-message-list"
-import { DEFAULT_MODEL_EFFORTS, ModelPicker } from "@/components/ui/model-picker"
+import {
+  DEFAULT_MODEL_EFFORTS,
+  ModelPicker,
+} from "@/components/ui/model-picker"
 import { PromptSuggestions } from "@/components/ui/prompt-suggestions"
 import {
   ResizableHandle,
@@ -274,7 +284,29 @@ export default function ChatPage() {
     takeQueued,
     handleQueueRemove,
     handleQueueEdit,
-  } = useMessageQueue({ refs, activeId, parkDraft })
+  } = useMessageQueue({
+    refs,
+    activeId,
+    parkDraft,
+    config: React.useMemo(
+      () => ({
+        providerId,
+        model,
+        effort: capabilities?.effort ? effort : undefined,
+        permissionMode: chosenPermission || undefined,
+        vision: !!capabilities?.vision && visionModels.includes(model),
+      }),
+      [
+        providerId,
+        model,
+        capabilities?.effort,
+        capabilities?.vision,
+        effort,
+        chosenPermission,
+        visionModels,
+      ]
+    ),
+  })
 
   /*
    * The mirrors are written here, before the composer's draft effect below:
@@ -411,6 +443,8 @@ export default function ChatPage() {
   const {
     send,
     handleSend,
+    handleSteer,
+    handleQueueSendNow,
     handleStop,
     handleAskAnswer,
     handleRequestAnswer,
@@ -588,7 +622,12 @@ export default function ChatPage() {
   })
 
   const agentRuns = useSubagents({ refs, runPrompt, loadThread, setSessions })
-  const agentNav = useAgentNavigation({ activeId, messages, agentRuns, selectSession })
+  const agentNav = useAgentNavigation({
+    activeId,
+    messages,
+    agentRuns,
+    selectSession,
+  })
   const workspacePanel = useWorkspacePanel()
 
   useChatBootstrap({
@@ -623,8 +662,11 @@ export default function ChatPage() {
    * and closing it brings the plan back rather than losing it.
    */
   const { openPlan, closePlan, reopenPlan } = usePlanPanel({ activeId, plan })
-  const { changesOpen, toggle: toggleChanges, close: closeChanges } =
-    useChangesPanel(activeId)
+  const {
+    changesOpen,
+    toggle: toggleChanges,
+    close: closeChanges,
+  } = useChangesPanel(activeId)
   const {
     processes,
     processesOpen,
@@ -708,7 +750,9 @@ export default function ChatPage() {
    */
   const composer = React.useMemo(
     () => (
-      <ChatInput
+      <ChatComposer
+        onSteer={handleSteer}
+        onQueueSendNow={handleQueueSendNow}
         ref={composerRef}
         onSend={handleSend}
         onStop={handleStop}
@@ -833,6 +877,8 @@ export default function ChatPage() {
       handleQueueEdit,
       handleQueueRemove,
       handleSend,
+      handleSteer,
+      handleQueueSendNow,
       handleStash,
       handleStop,
       handleTextChange,
@@ -974,9 +1020,46 @@ export default function ChatPage() {
             workers only the first time. The wrapper is what keeps it off the
             prerender; see `components/diff-workers`.
           */}
-          {workspaceVisible ? <aside id="workspace-panel" aria-label="Workspace tools" data-slot="workspace-panel" className="absolute right-3 top-14 z-30 max-h-[calc(100%-4rem)] w-[min(18rem,calc(100%-1.5rem))] overflow-y-auto rounded-2xl bg-background shadow-lg" onKeyDown={(event) => { if (event.key === 'Escape') workspacePanel.close() }}>
-            <WorkspaceDock sessionId={activeId} running={isGenerating || Object.values(agentRuns).some((run) => run.parentId === activeId && run.status === "running")} cwd={activeCwd} branch={activeSession?.gitBranch || activeSession?.worktree?.branch} files={chatChanges} onChanges={() => { if (!changesOpen) toggleChanges() }}><AgentsPanel embedded sessionId={activeId} sessions={sessions} messages={messages} agentRuns={agentRuns} onSelect={agentNav.navigate} onOpenNative={agentNav.openNativeTool} /></WorkspaceDock>
-          </aside> : null}
+          {workspaceVisible ? (
+            <aside
+              id="workspace-panel"
+              aria-label="Workspace tools"
+              data-slot="workspace-panel"
+              className="absolute right-3 top-14 z-30 max-h-[calc(100%-4rem)] w-[min(18rem,calc(100%-1.5rem))] overflow-y-auto rounded-2xl bg-background shadow-lg"
+              onKeyDown={(event) => {
+                if (event.key === "Escape") workspacePanel.close()
+              }}
+            >
+              <WorkspaceDock
+                sessionId={activeId}
+                running={
+                  isGenerating ||
+                  Object.values(agentRuns).some(
+                    (run) =>
+                      run.parentId === activeId && run.status === "running"
+                  )
+                }
+                cwd={activeCwd}
+                branch={
+                  activeSession?.gitBranch || activeSession?.worktree?.branch
+                }
+                files={chatChanges}
+                onChanges={() => {
+                  if (!changesOpen) toggleChanges()
+                }}
+              >
+                <AgentsPanel
+                  embedded
+                  sessionId={activeId}
+                  sessions={sessions}
+                  messages={messages}
+                  agentRuns={agentRuns}
+                  onSelect={agentNav.navigate}
+                  onOpenNative={agentNav.openNativeTool}
+                />
+              </WorkspaceDock>
+            </aside>
+          ) : null}
           <DiffWorkers>
             {/*
               Desktop: the conversation and the file panel are two panes of one
@@ -1007,15 +1090,23 @@ export default function ChatPage() {
                   {threadLoading ? (
                     <ThreadLoading />
                   ) : isEmptyChat ? (
-                    <div className="w-full" style={{ paddingRight: workspaceVisible && workspacePanel.wide ? "19rem" : undefined }}>
                     <div
-                      data-slot="chat-opening"
-                      className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+                      className="w-full"
+                      style={{
+                        paddingRight:
+                          workspaceVisible && workspacePanel.wide
+                            ? "19rem"
+                            : undefined,
+                      }}
                     >
-                      <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
-                        How can I help?
-                      </h2>
-                    </div>
+                      <div
+                        data-slot="chat-opening"
+                        className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
+                      >
+                        <h2 className="text-center text-2xl font-semibold tracking-tight text-balance text-foreground sm:text-3xl">
+                          How can I help?
+                        </h2>
+                      </div>
                     </div>
                   ) : (
                     <AgentMessageList
@@ -1042,7 +1133,12 @@ export default function ChatPage() {
                       className="scroll-pb-[calc(var(--composer-height,7rem)+1.5rem)] pt-14 pb-[calc(var(--composer-height,7rem)+1.5rem)]"
                       // Reserve room inside the scroll surface: its scrollbar
                       // must stay at the window edge when the dock is open.
-                      style={{ paddingRight: workspaceVisible && workspacePanel.wide ? "20rem" : undefined }}
+                      style={{
+                        paddingRight:
+                          workspaceVisible && workspacePanel.wide
+                            ? "20rem"
+                            : undefined,
+                      }}
                       messages={listMessages}
                       /* One mounted list shows every chat in turn: the key is
                          what resets the scroller's follow state on a switch. */
@@ -1107,7 +1203,12 @@ export default function ChatPage() {
                   <div
                     ref={composerBoxRef}
                     data-slot="chat-composer"
-                    style={{ paddingRight: workspaceVisible && workspacePanel.wide ? "19rem" : undefined }}
+                    style={{
+                      paddingRight:
+                        workspaceVisible && workspacePanel.wide
+                          ? "19rem"
+                          : undefined,
+                    }}
                     className={cn(
                       "w-full shrink-0",
                       // An island over the conversation, not a band beside it:
@@ -1136,13 +1237,28 @@ export default function ChatPage() {
                     {/* The plan the turn is working through, collapsed to one
                         line. Keyed by chat so switching threads never carries a
                         disclosure — or a plan — across. */}
-                    {!agentNav.selected ? <TodoPanel
-                      key={activeId}
-                      items={todos}
-                      running={isGenerating}
-                    /> : null}
+                    {!agentNav.selected ? (
+                      <TodoPanel
+                        key={activeId}
+                        items={todos}
+                        running={isGenerating}
+                      />
+                    ) : null}
                     {!agentNav.selected ? <PendingLineComments /> : null}
-                    {agentNav.selected ? <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between rounded-xl border border-border bg-background px-4 py-3 text-[12px] text-muted-foreground"><span>Viewing {agentNav.selected.title}</span><button type="button" onClick={agentNav.returnToParent} className="rounded px-2 py-1 text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">Return to main agent</button></div> : composer}
+                    {agentNav.selected ? (
+                      <div className="mx-auto mb-4 flex max-w-3xl items-center justify-between rounded-xl border border-border bg-background px-4 py-3 text-[12px] text-muted-foreground">
+                        <span>Viewing {agentNav.selected.title}</span>
+                        <button
+                          type="button"
+                          onClick={agentNav.returnToParent}
+                          className="rounded px-2 py-1 text-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+                        >
+                          Return to main agent
+                        </button>
+                      </div>
+                    ) : (
+                      composer
+                    )}
                     {isEmptyChat && (settings?.chat.showSuggestions ?? true) ? (
                       <PromptSuggestions
                         items={CHAT_SUGGESTIONS}

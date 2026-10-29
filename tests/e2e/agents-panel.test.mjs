@@ -60,7 +60,9 @@ test("agents panel retains native activity and opens a real MCP-delegated chat",
   assert.equal(await page.locator('[data-slot="message-list"]').getByText('"parentToolId"', { exact: false }).count(), 0)
   const { token } = JSON.parse(await readFile(path.join(app.dataDir, "bridge.json"), "utf8"))
   const rpc = async (name, args) => {
-    const response = await fetch(`${app.baseUrl}/api/mcp?parent=${session.id}&mode=read-only`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })
+    // The mock harness has no permission modes; this fixture tests navigation,
+    // not a sandbox contract it cannot enforce.
+    const response = await fetch(`${app.baseUrl}/api/mcp?parent=${session.id}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } }) })
     return response.json()
   }
   const started = await rpc("run_subagent", { harness: "mock", title: "Check implementation", prompt: "Inspect the implementation", background: true })

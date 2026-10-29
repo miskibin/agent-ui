@@ -239,6 +239,22 @@ one interface:
   `read-only` is `--permission-mode dontAsk` plus a `--disallowedTools` deny list, which outranks
   every allow rule and reaches subagents; `full` is `acceptEdits` plus an allow list rather than
   `bypassPermissions`, which skips the CLI's own guardrails and refuses to start under root).
+  Claude turns now opt into `--input-format stream-json` and
+  `--permission-prompt-tool stdio`. `lib/claude-code-control.ts` maps the CLI's
+  control requests to the shared `askUser` contract, including multi-select
+  and custom answers; cancellation clears only that request. Streaming input
+  also carries image blocks. The process reads stdout while questions wait,
+  initializes before sending the prompt, and closes stdin after the result
+  and outstanding native agent work. The old text argv contract remains for
+  one-shot callers. Claude also offers native `plan`; `ExitPlanMode` cannot
+  silently change the chat's chosen policy. Delegation may omit its harness:
+  the bridge carries the current turn's harness/model/effort as defaults;
+  models and effort are not inherited across harnesses. Explicit worktree
+  isolation branches from the selected folder's committed HEAD and persists
+  provenance on the child. Unsupported inherited read-only/plan policies fail
+  closed. Custom answers and multiple selection are optional shared request
+  fields, so other adapters retain their existing forms by default.
+
   `codex` uses the installed `codex app-server` over JSON-lines on stdio.
   `lib/codex-runtime.ts` resolves executables and npm shims; `lib/codex-client.ts`
   owns RPC, bounded startup requests, stderr draining and process cleanup;

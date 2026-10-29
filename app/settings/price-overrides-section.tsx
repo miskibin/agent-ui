@@ -132,7 +132,9 @@ export function PriceOverridesSection({
 
   /** Leaving a row: write what the debounce is holding, then re-read usage. */
   const commit = React.useCallback(() => {
-    void flush().then(onSaved)
+    void flush()
+      .then(onSaved)
+      .catch(() => {})
   }, [flush, onSaved])
 
   const reset = React.useCallback(

@@ -1,6 +1,9 @@
 import "server-only"
 
 import { randomBytes } from "node:crypto"
+import { resolveSubagentDefaults, subagentPermission, type SubagentDefaults } from "@/lib/subagents/defaults"
+import { createWorktree } from "@/lib/worktree"
+import { runGit } from "@/lib/git-exec"
 
 import type { AgentStreamEvent } from "@/lib/cursor-agent-types"
 import {
@@ -51,6 +54,7 @@ export type {
 type Listener = (frame: string | null) => void
 
 type Run = SubagentRunSummary & {
+  effort?: string
   /** Every SSE `data:` payload the chat route sent, in order. */
   frames: string[]
   assistant: StoredMessage
@@ -384,9 +388,12 @@ function prune() {
 export type StartRunInput = {
   /** This server's own origin — the run is a request to its `/api/chat`. */
   origin: string
-  harness: string
+  harness?: string
   prompt: string
   model?: string
+  effort?: string
+  defaults?: SubagentDefaults
+  isolation?: "shared" | "worktree"
   cwd?: string
   title?: string
   /** Continue this subagent chat rather than starting a new one. */
@@ -403,23 +410,12 @@ export type StartRunInput = {
 }
 
 export async function startRun(input: StartRunInput): Promise<SubagentRunSummary> {
-  const provider = await getProvider(input.harness)
-  if (!provider) {
-    const ids = (await listProviders()).filter((p) => p.available).map((p) => p.id)
-    throw new Error(
-      `Unknown or disabled harness "${input.harness}". Available: ${ids.join(", ") || "none"}.`
-    )
-  }
-  const info = await provider.info()
-  if (!info.available) {
-    throw new Error(info.unavailableReason ?? `${info.name} is unavailable.`)
-  }
-
   const parent = input.parentId ? await getSession(input.parentId) : null
   let session: SessionMeta | null = null
   if (input.sessionId) {
     session = await getSession(input.sessionId)
     if (!session) throw new Error(`No chat "${input.sessionId}" to continue.`)
+    if (input.parentId && session.parentId !== input.parentId) throw new Error("That chat belongs to another orchestrator.")
     // A caller that named a run to queue behind has chosen to wait its turn;
     // the chain (`after` is always the newest) keeps the follow-ups in order.
     const busy =
@@ -436,20 +432,47 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
     }
   }
 
-  let model = input.model ?? (session?.providerId === input.harness ? session.model : "")
+  const resolved = resolveSubagentDefaults(input,
+    session ? { harness: session.providerId, model: session.model } : undefined,
+    { harness: input.defaults?.harness ?? parent?.providerId,
+      model: input.defaults?.model ?? parent?.model, effort: input.defaults?.effort })
+  const provider = await getProvider(resolved.harness)
+  if (!provider) throw new Error(`Unknown or disabled harness "${resolved.harness}". Use list_harnesses for available ids.`)
+  const info = await provider.info()
+  if (!info.available) throw new Error(info.unavailableReason ?? `${info.name} is unavailable.`)
+  const inheritedPermission = input.permissionMode ?? session?.permissionMode ?? parent?.permissionMode ?? info.capabilities.defaultPermissionMode
+  const permissionMode = subagentPermission(inheritedPermission, info.capabilities)
+  const effort = info.capabilities.effort ? resolved.effort : undefined
+  input = { ...input, harness: resolved.harness, permissionMode, effort }
+  let model = resolved.model ?? ""
   if (!model) {
     const models = await provider.listModels().catch(() => [])
     model = models.find((option) => !option.disabled)?.id ?? ""
   }
-  const cwd = input.cwd ?? session?.cwd ?? parent?.cwd
+  let cwd = input.cwd ?? session?.cwd ?? parent?.cwd
+  let worktree = session?.worktree ?? (cwd === parent?.cwd ? parent?.worktree : undefined)
+  if (input.isolation === "worktree") {
+    if (session) throw new Error("Worktree isolation is only available for a new subagent chat.")
+    if (!cwd) throw new Error("Worktree isolation needs a working folder.")
+    if (inheritedPermission === "read-only" || inheritedPermission === "plan") throw new Error("Creating a worktree requires write permission.")
+    const head = await runGit(["rev-parse", "HEAD"], { cwd })
+    if (!head.ok) throw new Error("Could not resolve HEAD for worktree isolation.")
+    const branch = await runGit(["branch", "--show-current"], { cwd })
+    const created = await createWorktree({ repoRoot: cwd, title: input.title ?? deriveSessionTitle(input.prompt),
+      baseRef: head.stdout.trim(), baseBranch: branch.ok ? branch.stdout.trim() : "" })
+    if (!created.ok) throw new Error(created.error)
+    cwd = created.root
+    worktree = { root: created.root, branch: created.branch, repoRoot: created.repoRoot, baseBranch: created.baseBranch }
+  }
 
   if (!session) {
     session = await createSession({
       title: input.title ?? deriveSessionTitle(input.prompt),
-      providerId: input.harness,
+      providerId: resolved.harness,
       model,
       cwd,
-      gitBranch: parent?.cwd === cwd ? parent?.gitBranch : undefined,
+      gitBranch: worktree?.branch ?? (parent?.cwd === cwd ? parent?.gitBranch : undefined),
+      worktree,
       permissionMode: input.permissionMode,
       parentId: parent?.id,
       // No chat here asked for it: the sidebar shelves it until it is adopted.
@@ -466,7 +489,8 @@ export async function startRun(input: StartRunInput): Promise<SubagentRunSummary
     runId: `r${randomBytes(9).toString("base64url")}`,
     sessionId: session.id,
     ...(parent ? { parentId: parent.id } : null),
-    harness: input.harness,
+    harness: resolved.harness,
+    effort,
     model,
     title: session.title,
     prompt: input.prompt,
@@ -511,6 +535,7 @@ export type MessageInput = {
   parentId?: string
   permissionMode?: string
   timeoutSeconds?: number
+  defaults?: SubagentDefaults
 }
 
 /**
@@ -562,6 +587,8 @@ export async function messageSubagent(input: MessageInput): Promise<SubagentRunS
     sessionId,
     parentId: input.parentId ?? session.parentId,
     permissionMode: input.permissionMode,
+    defaults: input.defaults,
+    effort: named?.effort,
     timeoutSeconds: input.timeoutSeconds,
     after,
   })
@@ -601,8 +628,9 @@ async function pump(run: Run, input: StartRunInput, settle: () => void) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         prompt: input.prompt,
-        providerId: input.harness,
+        providerId: run.harness,
         model: run.model,
+        effort: run.effort,
         sessionId: run.sessionId,
         cwd: run.cwd,
         permissionMode: input.permissionMode,

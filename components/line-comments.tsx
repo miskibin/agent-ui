@@ -29,6 +29,19 @@ import { cn } from "@/lib/utils"
 type Listener = () => void
 
 let pending: LineComment[] = []
+let activeSession = ""
+const parked = new Map<string, LineComment[]>()
+
+/** Unsent review notes follow their chat, just like the composer's draft. */
+export function switchLineCommentSession(sessionId: string) {
+  if (sessionId === activeSession) return
+  if (pending.length) parked.set(activeSession, pending)
+  else parked.delete(activeSession)
+  activeSession = sessionId
+  pending = parked.get(sessionId) ?? []
+  parked.delete(sessionId)
+  emit()
+}
 const listeners = new Set<Listener>()
 let counter = 0
 

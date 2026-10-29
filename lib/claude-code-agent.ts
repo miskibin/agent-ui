@@ -29,6 +29,10 @@ import type {
 } from "@/lib/providers/types"
 import { dataDir } from "@/lib/settings/server"
 import { LineBuffer } from "@/lib/stream-framing"
+import { AsyncEventQueue } from "@/lib/async-event-queue"
+import { ClaudeCodeControl, claudeUserMessage, interactiveClaudeEvent } from "@/lib/claude-code-control"
+import type { AskUser } from "@/lib/turn-requests"
+import { UnfinishedTools } from "@/lib/unfinished-tools"
 
 /**
  * Spawns the Claude Code CLI in `-p --output-format stream-json` and streams
@@ -48,6 +52,8 @@ export type ClaudeCodeRunOptions = {
   sessionId?: string
   /** `--effort`: low | medium | high | xhigh | max. */
   effort?: string
+  images?: string[]
+  askUser?: AskUser
   permissionMode: PermissionMode
   workspace: string
   binPath?: string
@@ -63,6 +69,7 @@ const MAX_FIELD = 50_000
 export async function* runClaudeCodeAgent(
   options: ClaudeCodeRunOptions
 ): AsyncGenerator<AgentStreamEvent> {
+  if (options.signal?.aborted) return
   const startedAt = Date.now()
   const command = resolveClaudeCodeCommand(options.binPath)
   const { cmd, args: prefix } = command
@@ -74,6 +81,7 @@ export async function* runClaudeCodeAgent(
     ...prefix,
     ...buildArgs({
       ...options,
+      streamingInput: true,
       mcpConfigPath,
       mcpServerNames: mcpServers.map((server) => server.name),
     }),
@@ -83,7 +91,7 @@ export async function* runClaudeCodeAgent(
   // bundler to trace — same hint as `lib/cursor-agent.ts` uses.
   const child = spawn(/*turbopackIgnore: true*/ cmd, args, {
     cwd: options.workspace,
-    env: process.env,
+    env: { ...process.env, CLAUDE_CODE_SDK_READS_SESSION_STATE: "1" },
     windowsHide: true,
     stdio: ["pipe", "pipe", "pipe"],
     // Its own process group: a stop has to reach what the Bash tool started,
@@ -121,15 +129,24 @@ export async function* runClaudeCodeAgent(
 
   const onAbort = () => killProcessTree(child)
   options.signal?.addEventListener("abort", onAbort)
+  if (options.signal?.aborted) onAbort()
+
+  const queue = new AsyncEventQueue<string | AgentStreamEvent>()
+  const requestTools = new UnfinishedTools()
+  const send = (value: unknown) => {
+    if (child.stdin?.writable && !child.stdin.destroyed) child.stdin.write(`${JSON.stringify(value)}\n`)
+  }
+  const control = new ClaudeCodeControl({ send, emit: (event) => queue.push(event),
+    askUser: options.askUser, permissionMode: options.permissionMode })
+  let initTimer: ReturnType<typeof setTimeout> | undefined
+  let settleTimer: ReturnType<typeof setTimeout> | undefined
+  let backgroundWaitTimer: ReturnType<typeof setTimeout> | undefined
 
   try {
-    // The prompt goes here rather than in argv — see `buildArgs`. The CLI also
-    // tears down background shells only once the result is out *and* stdin has
-    // closed, so ending it is part of a clean exit, not an optimisation.
+    // Streaming stdin stays open for permission responses until the turn settles.
     child.stdin?.on("error", () => {
       /* the process died before the prompt landed; exit handling reports it */
     })
-    child.stdin?.end(options.prompt)
 
     if (!child.stdout) {
       yield { type: "error", message: "Claude Code produced no stdout" }
@@ -142,9 +159,91 @@ export async function* runClaudeCodeAgent(
     // inside JSON strings and would tear records apart.
     const lines = new LineBuffer()
 
+    const initializeId = "agent-ui-initialize"
+    let initialized = false
+    let sawResult = false
+    let sessionState: unknown
+    const backgroundTasks = new Set<string>()
+    const closeInput = () => {
+      if (sawResult && backgroundTasks.size === 0 &&
+        (sessionState === undefined || sessionState === "idle")) child.stdin?.end()
+    }
+    initTimer = setTimeout(() => {
+      queue.push({ type: "error", message: "Claude Code initialization timed out" })
+      killProcessTree(child)
+    }, 60_000)
+    send({ type: "control_request", request_id: initializeId,
+      request: { subtype: "initialize", hooks: null, forwardSubagentText: true } })
+
+    // Read independently of permission callbacks: a CLI cancellation or exit must
+    // still be consumed while the user has a form open.
+    const read = (async () => {
+      try {
+        for await (const chunk of readStdout(child.stdout!)) queue.push(chunk)
+      } finally {
+        await control.close()
+        queue.close()
+      }
+    })()
+
     const mapLine = (line: string): AgentStreamEvent[] => {
       const event = parseCliLine(line)
-      return event ? translator.translate(event) : []
+      if (!event) return []
+      const raw = event as unknown as Record<string, unknown>
+      if (raw.type === "control_response") {
+        const response = raw.response as { request_id?: string; subtype?: string; error?: string } | undefined
+        if (response?.request_id === initializeId && !initialized) {
+          clearTimeout(initTimer)
+          if (response.subtype === "error") {
+            killProcessTree(child)
+            return [{ type: "error", message: response.error || "Claude Code initialization failed" }]
+          }
+          initialized = true
+          send(claudeUserMessage(options.prompt, options.images))
+        }
+        return []
+      }
+      if (control.handle(raw)) {
+        clearTimeout(backgroundWaitTimer)
+        return []
+      }
+      if (raw.type === "system" && raw.subtype === "session_state_changed") {
+        sessionState = raw.state
+        if (sessionState === "requires_action" || sessionState === "idle") clearTimeout(backgroundWaitTimer)
+        closeInput()
+      }
+      if (raw.type === "system" && raw.subtype === "task_started" &&
+        ["local_agent", "local_workflow"].includes(String(raw.task_type)) && typeof raw.task_id === "string") {
+        backgroundTasks.add(raw.task_id)
+      }
+      if (raw.type === "system" && raw.subtype === "task_notification" && typeof raw.task_id === "string") {
+        backgroundTasks.delete(raw.task_id)
+        // Older CLIs have no idle marker. Allow their completion-triggered
+        // follow-up to start before deciding the stream is finished.
+        clearTimeout(settleTimer)
+        settleTimer = setTimeout(closeInput, 1_500)
+      }
+      if (!raw.parent_tool_use_id && (raw.type === "assistant" ||
+        (raw.type === "stream_event" && event.event?.type === "message_start"))) {
+        sawResult = false
+        clearTimeout(backgroundWaitTimer)
+      }
+      if (raw.type === "result") {
+        sawResult = true
+        closeInput()
+        if (backgroundTasks.size || (sessionState !== undefined && sessionState !== "idle")) {
+          // Match the CLI's default idle ceiling while keeping stdin available
+          // to native children. Active work and user interactions clear it.
+          const configured = Number(process.env.CLAUDE_CODE_PRINT_BG_WAIT_CEILING_MS ?? 600_000)
+          const ceiling = Number.isFinite(configured) && configured >= 0 ? Math.min(configured, 2 ** 31 - 1) : 600_000
+          clearTimeout(backgroundWaitTimer)
+          if (ceiling > 0) backgroundWaitTimer = setTimeout(() => {
+            queue.push({ type: "error", message: "Claude Code background work did not settle before its idle timeout" })
+            killProcessTree(child)
+          }, ceiling)
+        }
+      }
+      return translator.translate(event).map(interactiveClaudeEvent)
     }
 
     // A turn can also end without the CLI ever saying so: a rejected usage
@@ -154,8 +253,13 @@ export async function* runClaudeCodeAgent(
     // — goes through `finish`, so the rows a tool opened are always closed.
     let parked = false
 
-    for await (const chunk of readStdout(child.stdout)) {
+    for await (const chunk of queue) {
       if (options.signal?.aborted) break
+      if (typeof chunk !== "string") {
+        requestTools.track(chunk)
+        yield chunk
+        continue
+      }
       for (const line of lines.push(chunk)) {
         yield* mapLine(line)
       }
@@ -164,6 +268,9 @@ export async function* runClaudeCodeAgent(
         break
       }
     }
+    await control.close()
+    yield* requestTools.finish()
+    clearTimeout(initTimer)
     if (!parked && !options.signal?.aborted) {
       const tail = lines.finish()
       if (tail !== null) yield* mapLine(tail)
@@ -186,6 +293,7 @@ export async function* runClaudeCodeAgent(
     }
 
     const exitCode = await exited
+    await read
 
     if (options.signal?.aborted) {
       yield* translator.finish(false)
@@ -223,6 +331,10 @@ export async function* runClaudeCodeAgent(
     }
     yield* translator.finish(true)
   } finally {
+    clearTimeout(initTimer)
+    clearTimeout(settleTimer)
+    clearTimeout(backgroundWaitTimer)
+    await control.close()
     options.signal?.removeEventListener("abort", onAbort)
     endClaude(child, options)
   }

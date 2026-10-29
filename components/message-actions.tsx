@@ -2,13 +2,17 @@
 
 import { Copy, History, Info, RefreshCw, Trash2 } from "lucide-react"
 import * as React from "react"
-import { toast } from "sonner"
 
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
 import { folderName } from "@/lib/folder"
 import { estimateCost, formatCost } from "@/lib/model-pricing"
 import type { StoredMessage } from "@/lib/store/types"
 import { cn } from "@/lib/utils"
+import { copyText } from "@/lib/clipboard"
 
 /**
  * The row under a settled assistant turn: copy, regenerate, delete, and — the
@@ -53,8 +57,7 @@ export const MessageActions = React.memo(function MessageActions({
       <ActionBtn
         title="Copy"
         onClick={() => {
-          void navigator.clipboard.writeText(message.content)
-          toast.success("Copied")
+          void copyText(message.content, "Copied")
         }}
       >
         <Copy />
@@ -141,10 +144,10 @@ function MessageMetadata({
           <button
             type="button"
             onClick={() => {
-              void navigator.clipboard.writeText(
-                rows.map((row) => `${row.label}: ${row.value}`).join("\n")
+              void copyText(
+                rows.map((row) => `${row.label}: ${row.value}`).join("\n"),
+                "Details copied"
               )
-              toast.success("Details copied")
             }}
             className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
           >
@@ -273,8 +276,8 @@ function turnShape(message: StoredMessage): string {
 function formatDuration(seconds: number) {
   if (seconds < 1) return `${Math.round(seconds * 1000)}ms`
   if (seconds < 60) return `${seconds.toFixed(1)}s`
-  const minutes = Math.floor(seconds / 60)
-  return `${minutes}m ${String(Math.round(seconds % 60)).padStart(2, "0")}s`
+  const rounded = Math.round(seconds)
+  return `${Math.floor(rounded / 60)}m ${String(rounded % 60).padStart(2, "0")}s`
 }
 
 function formatCount(value: number) {

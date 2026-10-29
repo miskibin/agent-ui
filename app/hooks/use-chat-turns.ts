@@ -35,7 +35,12 @@ import { parseSlashCommand } from "@/lib/slash-commands"
 import type { SessionMeta, StoredMessage } from "@/lib/store/types"
 import type { UserRequestAnswer } from "@/lib/turn-requests"
 
-import { EMPTY_MESSAGES, type QueuedMessage, type SessionRun } from "./chat-types"
+import {
+  EMPTY_MESSAGES,
+  type QueuedMessage,
+  type QueuedRunConfig,
+  type SessionRun,
+} from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
 import type { LoadThread } from "./use-threads"
 import type { RunPrompt } from "./use-turn-runner"
@@ -144,7 +149,8 @@ export function useChatTurns({
   /** The skills this machine offers, as `app/hooks/use-skills` last read them. */
   knownSkillNamesRef: React.RefObject<ReadonlySet<string>>
 }) {
-  const { abortsRef, activeIdRef, drainQueueRef, sessionsRef, threadsRef } = refs
+  const { abortsRef, activeIdRef, drainQueueRef, sessionsRef, threadsRef } =
+    refs
 
   const send = React.useCallback(
     async (
@@ -157,7 +163,8 @@ export function useChatTurns({
        * leaves plan mode and sends in the same click, and a state update is
        * not visible to the closure that would read it.
        */
-      permissionOverride?: PermissionMode
+      permissionOverride?: PermissionMode,
+      queuedConfig?: QueuedRunConfig
     ) => {
       const trimmed = text.trim()
       if (!trimmed && files.length === 0) return
@@ -168,26 +175,33 @@ export function useChatTurns({
       // A queued message may land after the user has moved to another chat;
       // it runs with the agent its own chat remembers, not the one on screen.
       const target = sessionsRef.current.find((item) => item.id === sessionId)
-      const detached = !!targetId && targetId !== activeIdRef.current && !!target
+      const detached =
+        !!targetId && targetId !== activeIdRef.current && !!target
       if (target?.external) adoptChat(sessionId)
-      const runProvider = detached ? target.providerId : providerId
-      const runModel = detached ? target.model : model
+      const runProvider =
+        queuedConfig?.providerId ?? (detached ? target.providerId : providerId)
+      const runModel = queuedConfig?.model ?? (detached ? target.model : model)
       /**
        * Everything else about the run is the *open* chat's — its harness's
        * capabilities, the effort picked, the permission mode shown — none of
        * which may leak into another chat's turn: a read-only chat's queued
        * message must not run under the `full` of the chat now on screen. A
        * detached run takes the target's own stored mode (the chat route
-       * validates it against that harness), no effort, and no images.
+       * validates it against that harness), and the queued message carries the model capabilities
+       * captured at enqueue time.
        */
-      const runPermission: PermissionMode | undefined = detached
-        ? ((target.permissionMode as PermissionMode | undefined) || undefined)
-        : permissionOverride || chosenPermission || undefined
-      const runEffort = detached
-        ? undefined
-        : capabilities?.effort
-          ? effort
-          : undefined
+      const runPermission: PermissionMode | undefined = queuedConfig
+        ? queuedConfig.permissionMode
+        : detached
+          ? (target.permissionMode as PermissionMode | undefined) || undefined
+          : permissionOverride || chosenPermission || undefined
+      const runEffort = queuedConfig
+        ? queuedConfig.effort
+        : detached
+          ? undefined
+          : capabilities?.effort
+            ? effort
+            : undefined
 
       const command = parseSlashCommand(trimmed)
       if (command && !detached) {
@@ -266,7 +280,8 @@ export function useChatTurns({
       // and model that can actually look at them — everything else falls
       // back to the original behavior: a plain name mentioned in the text.
       const visionEligible =
-        !detached && !!capabilities?.vision && visionModels.includes(model)
+        queuedConfig?.vision ??
+        (!detached && !!capabilities?.vision && visionModels.includes(model))
       const imageFiles = files.filter(isImageFile)
       const otherFiles = files.filter((file) => !isImageFile(file))
       const oversizedImages = imageFiles.filter(
@@ -363,7 +378,13 @@ export function useChatTurns({
          * this one exchange — which the next inline edit then persists over
          * the real history — so wait for the body and take its own prior.
          */
-        prior = (await loadThread(sessionId)) ?? EMPTY_MESSAGES
+        const loaded = await loadThread(sessionId)
+        if (!loaded) {
+          if (activeIdRef.current === sessionId)
+            refs.composerRef.current?.setDraft({ text, files, skills })
+          return
+        }
+        prior = loaded
       }
 
       // An unanswered ask block is treated as skipped once the user types on.
@@ -423,6 +444,7 @@ export function useChatTurns({
       regenerateTitle,
       renameSession,
       runPrompt,
+      refs.composerRef,
       sessions,
       sessionsRef,
       setActiveId,
@@ -449,7 +471,14 @@ export function useChatTurns({
       const next = refs.queuesRef.current[sessionId]?.[0]
       if (!next) return
       takeQueued(sessionId, next.id)
-      void send(next.text, next.files, next.skills, sessionId)
+      void send(
+        next.text,
+        next.files,
+        next.skills,
+        sessionId,
+        undefined,
+        next.config
+      )
     },
     [refs.queuesRef, send, takeQueued]
   )
@@ -459,7 +488,6 @@ export function useChatTurns({
 
   const handleStop = React.useCallback(() => {
     abortsRef.current.get(activeId)?.abort()
-    abortsRef.current.delete(activeId)
     setRuns((prev) => omit(prev, activeId))
   }, [abortsRef, activeId, setRuns])
 
@@ -467,7 +495,7 @@ export function useChatTurns({
    * Stops a chat's turn and resolves once the runner has actually let go of
    * it, rather than the instant `abort()` returns.
    *
-   * The difference matters to exactly one caller. `use-turn-runner` folds a
+   * The difference matters to answers, steering and transcript edits. `use-turn-runner` folds a
    * burst of stream events into one queued frame and flushes whatever is left
    * from its `finally` — deliberately, because Stop leaves the turn in place
    * and the server has already persisted every event it produced. So a
@@ -492,20 +520,76 @@ export function useChatTurns({
       ) {
         await new Promise((resolve) => setTimeout(resolve, 16))
       }
-      abortsRef.current.delete(sessionId)
+      if (abortsRef.current.get(sessionId) === controller)
+        abortsRef.current.delete(sessionId)
     },
     [abortsRef, setRuns]
+  )
+
+  const handleSteer = React.useCallback(
+    async (payload: ChatInputPayload) => {
+      const sessionId = activeIdRef.current
+      if (!sessionId) return
+      const config: QueuedRunConfig = {
+        providerId,
+        model,
+        effort: capabilities?.effort ? effort : undefined,
+        permissionMode: chosenPermission || undefined,
+        vision: !!capabilities?.vision && visionModels.includes(model),
+      }
+      await stopAndSettle(sessionId)
+      await send(
+        payload.text,
+        payload.files,
+        payload.skills,
+        sessionId,
+        undefined,
+        config
+      )
+    },
+    [
+      activeIdRef,
+      send,
+      stopAndSettle,
+      providerId,
+      model,
+      capabilities?.effort,
+      capabilities?.vision,
+      effort,
+      chosenPermission,
+      visionModels,
+    ]
+  )
+
+  const handleQueueSendNow = React.useCallback(
+    async (id: string) => {
+      const sessionId = activeIdRef.current
+      const item = takeQueued(sessionId, id)
+      if (!item) return
+      await stopAndSettle(sessionId)
+      await send(
+        item.text,
+        item.files,
+        item.skills,
+        sessionId,
+        undefined,
+        item.config
+      )
+    },
+    [activeIdRef, send, stopAndSettle, takeQueued]
   )
 
   /** Rewrites the stored thread after an in-place edit / delete / ask answer. */
   const commitThread = React.useCallback(
     async (sessionId: string, next: StoredMessage[]) => {
-      setThreads((prev) => ({ ...prev, [sessionId]: next }))
-      patchLocal(sessionId, { messageCount: next.length, updatedAt: nowMs() })
       try {
         await api.putMessages(sessionId, next)
+        setThreads((prev) => ({ ...prev, [sessionId]: next }))
+        patchLocal(sessionId, { messageCount: next.length, updatedAt: nowMs() })
+        return true
       } catch (err) {
         toast.error(errorMessage(err, "Could not save the chat"))
+        return false
       }
     },
     [patchLocal, setThreads]
@@ -526,32 +610,31 @@ export function useChatTurns({
    * the answer — see `stopAndSettle`.
    */
   const handleAskAnswer = React.useCallback(
-    (messageId: string, toolId: string, result: AskQuestionResult) => {
+    async (messageId: string, toolId: string, result: AskQuestionResult) => {
       const sessionId = activeId
-      void (async () => {
-        await stopAndSettle(sessionId)
-        // Read *after* the stop: the last flush belongs in the transcript this
-        // answer is recorded on.
-        const next = completeAsk(
-          threadsRef.current[sessionId] ?? EMPTY_MESSAGES,
-          messageId,
-          toolId,
-          result
-        )
-        await commitThread(sessionId, next)
-        await runPrompt({
-          sessionId,
-          prompt: result.skipped
-            ? ASK_ANSWER_SKIPPED
-            : `${ASK_ANSWER_PREFIX}${JSON.stringify(result.answers)}`,
-          prior: next,
-          providerId,
-          model,
-          effort: capabilities?.effort ? effort : undefined,
-          permissionMode: chosenPermission || undefined,
-          internal: true,
-        })
-      })()
+      await stopAndSettle(sessionId)
+      // Read *after* the stop: the last flush belongs in the transcript this
+      // answer is recorded on.
+      const next = completeAsk(
+        threadsRef.current[sessionId] ?? EMPTY_MESSAGES,
+        messageId,
+        toolId,
+        result
+      )
+      if (!(await commitThread(sessionId, next))) return false
+      await runPrompt({
+        sessionId,
+        prompt: result.skipped
+          ? ASK_ANSWER_SKIPPED
+          : `${ASK_ANSWER_PREFIX}${JSON.stringify(result.answers)}`,
+        prior: next,
+        providerId,
+        model,
+        effort: capabilities?.effort ? effort : undefined,
+        permissionMode: chosenPermission || undefined,
+        internal: true,
+      })
+      return true
     },
     [
       activeId,
@@ -606,7 +689,8 @@ export function useChatTurns({
       let userIndex = index - 1
       while (userIndex >= 0 && current[userIndex].sender !== "user") userIndex--
       if (userIndex < 0) return
-      const prompt = current[userIndex].content
+      const userMessage = current[userIndex]
+      const prompt = userMessage.content
       /**
        * Everything from the user turn down goes, question included: the run
        * below re-appends it — once in the optimistic thread, once server-side
@@ -614,22 +698,40 @@ export function useChatTurns({
        * on disk.
        */
       const next = current.slice(0, userIndex)
-      void (async () => {
-        await commitThread(sessionId, next)
+      const regenerate = async () => {
+        await stopAndSettle(sessionId)
+        if (!(await commitThread(sessionId, next))) return
         await runPrompt({
           sessionId,
           prompt,
+          attachments: userMessage.attachments,
+          typedText: userMessage.metadata?.typedText,
           prior: next,
           // The turn below the one being re-run is gone: seed over `prior`
-          // rather than onto the thread. `typedText` is not knowable here —
-          // the stored message is all that is left of what was typed.
+          // rather than onto the thread; attachments and typed text travel with it.
           replacePrior: true,
           providerId,
           model,
           effort: capabilities?.effort ? effort : undefined,
           permissionMode: chosenPermission || undefined,
         })
-      })()
+      }
+      if (index < current.length - 1) {
+        toast.warning(
+          "Regenerate this answer and remove the messages after it?",
+          {
+            description:
+              "The later conversation will be removed. Files in your project will stay as they are.",
+            duration: 8000,
+            action: {
+              label: "Regenerate",
+              onClick: () => {
+                void regenerate()
+              },
+            },
+          }
+        )
+      } else void regenerate()
     },
     [
       activeId,
@@ -641,6 +743,7 @@ export function useChatTurns({
       providerId,
       runPrompt,
       threadsRef,
+      stopAndSettle,
     ]
   )
 
@@ -682,17 +785,30 @@ export function useChatTurns({
   const handleDeleteMessage = React.useCallback(
     (messageId: string) => {
       const sessionId = activeId
-      const next = (threadsRef.current[sessionId] ?? EMPTY_MESSAGES).filter(
-        (message) => message.id !== messageId
-      )
-      void commitThread(sessionId, next)
+      toast.warning("Delete this message?", {
+        duration: 8000,
+        action: {
+          label: "Delete",
+          onClick: () => {
+            void (async () => {
+              await stopAndSettle(sessionId)
+              const next = (
+                threadsRef.current[sessionId] ?? EMPTY_MESSAGES
+              ).filter((message) => message.id !== messageId)
+              await commitThread(sessionId, next)
+            })()
+          },
+        },
+      })
     },
-    [activeId, commitThread, threadsRef]
+    [activeId, commitThread, stopAndSettle, threadsRef]
   )
 
   return {
     send,
     handleSend,
+    handleSteer,
+    handleQueueSendNow,
     handleStop,
     handleAskAnswer,
     handleRequestAnswer,

@@ -8,7 +8,11 @@ import { omit } from "@/lib/chat-helpers"
 import { newId } from "@/lib/message-stream"
 import { parseSlashCommand } from "@/lib/slash-commands"
 
-import { EMPTY_QUEUE, type QueuedMessage } from "./chat-types"
+import {
+  EMPTY_QUEUE,
+  type QueuedMessage,
+  type QueuedRunConfig,
+} from "./chat-types"
 import type { ChatRefs } from "./use-chat-refs"
 
 export type MessageQueue = ReturnType<typeof useMessageQueue>
@@ -26,10 +30,12 @@ export function useMessageQueue({
   refs,
   activeId,
   parkDraft,
+  config,
 }: {
   refs: ChatRefs
   activeId: string
   parkDraft: () => void
+  config: QueuedRunConfig
 }) {
   const { activeIdRef, composerRef, queuesRef } = refs
   const [queues, setQueues] = React.useState<Record<string, QueuedMessage[]>>(
@@ -43,7 +49,11 @@ export function useMessageQueue({
       // The app's own commands act on the chat now, not on a model later — and
       // a queued one could drain into another chat's turn. Hand it back.
       if (parseSlashCommand(payload.text)) {
-        composerRef.current?.setDraft(payload)
+        // ChatInput clears after onQueue returns. Restore after that clear.
+        queueMicrotask(() => {
+          if (activeIdRef.current === sessionId)
+            composerRef.current?.setDraft(payload)
+        })
         toast.message("Commands run right away — send it once the turn ends")
         return
       }
@@ -52,6 +62,7 @@ export function useMessageQueue({
         text: payload.text,
         files: payload.files,
         skills: payload.skills,
+        config,
         fileCount: payload.files.length || undefined,
       }
       setQueues((prev) => ({
@@ -59,13 +70,22 @@ export function useMessageQueue({
         [sessionId]: [...(prev[sessionId] ?? []), item],
       }))
     },
-    [activeIdRef, composerRef]
+    [activeIdRef, composerRef, config]
   )
 
   const takeQueued = React.useCallback(
     (sessionId: string, id: string) => {
-      const item = queuesRef.current[sessionId]?.find((entry) => entry.id === id)
+      const item = queuesRef.current[sessionId]?.find(
+        (entry) => entry.id === id
+      )
       if (!item) return null
+      // Claim synchronously: a click and the ending stream can both drain it.
+      queuesRef.current = {
+        ...queuesRef.current,
+        [sessionId]: queuesRef.current[sessionId].filter(
+          (entry) => entry.id !== id
+        ),
+      }
       setQueues((prev) => {
         const rest = (prev[sessionId] ?? []).filter((entry) => entry.id !== id)
         return rest.length > 0

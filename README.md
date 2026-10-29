@@ -42,6 +42,10 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 - **Per-turn checkpoints.** Every turn in a git folder is bracketed by a
   worktree snapshot, so one action puts the files back the way they were before
   it ran. Switchable in Settings → Chat.
+- **Queue or steer.** Enter queues a follow-up while the agent runs; Ctrl/⌘+Enter
+  (or Ctrl/⌘-click on the queue button) stops the current turn and sends a
+  correction, preserving its transcript. Queued messages offer **Send now**;
+  Stop pauses the queue until you explicitly continue.
 - **Composer that remembers.** ArrowUp walks back through the prompts already
   sent in the chat, drafts survive a chat switch, and answers render GitHub
   alerts and clickable `path.ts:42` chips.
@@ -129,7 +133,22 @@ one that started it, streaming live, and resumable later. It works in the same
 folder, under the same permission mode. Claude Code is given the app's
 `agent-ui` MCP server automatically (`run_subagent`, `get_subagent`,
 `list_harnesses`, …). Calls can block until the subagent answers, or run in
-the background so several go at once.
+the background so several go at once. `run_subagent({ prompt: "…" })` inherits
+the parent chat's harness, model, effort and folder; discovery is only needed
+to choose a different harness or model. An explicit `effort` overrides the
+inherited value. `isolation: "worktree"` creates a new branch from the current
+folder's committed HEAD and records the worktree on the child chat; it does
+not copy uncommitted edits. A backend that cannot enforce an inherited
+read-only or plan mode is refused instead of silently gaining write access.
+
+Claude Code uses streaming JSON input for image attachments and mid-turn
+interactions. In Edits mode, actions that need approval appear above the
+composer with their tool input; approving or denying them continues the same
+run. Clarifying questions support multiple choices and written alternatives.
+These use the same request/answer contract as ACP, pi and Codex. Claude's
+native Plan mode is available in the permission picker; leaving it requires
+changing the chat's mode explicitly. Messages sent during generation still
+use the app's queue or Stop and send flow rather than live stdin steering.
 
 Subagents appear as clickable cards in the parent conversation, with their
 task, status, harness/model and recent tool activity. Open a card to inspect

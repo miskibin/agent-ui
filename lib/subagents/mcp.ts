@@ -80,9 +80,11 @@ export type ViewArgs = {
 }
 
 export type RunSubagentArgs = {
-  harness: string
+  harness?: string
   prompt: string
   model?: string
+  effort?: string
+  isolation?: "shared" | "worktree"
   cwd?: string
   title?: string
   /** Continue an existing subagent chat instead of starting a new one. */
@@ -154,7 +156,7 @@ export const TOOL_DEFINITIONS = [
   {
     name: "list_harnesses",
     description:
-      "Agent harnesses this app can run as subagents (pi, codex, cursor, ollama, ACP agents…) and whether each is available. Call before run_subagent.",
+      "Available agent harnesses. Only needed when choosing a different harness; run_subagent inherits yours by default.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -175,12 +177,14 @@ export const TOOL_DEFINITIONS = [
     inputSchema: {
       type: "object",
       properties: {
-        harness: { type: "string", description: "Harness id from list_harnesses." },
+        harness: { type: "string", description: "Optional. Defaults to the current chat's harness." },
         prompt: {
           type: "string",
           description: "The complete task. The subagent sees none of your conversation.",
         },
         model: { type: "string", description: "Model id from list_models." },
+        effort: { type: "string", description: "Reasoning effort. Defaults to the parent's effort when using its harness." },
+        isolation: { type: "string", enum: ["shared", "worktree"], description: "shared (default): same folder. worktree: new branch from the folder's HEAD; uncommitted changes are not copied. Kept with the child chat." },
         cwd: { type: "string", description: "Absolute working folder." },
         title: { type: "string", description: "Short name for the chat." },
         session_id: {
@@ -195,7 +199,7 @@ export const TOOL_DEFINITIONS = [
         },
         ...VIEW_PROPERTIES,
       },
-      required: ["harness", "prompt"],
+      required: ["prompt"],
     },
   },
   {
@@ -311,14 +315,18 @@ const MAX_TIMEOUT_SECONDS = 86_400
 export function parseRunArgs(raw: unknown): RunSubagentArgs | string {
   const args = record(raw)
   const harness = text(args.harness, 100)
-  if (!harness) return "`harness` is required — call list_harnesses for the ids."
   const prompt = text(args.prompt)
   if (!prompt) return "`prompt` is required."
+  if (args.isolation !== undefined && args.isolation !== "shared" && args.isolation !== "worktree") {
+    return "`isolation` must be shared or worktree."
+  }
   const timeoutSeconds = positive(args.timeout_seconds ?? args.timeoutSeconds, MAX_TIMEOUT_SECONDS)
   return {
     harness,
     prompt,
     model: text(args.model, 300),
+    effort: text(args.effort, 30),
+    isolation: args.isolation as RunSubagentArgs["isolation"],
     cwd: text(args.cwd, 4096),
     title: text(args.title, 120),
     sessionId: text(args.session_id ?? args.sessionId, 64),
@@ -443,7 +451,7 @@ export async function callTool(
 }
 
 const SUBAGENT_INSTRUCTIONS =
-  "Run other agent harnesses as subagents; each run is a chat in the user's Agent UI app that they can watch live. Call list_harnesses first. For parallel work start runs with background: true and collect them with wait_subagents; poll get_subagent with since_step for only what is new; steer a run with message_subagent."
+  "Delegate with run_subagent({prompt: ...}); harness, model, effort and folder default to your chat. Each child is a separate chat and needs a self-contained task. To choose another harness/model, use list_harnesses/list_models. For parallel edits use isolation: worktree (starts from committed HEAD). Start parallel tasks with background: true, collect with wait_subagents, steer with message_subagent."
 
 function ok(id: JsonRpcId | null, result: unknown): JsonRpcResponse {
   return { jsonrpc: "2.0", id, result }

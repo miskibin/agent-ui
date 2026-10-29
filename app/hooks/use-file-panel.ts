@@ -7,7 +7,7 @@ import { toast } from "sonner"
 import { refreshFolderStatus } from "@/components/folder-status"
 import {
   addLineComment,
-  clearLineComments,
+  switchLineCommentSession,
   setLineCommentComposer,
 } from "@/components/line-comments"
 import type { FileActionItem } from "@/components/ui/change-summary"
@@ -163,6 +163,7 @@ export function useFilePanel({
   }, [])
 
   const closePreview = React.useCallback(() => {
+    ++openNonceRef.current
     setPreview(null)
     setPreviewBinary(false)
     setPreviewNotice(null)
@@ -531,7 +532,7 @@ export function useFilePanel({
    * lives in the small store `components/line-comments.tsx` owns, and this is
    * where its lifetime is decided: the composer it writes into is registered
    * here, because this is the layer that already holds the chat's refs, and a
-   * chat switch drops whatever was never sent.
+   * chat switch parks whatever was never sent.
    */
   React.useEffect(() => {
     setLineCommentComposer(composerRef)
@@ -539,10 +540,8 @@ export function useFilePanel({
   }, [composerRef])
 
   React.useEffect(() => {
-    // A comment is about a file in *this* chat, and it names lines by number:
-    // carrying it into the next chat would point at whatever happened to be on
-    // those lines there.
-    clearLineComments()
+    // Park unsent comments with their chat; never carry line numbers into another folder.
+    switchLineCommentSession(activeId)
   }, [activeId])
 
   /** Handed to `FilePreview`; the panel calls it when a range is commented on. */

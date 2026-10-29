@@ -124,8 +124,14 @@ export function useTurnRunner({
   /** Passed unresolved, so the runner is not rebuilt when settings first land. */
   notificationSounds: boolean | undefined
 }): RunPrompt {
-  const { abortsRef, drainQueueRef, selectSessionRef, sessionsRef, settingsRef, threadsRef } =
-    refs
+  const {
+    abortsRef,
+    drainQueueRef,
+    selectSessionRef,
+    sessionsRef,
+    settingsRef,
+    threadsRef,
+  } = refs
 
   React.useEffect(() => {
     const aborts = abortsRef.current
@@ -147,7 +153,12 @@ export function useTurnRunner({
         sender: "user",
         createdAt: startedAt,
         ...(args.internal ? { internal: true } : null),
-        ...(args.attachments?.length ? { attachments: args.attachments } : null),
+        ...(args.attachments?.length
+          ? { attachments: args.attachments }
+          : null),
+        ...(args.typedText != null && args.typedText !== prompt
+          ? { metadata: { typedText: args.typedText } }
+          : null),
       }
       const assistantMessage = seedAssistantMessage(assistantId)
       /**
@@ -522,7 +533,8 @@ export function useTurnRunner({
        * baseline before the very first turn is turn 0.
        */
       const priorTurns = prior.reduce(
-        (count, message) => (message.sender === "assistant" ? count + 1 : count),
+        (count, message) =>
+          message.sender === "assistant" ? count + 1 : count,
         0
       )
 

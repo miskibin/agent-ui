@@ -6,7 +6,7 @@ import { existsSync } from "node:fs"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { performance } from "node:perf_hooks"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 
 /**
  * Everything the flow suite needs around the app itself: a production build,
@@ -41,8 +41,12 @@ export async function loadPlaywright() {
     try {
       // A bare specifier resolves against this file; an absolute path is used
       // as it stands, which is how a global install is reached.
-      const target = candidate.startsWith("/") ? candidate : require.resolve(candidate)
-      const loaded = await import(target.startsWith("file:") ? target : `file://${target}`)
+      const target = candidate.startsWith("/")
+        ? candidate
+        : require.resolve(candidate)
+      const loaded = await import(
+        target.startsWith("file:") ? target : pathToFileURL(target).href
+      )
       return loaded.default ?? loaded
     } catch {
       /* try the next one */

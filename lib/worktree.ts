@@ -326,6 +326,8 @@ export type CreateWorktreeInput = {
   title?: string
   /** What to branch from. Resolved by `resolveBaseRef` when absent. */
   baseRef?: string
+  /** Branch label when baseRef pins a commit; empty for detached HEAD. */
+  baseBranch?: string
   /** Where to put it. Defaults to `worktreePathFor`. */
   root?: string
   /** Prefer `origin/<default>` over the local default branch. Default on. */
@@ -387,6 +389,7 @@ export async function createWorktree(
     baseRef: input.baseRef,
     startFromOrigin: input.startFromOrigin,
   })
+  if (input.baseBranch !== undefined) base.branch = input.baseBranch || undefined
 
   const preferred = input.root?.trim() || worktreePathFor(repoRoot, branch)
   const root = await freeDirectory(path.resolve(preferred))

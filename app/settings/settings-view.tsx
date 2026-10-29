@@ -16,10 +16,7 @@ import {
   type LucideIcon,
 } from "lucide-react"
 
-import {
-  AppHeader,
-  AppHeaderActions,
-} from "@/components/app-header"
+import { AppHeader, AppHeaderActions } from "@/components/app-header"
 import { Input } from "@/components/ui/input"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
 import { cn } from "@/lib/utils"
@@ -408,25 +405,46 @@ export function SettingsView({
         <main data-slot="settings-content" className="min-w-0 flex-1 overflow-y-auto">
           <MobileSectionNav active={active} onSelect={selectSection} />
           <div className="mx-auto w-full max-w-[760px] px-5 py-9 sm:px-8 md:px-10 md:py-14 lg:py-16">
+            {settings.loadError ? (
+              <div
+                role="alert"
+                className="mb-5 rounded-lg border p-4 text-[13px]"
+              >
+                <p>
+                  Could not load settings. Your saved configuration has not been
+                  changed.
+                </p>
+                <button
+                  type="button"
+                  onClick={settings.retry}
+                  className="mt-2 rounded px-2 py-1 text-primary hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  Try again
+                </button>
+              </div>
+            ) : null}
             {active === "appearance" ? <AppearanceSection /> : null}
-            {active === "providers" ? (
-              <ProvidersSection {...settings} />
+            {!settings.loadError ? (
+              <>
+                {active === "providers" ? (
+                  <ProvidersSection {...settings} />
+                ) : null}
+                {active === "models" ? (
+                  <ModelProvidersSection {...settings} />
+                ) : null}
+                {active === "chat" ? <ChatSection {...settings} /> : null}
+                {active === "memory" ? <MemorySection {...settings} /> : null}
+                {active === "editor" ? <EditorSection {...settings} /> : null}
+                {active === "usage" ? <UsageSection {...settings} /> : null}
+                {active === "data" ? (
+                  <DataSection
+                    dataDir={dataDir}
+                    onSessionsCleared={onSessionsCleared}
+                    {...settings}
+                  />
+                ) : null}
+              </>
             ) : null}
-            {active === "models" ? (
-              <ModelProvidersSection {...settings} />
-            ) : null}
-            {active === "chat" ? <ChatSection {...settings} /> : null}
-            {active === "memory" ? <MemorySection {...settings} /> : null}
-            {active === "editor" ? <EditorSection {...settings} /> : null}
-            {active === "usage" ? <UsageSection {...settings} /> : null}
-            {active === "data" ? (
-              <DataSection
-                dataDir={dataDir}
-                onSessionsCleared={onSessionsCleared}
-                {...settings}
-              />
-            ) : null}
-
 
             <p className="mt-6 px-0.5 pb-4 text-[11px] text-muted-foreground">
               Agent UI runs entirely on this machine.
