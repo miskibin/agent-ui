@@ -9,6 +9,7 @@ import {
 import { nestUnderParents } from "@/lib/session-groups"
 import type { SessionMeta } from "@/lib/store/types"
 import {
+  BRIDGE_CALL_TIMEOUT_MS,
   DEFAULT_WAIT_SECONDS,
   MAX_WAIT_SECONDS,
   DEFAULT_ANSWER_CHARS,
@@ -256,5 +257,18 @@ describe("claude-code and the bridge", () => {
         },
       }
     )
+  })
+
+  test("a server that blocks gets a timeout past Claude Code's 60s default", () => {
+    const doc = JSON.parse(
+      mcpConfigJson([{ name: "agent-ui", url: "http://127.0.0.1:1/api/mcp", timeoutMs: 300_000 }])
+    )
+    assert.equal(doc.mcpServers["agent-ui"].timeout, 300_000)
+  })
+
+  test("the bridge's timeout outlasts its longest wait", () => {
+    assert.ok(BRIDGE_CALL_TIMEOUT_MS > MAX_WAIT_SECONDS * 1000)
+    // Past 300s Claude Code also disables its HTTP client's own limit.
+    assert.ok(BRIDGE_CALL_TIMEOUT_MS <= 300_000)
   })
 })

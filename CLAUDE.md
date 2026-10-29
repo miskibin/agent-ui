@@ -521,7 +521,7 @@ one interface:
   240s** (`MAX_WAIT_SECONDS`): Node's `fetch`, which `agent-ui mcp` forwards through, abandons a
   request with no headers after 300s and says only "fetch failed" — a 900s wait once read as
   "Agent UI is not reachable" while the app was fine — so a long wait is a loop of slices, which
-  the CLI does for its own `--wait`. The proxy forwards requests concurrently, so a blocking wait
+  the CLI does for its own `--wait`. Claude Code has a limit of its own: it abandons any MCP call after 60s unless the server entry carries `timeout`, so `bridgeServerFor` sets `BRIDGE_CALL_TIMEOUT_MS` (slice + 60s) and `mcpConfigJson` writes it — without it every `wait_subagents` failed with "The operation timed out" while its runs were fine. The proxy forwards requests concurrently, so a blocking wait
   never holds a cancel behind it. Run ids live in memory and die with the process;
   `get_subagent` and `message_subagent` also take a `session_id`, which reads the chat's latest
   turn back from disk and rebuilds the same digest from its stored tool calls. A top-level chat's turn is handed it as `AgentRunOptions.mcpServers` with

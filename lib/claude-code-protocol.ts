@@ -103,6 +103,9 @@ export function mcpConfigJson(servers: McpServerConfig[]): string {
       type: "http",
       url: server.url,
       ...(server.headers ? { headers: server.headers } : null),
+      // Claude Code abandons an MCP call after 60s unless the server's entry
+      // says otherwise, however long the server is entitled to block.
+      ...(server.timeoutMs ? { timeout: server.timeoutMs } : null),
     }
   }
   return JSON.stringify({ mcpServers })

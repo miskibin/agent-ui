@@ -104,6 +104,12 @@ export type McpServerConfig = {
   name: string
   url: string
   headers?: Record<string, string>
+  /**
+   * How long the harness may wait on one call before giving up, in ms. A
+   * harness that has its own default (Claude Code's is 60s) needs it raised
+   * for a server whose tools legitimately block.
+   */
+  timeoutMs?: number
 }
 
 export type AgentRunOptions = {

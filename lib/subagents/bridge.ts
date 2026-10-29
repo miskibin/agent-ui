@@ -5,7 +5,7 @@ import { mkdir, readFile } from "node:fs/promises"
 import { join } from "node:path"
 
 import { writeFileAtomic } from "@/lib/atomic-write"
-import { MCP_SERVER_NAME } from "@/lib/subagents/mcp"
+import { BRIDGE_CALL_TIMEOUT_MS, MCP_SERVER_NAME } from "@/lib/subagents/mcp"
 import { dataDir } from "@/lib/settings/server"
 import type { McpServerConfig } from "@/lib/providers/types"
 
@@ -120,5 +120,6 @@ export async function bridgeServerFor(input: {
     name: MCP_SERVER_NAME,
     url: url.toString(),
     headers: { Authorization: `Bearer ${await bridgeToken()}` },
+    timeoutMs: BRIDGE_CALL_TIMEOUT_MS,
   }
 }

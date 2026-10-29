@@ -41,6 +41,14 @@ export const MCP_SERVER_NAME = "agent-ui"
  * is a loop of them.
  */
 export const MAX_WAIT_SECONDS = 240
+/**
+ * How long a harness is told to wait on one call. It has to outlast a whole
+ * slice: Claude Code abandons an MCP call after 60s unless the server's entry
+ * says otherwise, so a 4-minute `wait_subagents` came back "The operation
+ * timed out" every time while the runs it was waiting on were fine. The
+ * margin is for the answer to travel.
+ */
+export const BRIDGE_CALL_TIMEOUT_MS = (MAX_WAIT_SECONDS + 60) * 1000
 /** What a blocking call waits by default — one whole slice. */
 export const DEFAULT_WAIT_SECONDS = MAX_WAIT_SECONDS
 /** Characters of a final answer returned unless the caller asks for more. */
