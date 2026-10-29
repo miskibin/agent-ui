@@ -48,19 +48,25 @@ export function subagentCards(messages: StoredMessage[], runs: Record<string, Su
     for (const tool of tools) {
       if (tool.name === NATIVE_AGENT_TOOL) { ids.add(tool.id); continue }
       const isNative = tool.name === "Agent" || tool.name === "Task"
-      if (!isNative && !/(?:^|__)run_subagent$/.test(tool.name)) continue
       const input = object(tool.input)
       const result = receipt(tool.output)
+      // The CLI prints a JSON receipt as the output of pi's shell tool. Only
+      // identify a delegation when both the command and receipt agree; other
+      // shell commands and status calls must remain ordinary tool rows.
+      const command = typeof input.command === "string" ? input.command : ""
+      const isCli = /(?:^|[\s/\\])agent-ui(?:\.mjs)?\s+run\s/.test(command)
+        && typeof result.run_id === "string" && typeof result.session_id === "string"
+      if (!isNative && !isCli && !/(?:^|__)run_subagent$/.test(tool.name)) continue
       const sessionId = typeof result.session_id === "string" ? result.session_id : undefined
       const run = sessionId ? runs[sessionId] : Object.values(runs).find((run) => run.prompt === input.prompt)
       const snapshot = native.find((agent) => agent.parentToolId === tool.id)
       const id = encodeURIComponent(JSON.stringify([message.id, tool.id]))
       cards.set(id, {
         id,
-        title: snapshot?.title ?? (typeof input.title === "string" ? input.title : typeof input.description === "string" ? input.description : "Delegated task"),
-        status: snapshot?.status ?? run?.status ?? (typeof result.status === "string" ? result.status : tool.status) ?? "unknown",
-        harness: isNative ? "Claude Code" : typeof input.harness === "string" ? input.harness : "Agent",
-        model: snapshot?.model ?? run?.model,
+        title: snapshot?.title ?? run?.title ?? (typeof result.title === "string" ? result.title : typeof input.title === "string" ? input.title : typeof input.description === "string" ? input.description : "Delegated task"),
+        status: snapshot?.status ?? run?.status ?? (result.status === "running" || result.status === "queued" ? "unknown" : typeof result.status === "string" ? result.status : tool.status) ?? "unknown",
+        harness: isNative ? "Claude Code" : run?.harness ?? (typeof result.harness === "string" ? result.harness : typeof input.harness === "string" ? input.harness : "Agent"),
+        model: snapshot?.model ?? run?.model ?? (typeof result.model === "string" ? result.model : undefined),
         sessionId: sessionId ?? run?.sessionId,
         prompt: snapshot?.prompt ?? (typeof input.prompt === "string" ? input.prompt : undefined),
         text: snapshot?.text ?? (typeof result.answer === "string" ? result.answer : isNative ? tool.output : undefined),

@@ -55,6 +55,8 @@ export type PiRunOptions = {
   workspace: string
   /** `PI_CODING_AGENT_DIR` — keeps our models.json out of the user's ~/.pi. */
   configDir: string
+  /** Parent-scoped bridge URL passed to commands launched by pi. */
+  bridgeUrl?: string
   sessionDir: string
   /** Our generated ask-user extension; absent means the model cannot ask. */
   extensionPath?: string
@@ -98,6 +100,7 @@ export async function* runPiAgent(
     cwd: options.workspace,
     env: {
       ...process.env,
+      AGENT_UI_MCP_URL: options.bridgeUrl ?? "",
       PI_CODING_AGENT_DIR: options.configDir,
       // Startup update checks would add seconds to a local-only run.
       PI_OFFLINE: "1",

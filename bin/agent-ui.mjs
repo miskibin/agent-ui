@@ -50,7 +50,14 @@ function bridge() {
   }
   const url = process.env.AGENT_UI_URL || file.url
   if (!url) throw new Error("Agent UI has not recorded its address yet — open its window once.")
-  return { url: new URL("/api/mcp", url).toString(), token: file.token }
+  // A harness launched by the app supplies the scoped bridge URL, including
+  // the parent chat and permission mode. Standalone CLI use stays unscoped.
+  const base = new URL("/api/mcp", url)
+  const scoped = process.env.AGENT_UI_MCP_URL ? new URL(process.env.AGENT_UI_MCP_URL) : base
+  if (scoped.origin !== base.origin || scoped.pathname !== base.pathname) {
+    throw new Error("Scoped bridge URL must point to the local Agent UI MCP endpoint.")
+  }
+  return { url: scoped.toString(), token: file.token }
 }
 
 let nextId = 1
