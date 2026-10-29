@@ -69,7 +69,8 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   is in the way when nothing is running, and a stray press cannot kill an agent
   mid-edit.
 - **A sidebar you can size.** Drag its edge (or resize it from the keyboard),
-  see each chat’s project and branch, and manage pinning, snoozing, and deletion
+  see each chat’s project and branch, spot the open chat by its subtle highlight
+  and inset outline, and manage pinning, snoozing, and deletion
   from its context menu.
 - **Local persistence.** Chats, settings, provider sessions, and optional memory
   live under `~/.agent-ui`.
@@ -342,6 +343,7 @@ Together they take the staged payload from 108 MB to 59 MB. `du -sh
 | Sidebar shelves | Everything the chat changed |
 | --- | --- |
 | ![Sidebar with folder groups and the snoozed and settled shelves](.github/screenshots/sidebar-shelves.png) | ![Changed files as a tree, with commit and push below it](.github/screenshots/changes-tree.png) |
+| ![Active sidebar chat in light mode](.github/screenshots/sidebar-selection-light.png) | ![Active sidebar chat in dark mode](.github/screenshots/sidebar-selection-dark.png) |
 
 | File review | Agent handoff |
 | --- | --- |
