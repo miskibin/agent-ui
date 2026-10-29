@@ -1090,15 +1090,7 @@ export default function ChatPage() {
                   {threadLoading ? (
                     <ThreadLoading />
                   ) : isEmptyChat ? (
-                    <div
-                      className="w-full"
-                      style={{
-                        paddingRight:
-                          workspaceVisible && workspacePanel.wide
-                            ? "19rem"
-                            : undefined,
-                      }}
-                    >
+                    <div className="w-full">
                       <div
                         data-slot="chat-opening"
                         className="mx-auto w-full max-w-3xl px-3 pb-5 sm:px-4"
@@ -1131,14 +1123,6 @@ export default function ChatPage() {
                          paints outside the measured box. The island's own
                          `pt-3` keeps that blur off the last turn. */
                       className="scroll-pb-[calc(var(--composer-height,7rem)+1.5rem)] pt-14 pb-[calc(var(--composer-height,7rem)+1.5rem)]"
-                      // Reserve room inside the scroll surface: its scrollbar
-                      // must stay at the window edge when the dock is open.
-                      style={{
-                        paddingRight:
-                          workspaceVisible && workspacePanel.wide
-                            ? "20rem"
-                            : undefined,
-                      }}
                       messages={listMessages}
                       /* One mounted list shows every chat in turn: the key is
                          what resets the scroller's follow state on a switch. */
@@ -1203,12 +1187,6 @@ export default function ChatPage() {
                   <div
                     ref={composerBoxRef}
                     data-slot="chat-composer"
-                    style={{
-                      paddingRight:
-                        workspaceVisible && workspacePanel.wide
-                          ? "19rem"
-                          : undefined,
-                    }}
                     className={cn(
                       "w-full shrink-0",
                       // An island over the conversation, not a band beside it:
