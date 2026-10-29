@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server"
 
+import { forgetClaudeCodeProbe } from "@/lib/claude-code-probe"
 import { listProviders } from "@/lib/providers/registry"
 
 export const runtime = "nodejs"
@@ -18,8 +19,11 @@ function launchHeaders(): HeadersInit | undefined {
 }
 
 /** Every provider plus live availability — drives the composer's picker. */
-export async function GET() {
+export async function GET(req: Request) {
   try {
+    if (new URL(req.url).searchParams.get("refresh") === "1") {
+      forgetClaudeCodeProbe()
+    }
     return NextResponse.json(
       { providers: await listProviders() },
       { headers: launchHeaders() }

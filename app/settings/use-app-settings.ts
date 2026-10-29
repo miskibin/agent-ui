@@ -47,31 +47,41 @@ export function useAppSettings(): AppSettingsApi {
   const ready = React.useRef(false)
   const latest = React.useRef<AppSettings>(DEFAULT_SETTINGS)
   const pending = React.useRef<AppSettings | null>(null)
+  const saving = React.useRef<Promise<void> | null>(null)
   const timer = React.useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined
   )
 
   const flush = React.useCallback(async () => {
     const next = pending.current
-    if (!next) return
+    if (!next) {
+      // The debounce may already have started the write. Refresh still has
+      // to wait for that request, even though there is nothing left pending.
+      await saving.current
+      return
+    }
     pending.current = null
+    const write = writeSettings((current) => ({
+      ...current,
+      providers: next.providers,
+      modelProviders: next.modelProviders,
+      chat: next.chat,
+      files: next.files,
+      editor: next.editor,
+      memory: next.memory,
+      handoff: next.handoff,
+      checkpoints: next.checkpoints,
+      usage: next.usage,
+    }))
+    saving.current = write
     try {
-      await writeSettings((current) => ({
-        ...current,
-        providers: next.providers,
-        modelProviders: next.modelProviders,
-        chat: next.chat,
-        files: next.files,
-        editor: next.editor,
-        memory: next.memory,
-        handoff: next.handoff,
-        checkpoints: next.checkpoints,
-        usage: next.usage,
-      }))
+      await write
     } catch {
       if (!pending.current) pending.current = next
       toast.error("Couldn't save settings.")
       throw new Error("Could not save settings")
+    } finally {
+      if (saving.current === write) saving.current = null
     }
   }, [])
 

@@ -12,7 +12,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
 import { DEFAULT_DSH_AGENT } from "@/lib/settings/schema"
 import type {
   AcpAgentKind,
@@ -24,10 +23,16 @@ import type {
 } from "@/lib/settings/schema"
 
 import { SettingsRow } from "./section"
+import { ProviderField, ProviderRow, SetupLink } from "./provider-row"
 
 /** Agents that ship configured: listed first, never removable. */
 const BUILT_IN_AGENTS = ["dsh", "tinyagent"]
-import { StatusBadge, statusKey, type StatusPhase, type ProviderStatus } from "./provider-status"
+import {
+  StatusBadge,
+  statusKey,
+  type StatusPhase,
+  type ProviderStatus,
+} from "./provider-status"
 
 /**
  * The one repeating provider editor: agents that speak the Agent Client
@@ -44,13 +49,10 @@ const PERMISSION_LABELS: Record<AcpPermissionMode, string> = {
 }
 
 const PERMISSION_HINTS: Record<AcpPermissionMode, string> = {
-  ask: "Every permission request stops the turn and waits for you — the question appears above the composer and the agent continues on your answer.",
-  "auto-approve":
-    "Every permission request the agent raises is answered “allow”, with no prompt.",
-  "auto-approve-reads":
-    "Read-only tool calls are allowed; anything that writes or executes is refused.",
-  "reject-all":
-    "Nothing is ever approved — useful for watching what an agent would do.",
+  ask: "Permission requests wait for your answer in the chat.",
+  "auto-approve": "Automatically approves every permission request.",
+  "auto-approve-reads": "Approves reads; blocks writes and commands.",
+  "reject-all": "Rejects every permission request.",
 }
 
 const SANDBOX_LABELS: Record<DshSandboxMode, string> = {
@@ -64,9 +66,20 @@ export type AcpAgentsProps = {
   phase: StatusPhase
   statuses: Record<string, ProviderStatus>
   onChange: (acp: AcpSettings) => void
+  loaded: boolean
+  onRefresh: (id: string) => void
+  refreshing: string | null
 }
 
-export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps) {
+export function AcpAgentRows({
+  acp,
+  phase,
+  statuses,
+  onChange,
+  loaded,
+  onRefresh,
+  refreshing,
+}: AcpAgentsProps) {
   // Built-ins first, then whatever the user added, so the list is stable.
   const keys = React.useMemo(() => {
     const all = Object.keys(acp.agents)
@@ -118,6 +131,9 @@ export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps)
         <AcpAgentRow
           key={key}
           agentKey={key}
+          disabled={!loaded}
+          onRefresh={() => onRefresh(`acp:${key}`)}
+          refreshing={refreshing === "all" || refreshing === `acp:${key}`}
           agent={acp.agents[key]!}
           phase={phase}
           status={statuses[statusKey(`acp:${key}`)]}
@@ -127,13 +143,13 @@ export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps)
       ))}
       <SettingsRow
         title="Add an ACP agent"
-        description="Any binary that serves the Agent Client Protocol over stdio."
         control={
           <Button
             type="button"
             variant="outline"
             size="sm"
             onClick={add}
+            disabled={!loaded}
             className="text-[12.5px]"
           >
             <Plus />
@@ -147,6 +163,9 @@ export function AcpAgentRows({ acp, phase, statuses, onChange }: AcpAgentsProps)
 
 type AcpAgentRowProps = {
   agentKey: string
+  disabled: boolean
+  onRefresh: () => void
+  refreshing: boolean
   agent: AcpAgentSettings
   phase: StatusPhase
   status: ProviderStatus | undefined
@@ -156,6 +175,9 @@ type AcpAgentRowProps = {
 
 function AcpAgentRow({
   agentKey,
+  disabled,
+  onRefresh,
+  refreshing,
   agent,
   phase,
   status,
@@ -181,31 +203,50 @@ function AcpAgentRow({
   const isDsh = agent.kind === "dsh"
   const isTiny = agent.kind === "tinyagent"
   const isWsl = agent.runtime === "wsl"
-  const inputId = `provider-acp-${agentKey}`
 
   return (
-    <SettingsRow
-      title={agent.name || agentKey}
-      htmlFor={inputId}
-      description={
-        isDsh
-          ? "DeepSeek Harness over ACP. Answers arrive whole rather than token by token; progress shows as tool calls."
-          : isTiny
-            ? "tinyagent's --acp mode. Its models are yours from Model providers and Ollama — or its own config default — and the chat's permission picker sets --read-only."
-            : `Spawned as \`${agent.command || "(no command)"}\` and driven over ACP stdio.`
+    <ProviderRow
+      id={`acp:${agentKey}`}
+      name={agent.name || agentKey}
+      enabled={agent.enabled}
+      disabled={disabled}
+      onEnabledChange={(enabled) => patch({ enabled })}
+      status={
+        <StatusBadge phase={phase} status={status} enabled={agent.enabled} />
       }
-      control={
-        <>
-          <StatusBadge phase={phase} status={status} />
-          <Switch
-            id={inputId}
-            checked={agent.enabled}
-            onCheckedChange={(enabled) => patch({ enabled })}
-          />
-        </>
-      }
+      onRefresh={onRefresh}
+      refreshing={refreshing}
+      defaultOpen={agent.name === "New ACP agent" && !agent.command}
     >
-      <div className="grid gap-2">
+      <div className="grid gap-2.5">
+        {agent.enabled &&
+        !status?.available &&
+        status?.detail &&
+        !/^Disabled/i.test(status.detail) ? (
+          <p
+            role="status"
+            className="text-[12px] break-words text-muted-foreground"
+          >
+            {status.detail}
+          </p>
+        ) : null}
+        {isTiny ? (
+          <SetupLink href="https://github.com/vicgupta/tinyagent#installation">
+            Install tinyagent
+          </SetupLink>
+        ) : isDsh ? (
+          <p className="text-[12px] text-muted-foreground">
+            Install DeepSeek Harness on the machine running Agent UI. Set its
+            command below, then configure a DeepSeek key or a compatible
+            endpoint.
+          </p>
+        ) : (
+          <p className="text-[12px] text-muted-foreground">
+            Use a command that serves ACP over stdio. Install and authenticate
+            it on the machine running Agent UI.
+          </p>
+        )}
+
         {onRemove ? (
           <div className="flex items-center gap-2">
             <Input
@@ -230,23 +271,25 @@ function AcpAgentRow({
           </div>
         ) : null}
 
-        <Input
-          aria-label={`${agent.name || agentKey} command`}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder={
-            isDsh
-              ? "dsh — or an absolute path to it"
-              : isTiny
-                ? isWsl
-                  ? "tinyagent — or its Linux path, e.g. ~/.local/bin/tinyagent"
-                  : "tinyagent — or an absolute path to it"
-                : "Command, e.g. /usr/local/bin/my-agent"
-          }
-          className="h-8 font-mono text-[12px]"
-          value={agent.command}
-          onChange={(event) => patch({ command: event.target.value })}
-        />
+        <ProviderField label="Command">
+          <Input
+            aria-label={`${agent.name || agentKey} command`}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder={
+              isDsh
+                ? "dsh — or an absolute path to it"
+                : isTiny
+                  ? isWsl
+                    ? "tinyagent — or its Linux path, e.g. ~/.local/bin/tinyagent"
+                    : "tinyagent — or an absolute path to it"
+                  : "Command, e.g. /usr/local/bin/my-agent"
+            }
+            className="h-8 font-mono text-[12px]"
+            value={agent.command}
+            onChange={(event) => patch({ command: event.target.value })}
+          />
+        </ProviderField>
 
         <div className="flex flex-wrap items-center gap-2">
           {onRemove ? (
@@ -269,7 +312,9 @@ function AcpAgentRow({
           ) : null}
           <Select
             value={agent.runtime}
-            onValueChange={(runtime) => patch({ runtime: runtime as AcpRuntime })}
+            onValueChange={(runtime) =>
+              patch({ runtime: runtime as AcpRuntime })
+            }
           >
             <SelectTrigger
               size="sm"
@@ -297,103 +342,111 @@ function AcpAgentRow({
         </div>
         {isWsl ? (
           <p className="text-[11.5px] text-muted-foreground">
-            Started as <code>wsl.exe --cd &lt;folder&gt; -e sh -lc …</code>, so
-            your shell profile&apos;s PATH applies. Folders are passed as{" "}
-            <code>/mnt/c/…</code> and the paths it reports are mapped back.
-            Environment variables set here are forwarded through WSLENV. To reach
-            Ollama on Windows from WSL you may need WSL&apos;s mirrored
-            networking.
+            Install and sign in inside this WSL distribution. To reach Ollama on
+            Windows, use WSL mirrored networking.
           </p>
         ) : null}
 
         {!isDsh ? (
-          <Input
-            aria-label={`${agent.name || agentKey} arguments`}
-            spellCheck={false}
-            autoComplete="off"
-            placeholder={
-              isTiny
-                ? "Extra flags — --acp, -m, --reasoning-effort and --read-only are set per chat"
-                : "Arguments, space separated — e.g. --acp"
-            }
-            className="h-8 font-mono text-[12px]"
-            value={argsDraft ?? agent.args.join(" ")}
-            onChange={(event) => setArgsDraft(event.target.value)}
-            onBlur={commitArgs}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") event.currentTarget.blur()
-            }}
-          />
+          <ProviderField label="Arguments">
+            <Input
+              aria-label={`${agent.name || agentKey} arguments`}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder={
+                isTiny
+                  ? "Optional extra flags"
+                  : "Arguments, space separated — e.g. --acp"
+              }
+              className="h-8 font-mono text-[12px]"
+              value={argsDraft ?? agent.args.join(" ")}
+              onChange={(event) => setArgsDraft(event.target.value)}
+              onBlur={commitArgs}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") event.currentTarget.blur()
+              }}
+            />
+          </ProviderField>
         ) : null}
 
-        <Input
-          aria-label={`${agent.name || agentKey} workspace`}
-          spellCheck={false}
-          autoComplete="off"
-          placeholder="Workspace directory — leave empty to use the app's cwd"
-          className="h-8 font-mono text-[12px]"
-          value={agent.workspace}
-          onChange={(event) => patch({ workspace: event.target.value })}
-        />
+        <ProviderField label="Workspace">
+          <Input
+            aria-label={`${agent.name || agentKey} workspace`}
+            spellCheck={false}
+            autoComplete="off"
+            placeholder="Use the chat's folder"
+            className="h-8 font-mono text-[12px]"
+            value={agent.workspace}
+            onChange={(event) => patch({ workspace: event.target.value })}
+          />
+        </ProviderField>
 
         {isDsh ? (
           <>
-            <Input
-              aria-label="DeepSeek Harness base URL"
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="OpenAI-compatible base URL (e.g. http://localhost:11434) — empty uses DeepSeek's own API"
-              className="h-8 font-mono text-[12px]"
-              value={agent.dsh.baseUrl}
-              onChange={(event) =>
-                patch({ dsh: { ...agent.dsh, baseUrl: event.target.value } })
-              }
-            />
-            <Input
-              aria-label="DeepSeek API key"
-              type="password"
-              spellCheck={false}
-              autoComplete="off"
-              placeholder="DEEPSEEK_API_KEY — only needed for DeepSeek's own models"
-              className="h-8 font-mono text-[12px]"
-              value={agent.dsh.apiKey}
-              onChange={(event) =>
-                patch({ dsh: { ...agent.dsh, apiKey: event.target.value } })
-              }
-            />
+            <ProviderField label="Base URL">
+              <Input
+                aria-label="DeepSeek Harness base URL"
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="DeepSeek API (default)"
+                className="h-8 font-mono text-[12px]"
+                value={agent.dsh.baseUrl}
+                onChange={(event) =>
+                  patch({ dsh: { ...agent.dsh, baseUrl: event.target.value } })
+                }
+              />
+            </ProviderField>
+            <ProviderField label="API key">
+              <Input
+                aria-label="DeepSeek API key"
+                type="password"
+                spellCheck={false}
+                autoComplete="off"
+                placeholder="DEEPSEEK_API_KEY — only needed for DeepSeek's own models"
+                className="h-8 font-mono text-[12px]"
+                value={agent.dsh.apiKey}
+                onChange={(event) =>
+                  patch({ dsh: { ...agent.dsh, apiKey: event.target.value } })
+                }
+              />
+            </ProviderField>
           </>
         ) : null}
 
         <div className="flex flex-wrap items-center gap-2">
           {isTiny ? null : (
-          <Select
-            value={agent.permissionMode}
-            onValueChange={(mode) =>
-              patch({ permissionMode: mode as AcpPermissionMode })
-            }
-          >
-            <SelectTrigger
-              size="sm"
-              aria-label={`${agent.name || agentKey} permission policy`}
-              className="w-52 text-[12.5px]"
+            <Select
+              value={agent.permissionMode}
+              onValueChange={(mode) =>
+                patch({ permissionMode: mode as AcpPermissionMode })
+              }
             >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              {(Object.keys(PERMISSION_LABELS) as AcpPermissionMode[]).map((mode) => (
-                <SelectItem key={mode} value={mode}>
-                  {PERMISSION_LABELS[mode]}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+              <SelectTrigger
+                size="sm"
+                aria-label={`${agent.name || agentKey} permission policy`}
+                className="w-52 text-[12.5px]"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {(Object.keys(PERMISSION_LABELS) as AcpPermissionMode[]).map(
+                  (mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {PERMISSION_LABELS[mode]}
+                    </SelectItem>
+                  )
+                )}
+              </SelectContent>
+            </Select>
           )}
 
           {isDsh ? (
             <Select
               value={agent.dsh.sandbox}
               onValueChange={(sandbox) =>
-                patch({ dsh: { ...agent.dsh, sandbox: sandbox as DshSandboxMode } })
+                patch({
+                  dsh: { ...agent.dsh, sandbox: sandbox as DshSandboxMode },
+                })
               }
             >
               <SelectTrigger
@@ -404,38 +457,26 @@ function AcpAgentRow({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {(Object.keys(SANDBOX_LABELS) as DshSandboxMode[]).map((mode) => (
-                  <SelectItem key={mode} value={mode}>
-                    {SANDBOX_LABELS[mode]}
-                  </SelectItem>
-                ))}
+                {(Object.keys(SANDBOX_LABELS) as DshSandboxMode[]).map(
+                  (mode) => (
+                    <SelectItem key={mode} value={mode}>
+                      {SANDBOX_LABELS[mode]}
+                    </SelectItem>
+                  )
+                )}
               </SelectContent>
             </Select>
           ) : null}
         </div>
 
-        {isTiny ? (
-          <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
-            <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-            <span>
-              tinyagent never asks: it reads, edits and runs commands in the
-              chat&apos;s folder unless the chat is set to Read only. Use{" "}
-              <code>--sandbox</code> in the flags above to confine its shell.
-            </span>
-          </p>
-        ) : (
         <p className="flex items-start gap-2 text-[11.5px] text-muted-foreground">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
-          {PERMISSION_HINTS[agent.permissionMode]} The agent runs shell commands
-          and edits files in the workspace directory
-          {isDsh ? " — and loads a `.env` it finds there" : ""}.
-          {agent.permissionMode === "ask"
-            ? " A chat's own permission picker still narrows the sandbox, but never turns this back into an automatic approval."
-            : " Permission requests are answered by this policy, never by a prompt."}
+          {isTiny
+            ? "Can edit files and run commands without approval. Select Read only in the chat to block writes."
+            : PERMISSION_HINTS[agent.permissionMode]}
         </p>
-        )}
       </div>
-    </SettingsRow>
+    </ProviderRow>
   )
 }
 

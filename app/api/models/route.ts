@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server"
 
 import { getProvider, resolveActiveProviderId } from "@/lib/providers/registry"
+import { forgetAcpModels } from "@/lib/providers/acp"
+import { forgetCodexModels } from "@/lib/providers/codex"
 import { ensureOllama } from "@/lib/providers/ollama-autostart"
 import { readSettings } from "@/lib/settings/server"
 
@@ -16,6 +18,10 @@ export const dynamic = "force-dynamic"
 export async function GET(req: Request) {
   const requested = new URL(req.url).searchParams.get("provider")?.trim()
   const providerId = requested || (await resolveActiveProviderId())
+  if (new URL(req.url).searchParams.get("refresh") === "1") {
+    if (providerId === "codex") forgetCodexModels()
+    if (providerId.startsWith("acp:")) forgetAcpModels(providerId)
+  }
   if (providerId === "ollama") {
     const settings = await readSettings()
     if (settings.providers.ollama.enabled) {

@@ -176,11 +176,12 @@ export type ModelProviderProbeResult = {
  * API key never has to round-trip through the browser. Always resolves —
  * `ok: false` carries the reason rather than a rejected promise.
  */
-export function probeModelProvider(slug: string): Promise<ModelProviderProbeResult> {
+export function probeModelProvider(slug: string, signal?: AbortSignal): Promise<ModelProviderProbeResult> {
   return fetch("/api/model-providers/probe", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ slug }),
+    signal,
   }).then(json<ModelProviderProbeResult>)
 }
 
