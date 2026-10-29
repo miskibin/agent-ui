@@ -285,6 +285,13 @@
   contain-intrinsic-size: auto 80px;
 }
 
+/* Keep the open chat distinct from a hovered row, including when the custom
+   card gives every title the same font weight. Inset paint preserves sizing. */
+[data-slot="sidebar-item-button"][data-active="true"] {
+  background: color-mix(in oklab, var(--sidebar-accent) 94%, var(--sidebar-foreground));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--sidebar-foreground) 16%, transparent);
+}
+
 /* ---------------------------------------------------------------------------
  * Desktop chrome, reserved before hydration. `data-desktop` is stamped by the
  * pre-paint guard from a localStorage flag the header wrote on a previous run,
