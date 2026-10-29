@@ -15,8 +15,7 @@ export type SubagentCardData = {
   run?: SubagentRunSummary
 }
 
-export const CARD_PATTERN = /\uE000subagent:([^\uE001]+)\uE001/g
-const viewCache = new WeakMap<StoredMessage, { signature: string; value: StoredMessage }>()
+const viewCache = new WeakMap<StoredMessage, StoredMessage>()
 
 function object(text?: string): Record<string, unknown> {
   try { return JSON.parse(text || "{}") ?? {} } catch { return {} }
@@ -85,26 +84,22 @@ export function subagentCards(messages: StoredMessage[], runs: Record<string, Su
   return { cards, hidden }
 }
 
-/** View-only markers use MessageMarkdown's public pattern renderer. Never stored or sent. */
-export function withSubagentCards(message: StoredMessage, cards: Map<string, SubagentCardData>, hidden: Map<string, Set<string>>, appendCards = true): StoredMessage {
-  const ids = hidden.get(message.id)
-  const owned = [...cards.keys()].filter((id) => JSON.parse(decodeURIComponent(id))[0] === message.id)
-  if (!owned.length) return message
-  const signature = JSON.stringify([owned, [...(ids ?? [])], appendCards])
+/** Only active delegations belong in the live transcript, never in answer text. */
+export function activeSubagentCards(cards: Map<string, SubagentCardData>) {
+  return [...cards.values()].filter((card) => card.status === "running" || card.status === "queued")
+}
+
+/** Hide internal transport snapshots; retain real tool calls in folded history. */
+export function withoutSubagentSnapshots(message: StoredMessage): StoredMessage {
+  if (!message.tools?.some((tool) => tool.name === NATIVE_AGENT_TOOL) &&
+      !message.parts?.some((part) => part.type === "tool" && part.tool.name === NATIVE_AGENT_TOOL)) return message
   const cached = viewCache.get(message)
-  if (cached?.signature === signature) return cached.value
-  const parts = message.parts ?? [
-    ...(message.tools ?? []).map((tool) => ({ type: "tool" as const, id: tool.id, tool })),
-    { type: "text" as const, id: `${message.id}:text`, text: message.content },
-  ]
+  if (cached) return cached
   const value: StoredMessage = {
     ...message,
-    tools: message.tools?.filter((tool) => !ids?.has(tool.id)),
-    parts: [
-      ...parts.filter((part) => part.type !== "tool" || !ids?.has(part.tool.id)),
-      ...(appendCards ? owned.map((id) => ({ type: "text" as const, id: `card:${id}`, text: `\uE000subagent:${id}\uE001` })) : []),
-    ],
+    tools: message.tools?.filter((tool) => tool.name !== NATIVE_AGENT_TOOL),
+    parts: message.parts?.filter((part) => part.type !== "tool" || part.tool.name !== NATIVE_AGENT_TOOL),
   }
-  viewCache.set(message, { signature, value })
+  viewCache.set(message, value)
   return value
 }
