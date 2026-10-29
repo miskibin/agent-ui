@@ -113,8 +113,8 @@ export function fetchFolderListing(path: string): Promise<FolderListing> {
 }
 
 /** Does this path exist, is it a directory, and what git branches does it have. */
-export function fetchFolderInfo(path: string): Promise<FolderInfo> {
-  return fetch(`/api/fs/validate?path=${encodeURIComponent(path)}`, {
+export function fetchFolderInfo(path: string, includeGit = true): Promise<FolderInfo> {
+  return fetch(`/api/fs/validate?path=${encodeURIComponent(path)}${includeGit ? "" : "&git=0"}`, {
     cache: "no-store",
   }).then(json<FolderInfo>)
 }
@@ -159,8 +159,8 @@ export type ModelsResponse = {
   error?: string
 }
 
-export function fetchModels(providerId: string): Promise<ModelsResponse> {
-  return fetch(`/api/models?provider=${encodeURIComponent(providerId)}`, {
+export function fetchModels(providerId: string, refresh = false): Promise<ModelsResponse> {
+  return fetch(`/api/models?provider=${encodeURIComponent(providerId)}${refresh ? "&refresh=1" : ""}`, {
     cache: "no-store",
   }).then(json<ModelsResponse>)
 }

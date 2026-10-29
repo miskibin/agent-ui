@@ -137,7 +137,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   onDeleteMany: (ids: string[]) => void
   onReorder: (updater: (prev: SessionMeta[]) => SessionMeta[]) => void
   getMenuActions: (item: ChatSidebarItemData) => SidebarItemMenuAction[]
-  /** Pin and delete on the row, in the slot the timestamp holds at rest. */
+  /** Explicitly empty to keep row actions in the context menu. */
   renderActions: SidebarItemRenderActions
   /** Persisted panel width, hydrated before the first paint; 0 = never set. */
   sidebarWidth: number
@@ -156,11 +156,11 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
       ? item.subtitle
       : session.gitBranch || session.worktree?.branch || "\u00a0"
     return (
-      <span data-slot="app-sidebar-chat-card" className="flex min-w-0 flex-1 flex-col gap-0.5 py-0.5">
+      <span data-slot="app-sidebar-chat-card" className="flex min-w-0 flex-1 flex-col gap-1 py-1.5">
         <span className="flex min-w-0 items-center gap-1.5">
           {item.leading}
           <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">{item.title}</span>
-          <span className="shrink-0 text-[10px] text-muted-foreground group-hover/sidebar-item:opacity-0 group-focus-within/sidebar-item:opacity-0">{item.meta}</span>
+          <span className="shrink-0 text-[10px] text-muted-foreground">{item.meta}</span>
         </span>
         <span className="flex min-w-0 items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
           {session.cwd ? <FolderLogoMark cwd={session.cwd} /> : null}
@@ -359,7 +359,7 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
         // No rules under the header or above the footer (`dividers` defaults
         // off): the sections are told apart by their own header rules and the
         // space between them, which is what this gap is for.
-        classNames={{ content: "flex flex-col gap-1 pt-2" }}
+        classNames={{ content: "flex flex-col gap-2 pt-3" }}
         brand={
           <span className="truncate px-1 text-[15px] font-semibold tracking-tight text-foreground">
             Chats

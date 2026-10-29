@@ -62,9 +62,18 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   is in the way when nothing is running, and a stray press cannot kill an agent
   mid-edit.
 - **A sidebar you can size.** Drag its edge (or resize it from the keyboard),
-  group chats by working folder, pin and delete from the row itself.
+  see each chat’s project and branch, and manage pinning, snoozing, and deletion
+  from its context menu.
 - **Local persistence.** Chats, settings, provider sessions, and optional memory
   live under `~/.agent-ui`.
+- **Quick new chats.** Choose a recent project with its icon, enter a folder path,
+  or start with **No folder**. The dialog paints from local state; selecting a
+  folder checks that it exists without waiting for git branch discovery.
+- **Models and reasoning.** Switching harnesses immediately shows that harness’s
+  catalog (or its loading state). The composer card brings model selection,
+  reasoning effort, and model refresh together. Loaded catalogs are reused.
+- **Compact workspace.** Below 1280 px the project card opens as a short folder
+  and changes bar; expand it for branch and editor actions.
 - **Visible usage.** See tokens and estimated cost per chat, model, and working
   folder over 7 days, 30 days, or all time — cache reads and writes counted at
   their own rates, and unpriced turns reported rather than folded in.
@@ -314,6 +323,14 @@ Together they take the staged payload from 108 MB to 59 MB. `du -sh
 .next/standalone .next/static` after a build is the number to watch.
 
 ## Screenshots
+
+| New chat folders | Models and reasoning |
+| --- | --- |
+| ![Recent projects with icons and No folder](.github/screenshots/new-chat-folders.png) | ![Model selection, reasoning effort slider and refresh](.github/screenshots/composer-model-card.png) |
+
+| Compact workspace |
+| --- |
+| ![Workspace collapsed to a folder and changes bar](.github/screenshots/workspace-compact.png) |
 
 | Sidebar shelves | Everything the chat changed |
 | --- | --- |

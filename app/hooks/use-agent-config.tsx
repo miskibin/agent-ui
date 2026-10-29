@@ -15,7 +15,6 @@ import { harnessBrand, modelBrand } from "@/lib/model-brand"
 import { joinModelId } from "@/lib/model-providers/ids"
 import type {
   PermissionMode,
-  ProviderCapabilities,
   ProviderInfo,
 } from "@/lib/providers/types"
 import type { AppSettings } from "@/lib/settings/schema"
@@ -28,6 +27,10 @@ import type { ChatRefs } from "./use-chat-refs"
  * What the composer shows when the harness reports no default of its own.
  * Display only — see `effectivePermission`.
  */
+const EMPTY_MODELS: ModelOption[] = []
+const EMPTY_GROUPS: ModelPickerGroup[] = []
+const EMPTY_IDS: string[] = []
+
 const FALLBACK_PERMISSION_MODE: PermissionMode = "full"
 
 export type AgentConfig = ReturnType<typeof useAgentConfig>
@@ -50,20 +53,18 @@ export function useAgentConfig({
   const [settings, setSettings] = React.useState<AppSettings | null>(null)
   const [providers, setProviders] = React.useState<ProviderInfo[]>([])
   const [providerId, setProviderId] = React.useState("")
-  const [models, setModels] = React.useState<ModelOption[]>([])
-  /**
-   * Picker sections for the active provider, in order — empty for a provider
-   * that serves models from a single source.
-   */
-  const [modelGroups, setModelGroups] = React.useState<
-    Array<{ id: string; label: string }>
-  >([])
-  const [capabilities, setCapabilities] =
-    React.useState<ProviderCapabilities | null>(null)
-  /** Model ids the active provider says take image input — empty until it says otherwise. */
-  const [visionModels, setVisionModels] = React.useState<string[]>([])
-  /** Models the effort control reaches; null = every model the provider lists. */
-  const [effortModels, setEffortModels] = React.useState<string[] | null>(null)
+  // Keep catalogs with their owner: a provider switch must never render the
+  // previous provider's models or capabilities, even for the first paint.
+  const catalogCache = React.useRef(new Map<string, api.ModelsResponse>())
+  const [catalogs, setCatalogs] = React.useState<Record<string, api.ModelsResponse>>({})
+  const [catalogRevision, setCatalogRevision] = React.useState(0)
+  const [loadingProvider, setLoadingProvider] = React.useState("")
+  const catalog = catalogs[providerId]
+  const models = catalog?.models ?? EMPTY_MODELS
+  const modelGroups = catalog?.groups ?? EMPTY_GROUPS
+  const capabilities = catalog?.capabilities ?? null
+  const visionModels = catalog?.visionModels ?? EMPTY_IDS
+  const effortModels = catalog?.effortModels ?? null
   const [model, setModel] = React.useState("")
   const [effort, setEffort] = React.useState("")
   /**
@@ -79,7 +80,7 @@ export function useAgentConfig({
    * pick may rewrite the chat's stored model — the same resolution running for
    * a chat that was merely opened must leave the chat's own agent alone.
    */
-  const providerPickRef = React.useRef("")
+  const providerPickRef = React.useRef<{ id: string; sessionId: string } | null>(null)
 
   /** The modes the active harness can enforce; empty = it offers no choice. */
   const permissionModes =
@@ -115,6 +116,7 @@ export function useAgentConfig({
    */
   const adoptAgent = React.useCallback(
     (session: SessionMeta | undefined, list: ProviderInfo[], fallback = "") => {
+      providerPickRef.current = null
       const stored = session?.providerId ?? ""
       const usable = list.find((item) => item.id === stored)?.available
         ? stored
@@ -153,11 +155,13 @@ export function useAgentConfig({
   const chooseProvider = React.useCallback(
     (id: string) => {
       setProviderId(id)
-      // The model this provider resolves to is persisted once its list lands.
-      providerPickRef.current = id
-      persistAgent({ providerId: id })
+      setModel(catalogCache.current.get(id)?.models[0]?.id ?? "")
+      // Drop the old provider/model pair together; a cold catalog resolves
+      // the model below, and a warm one is already available at the click.
+      providerPickRef.current = { id, sessionId: activeIdRef.current }
+      persistAgent({ providerId: id, model: catalogCache.current.get(id)?.models[0]?.id ?? "" })
     },
-    [persistAgent]
+    [activeIdRef, persistAgent]
   )
 
   const configureProvider = React.useCallback(
@@ -170,7 +174,7 @@ export function useAgentConfig({
         const next = result.providers.find((provider) => provider.id === id)
         if (next?.available) {
           setProviderId(id)
-          providerPickRef.current = id
+          providerPickRef.current = { id, sessionId: activeIdRef.current }
           persistAgent({ providerId: id })
           toast.success(`${next.name} is ready.`)
           return
@@ -181,7 +185,7 @@ export function useAgentConfig({
         toast.error(errorMessage(err, "Could not configure the harness"))
       }
     },
-    [persistAgent]
+    [activeIdRef, persistAgent]
   )
 
   const chooseModel = React.useCallback(
@@ -232,16 +236,19 @@ export function useAgentConfig({
   React.useEffect(() => {
     if (!providerId) return
     let cancelled = false
-    api
-      .fetchModels(providerId)
+    const sessionId = activeIdRef.current
+    queueMicrotask(() => { if (!cancelled) setLoadingProvider(providerId) })
+    const cached = catalogCache.current.get(providerId)
+    const request = cached
+      ? Promise.resolve(cached)
+      : api.fetchModels(providerId, catalogRevision > 0)
+    request
       .then((data) => {
         if (cancelled) return
         const groups = data.groups ?? []
-        setModels(data.models)
-        setModelGroups(groups)
-        setCapabilities(data.capabilities ?? null)
-        setVisionModels(data.visionModels ?? [])
-        setEffortModels(data.effortModels ?? null)
+        catalogCache.current.set(providerId, data)
+        setCatalogs((previous) => ({ ...previous, [providerId]: data }))
+        setLoadingProvider("")
         // A grouped catalog hands out composite `<source>/<model>` ids. A pick
         // stored before that — on the chat, or as the settings default — names
         // a bare Ollama model, so try its composite form before deciding the
@@ -266,8 +273,8 @@ export function useAgentConfig({
         setModel(next)
         // Only a provider the user just picked writes back: opening a chat
         // resolves models too, and that must not overwrite its stored agent.
-        if (providerPickRef.current === providerId) {
-          providerPickRef.current = ""
+        if (providerPickRef.current?.id === providerId && providerPickRef.current.sessionId === sessionId && activeIdRef.current === sessionId) {
+          providerPickRef.current = null
           if (next) persistAgent({ model: next })
         }
         // An unavailable backend is a state, not a failure: say it once, in
@@ -275,12 +282,20 @@ export function useAgentConfig({
         if (data.error) toast.warning(data.error, { id: `models-${providerId}` })
       })
       .catch((err: unknown) => {
-        if (!cancelled) toast.error(errorMessage(err, "Could not load models"))
+        if (!cancelled) {
+          setLoadingProvider("")
+          setCatalogs((previous) => ({ ...previous, [providerId]: { providerId, models: [], error: "Could not load models" } }))
+          toast.error(errorMessage(err, "Could not load models"))
+        }
       })
     return () => {
       cancelled = true
     }
-  }, [providerId, defaultModel, persistAgent, modelRef])
+  }, [providerId, defaultModel, persistAgent, modelRef, activeIdRef, catalogRevision])
+  const refreshModels = React.useCallback(() => {
+    catalogCache.current.delete(providerId)
+    setCatalogRevision((n) => n + 1)
+  }, [providerId])
 
   const providerName = React.useCallback(
     (id: string) => providers.find((item) => item.id === id)?.name ?? id,
@@ -342,6 +357,9 @@ export function useAgentConfig({
    * `hydrate` it leaves the chat's chosen agent alone.
    */
   const refresh = React.useCallback(() => {
+    catalogCache.current.clear()
+    setCatalogs({})
+    setCatalogRevision((n) => n + 1)
     void api
       .fetchSettings()
       .then(setSettings)
@@ -377,6 +395,8 @@ export function useAgentConfig({
     hydrate,
     refresh,
     providerName,
+    refreshModels,
+    modelsLoading: !catalog || loadingProvider === providerId,
     showEfforts,
     activeProviderName,
     pickerGroups,

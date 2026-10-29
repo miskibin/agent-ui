@@ -9,11 +9,8 @@ import {
   ExternalLink,
   FolderInput,
   FolderOpen,
-  Pin,
-  PinOff,
   Sparkles,
   SquareTerminal,
-  Trash2,
 } from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
@@ -28,8 +25,6 @@ import type { GenerationStage } from "@/components/ui/generation-status"
 import { RelativeTime } from "@/components/live-time"
 import { HarnessLogo } from "@/components/provider-logo"
 import {
-  SIDEBAR_ROW_ACTION,
-  SnoozeAction,
   WokePill,
 } from "@/components/sidebar-sections"
 import * as api from "@/lib/api-client"
@@ -98,8 +93,6 @@ export function useSidebarItems({
   threads = EMPTY_THREADS,
   closedSections = EMPTY_SECTIONS,
   regenerateTitle,
-  onTogglePin,
-  onDelete,
   onSettle,
   onSnooze,
   onWake,
@@ -121,8 +114,6 @@ export function useSidebarItems({
   /** Folded sections, including the two shelf keys — see `shelfOpenKey`. */
   closedSections?: Record<string, boolean>
   regenerateTitle: (id: string) => void
-  onTogglePin: (id: string, pinned: boolean) => void
-  onDelete: (id: string) => void
   /** Lifecycle mutations — see `use-chat-actions`. Absent = control hidden. */
   onSettle?: (id: string, settled: boolean) => void
   onSnooze?: (id: string, until: number) => void
@@ -132,6 +123,7 @@ export function useSidebarItems({
   onAdopt?: (id: string) => void
 }) {
   const { orderedIdsRef, sessionsRef } = refs
+  const [snoozeTarget, setSnoozeTarget] = React.useState<SessionMeta | null>(null)
 
   /**
    * The instant the sidebar's split is taken at.
@@ -375,78 +367,8 @@ export function useSidebarItems({
     ].map((item) => item.id)
   }, [activeItems, agentsShelf.items, orderedIdsRef, pinnedItems, settledShelf.items, snoozedShelf.items])
 
-  /**
-   * The row's own controls, in the slot the timestamp holds at rest: put the
-   * chat down, file it away, pin it, delete it. The same verbs the context
-   * menu carries — this is the version you can reach without a right-click.
-   *
-   * Every one of them reads the chat back through the sidebar mirror rather
-   * than closing over it, so the callback keeps one identity for the life of
-   * the page and the memoized rows are never rebuilt for it.
-   */
-  const sessionRowActions = React.useCallback<SidebarItemRenderActions>(
-    (item) => {
-      const session = sessionsRef.current.find((entry) => entry.id === item.id)
-      const pinned = !!session?.pinned
-      const snoozed = !!session && isSnoozed(session, Date.now())
-      const settled = !!session && isSettled(session)
-      return (
-        <>
-          {snoozed
-            ? onWake && (
-                <button
-                  type="button"
-                  className={SIDEBAR_ROW_ACTION}
-                  title="Wake chat"
-                  aria-label={`Wake ${item.title}`}
-                  onClick={() => onWake(item.id)}
-                >
-                  <AlarmClockOff />
-                </button>
-              )
-            : onSnooze && (
-                <SnoozeAction
-                  title={item.title}
-                  onSnooze={(until) => onSnooze(item.id, until)}
-                />
-              )}
-          {onSettle ? (
-            <button
-              type="button"
-              className={SIDEBAR_ROW_ACTION}
-              title={settled ? "Move back to active" : "Settle chat"}
-              aria-label={
-                settled ? `Reopen ${item.title}` : `Settle ${item.title}`
-              }
-              onClick={() => onSettle(item.id, !settled)}
-            >
-              {settled ? <ArchiveRestore /> : <Archive />}
-            </button>
-          ) : null}
-          <button
-            type="button"
-            className={SIDEBAR_ROW_ACTION}
-            title={pinned ? "Unpin chat" : "Pin chat"}
-            aria-label={pinned ? `Unpin ${item.title}` : `Pin ${item.title}`}
-            onClick={() => onTogglePin(item.id, !pinned)}
-          >
-            {pinned ? <PinOff /> : <Pin />}
-          </button>
-          <button
-            type="button"
-            className={SIDEBAR_ROW_ACTION}
-            title="Delete chat"
-            aria-label={`Delete ${item.title}`}
-            // No confirmation: the delete toast offers "Restore" instead.
-            onClick={() => onDelete(item.id)}
-          >
-            <Trash2 />
-          </button>
-        </>
-      )
-    },
-    [onDelete, onSettle, onSnooze, onTogglePin, onWake, sessionsRef]
-  )
+  /** Keep row controls in the context menu, including the registry defaults. */
+  const sessionRowActions = React.useCallback<SidebarItemRenderActions>(() => null, [])
 
   /**
    * Extra entries on a chat row's right-click menu. Built per row by the
@@ -473,6 +395,9 @@ export function useSidebarItems({
           onSelect: () => onAdopt(item.id),
           separatorBefore: true,
         })
+      }
+      if (onSnooze && session && !isSnoozed(session, Date.now())) {
+        actions.push({ id: "snooze", label: "Snooze…", icon: <AlarmClockOff className="size-3.5" />, onSelect: () => setSnoozeTarget(session), separatorBefore: true })
       }
       const settled = !!session && isSettled(session)
       if (onSettle) {
@@ -528,7 +453,7 @@ export function useSidebarItems({
       }
       return actions
     },
-    [onAdopt, onSettle, onWake, regenerateTitle, sessionsRef]
+    [onAdopt, onSettle, onSnooze, onWake, regenerateTitle, sessionsRef]
   )
 
   return {
@@ -541,5 +466,7 @@ export function useSidebarItems({
     showMoreOnShelf,
     sessionMenuActions,
     sessionRowActions,
+    snoozeTarget,
+    setSnoozeTarget,
   }
 }

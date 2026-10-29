@@ -29,6 +29,9 @@ import {
   useDraftStore,
 } from "@/components/context-usage"
 import { DiffWorkers } from "@/components/diff-workers"
+import { SnoozeChatDialog } from "@/components/snooze-chat-dialog"
+import { NewChatDialog } from "@/components/new-chat-dialog"
+import { ComposerModelPicker } from "@/components/composer-model-picker"
 import { FolderPicker } from "@/components/folder-picker"
 import { HandoffNotice } from "@/components/handoff-notice"
 import { MessageActions } from "@/components/message-actions"
@@ -47,7 +50,6 @@ import { StashMenu } from "@/components/stash-menu"
 import { AgentMessageList } from "@/components/agent-message-list"
 import {
   DEFAULT_MODEL_EFFORTS,
-  ModelPicker,
 } from "@/components/ui/model-picker"
 import { PromptSuggestions } from "@/components/ui/prompt-suggestions"
 import {
@@ -336,7 +338,7 @@ export default function ChatPage() {
     setFolder,
     removeSession,
     removeSessions,
-    handleNewChat,
+    handleNewChat: createNewChat,
     settleChat,
     snoozeChat,
     wakeChat,
@@ -434,6 +436,11 @@ export default function ChatPage() {
 
   /** The sidebar, ⌘K and `/settings`, none of which name a section. */
   const pushSettings = React.useCallback(() => openSettings(), [openSettings])
+  const [newChatOpen, setNewChatOpen] = React.useState(false)
+  const handleNewChat = React.useCallback(async () => {
+    closeNav()
+    setNewChatOpen(true)
+  }, [closeNav, setNewChatOpen])
   /** The void wrapper the sidebar, the palette and ⌘N all share. */
   const startNewChat = React.useCallback(
     () => void handleNewChat(),
@@ -588,6 +595,8 @@ export default function ChatPage() {
     activeItems,
     sessionMenuActions,
     sessionRowActions,
+    snoozeTarget,
+    setSnoozeTarget,
     agentsShelf,
     snoozedShelf,
     settledShelf,
@@ -602,8 +611,6 @@ export default function ChatPage() {
     activeId,
     providerName,
     regenerateTitle,
-    onTogglePin: togglePin,
-    onDelete: removeSession,
     onSettle: settleChat,
     onSnooze: snoozeChat,
     onWake: wakeChat,
@@ -808,7 +815,7 @@ export default function ChatPage() {
               sessions={sessionHints}
               onConfigure={configureProvider}
             />
-            <ModelPicker
+            <ComposerModelPicker
               value={model}
               onChange={chooseModel}
               options={pickerModels}
@@ -817,7 +824,8 @@ export default function ChatPage() {
               efforts={showEfforts ? DEFAULT_MODEL_EFFORTS : false}
               effort={effort}
               onEffortChange={setEffort}
-              side="top"
+              loading={config.modelsLoading}
+              onRefresh={config.refreshModels}
               className="min-w-0"
             />
             {permissionModes.length > 0 && effectivePermission ? (
@@ -899,6 +907,8 @@ export default function ChatPage() {
       sessionHints,
       setEffort,
       showEfforts,
+      config.modelsLoading,
+      config.refreshModels,
       skillCatalog.skills,
       skillCatalog.slashCommands,
       stash,
@@ -1025,7 +1035,7 @@ export default function ChatPage() {
               id="workspace-panel"
               aria-label="Workspace tools"
               data-slot="workspace-panel"
-              className="absolute right-3 top-14 z-30 max-h-[calc(100%-4rem)] w-[min(18rem,calc(100%-1.5rem))] overflow-y-auto rounded-2xl bg-background shadow-lg"
+              className="absolute right-3 top-14 z-30 max-h-[calc(100%-4rem)] w-[min(18rem,calc(100%-1.5rem))] max-xl:w-[min(15rem,calc(100%-1.5rem))] overflow-y-auto rounded-2xl bg-background shadow-lg"
               onKeyDown={(event) => {
                 if (event.key === "Escape") workspacePanel.close()
               }}
@@ -1423,6 +1433,14 @@ export default function ChatPage() {
 
       {/* Mounted only while open, so the scan behind it starts with the
           dialog and nothing about it is on the first paint. */}
+      {snoozeTarget ? <SnoozeChatDialog title={snoozeTarget.title} onClose={() => setSnoozeTarget(null)} onSnooze={(until) => snoozeChat(snoozeTarget.id, until)} /> : null}
+      {newChatOpen ? <NewChatDialog
+        open={newChatOpen}
+        onOpenChange={setNewChatOpen}
+        sessions={sessions}
+        recents={settings?.recentFolders ?? []}
+        onSelect={createNewChat}
+      /> : null}
       {importOpen ? (
         <ImportDialog
           open={importOpen}

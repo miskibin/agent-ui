@@ -1,6 +1,6 @@
 "use client"
 
-import { Code, FileDiff, FolderOpen, GitBranch } from "lucide-react"
+import { ChevronDown, Code, FileDiff, FolderOpen, GitBranch } from "lucide-react"
 import * as React from "react"
 import { toast } from "sonner"
 import * as api from "@/lib/api-client"
@@ -30,6 +30,7 @@ export function WorkspaceDock({
   onChanges: () => void
   children: React.ReactNode
 }) {
+  const [expanded, setExpanded] = React.useState(false)
   const status = useFolderStatus(cwd || "", sessionId)
   React.useEffect(() => {
     if (!cwd || !sessionId || !running) return
@@ -62,6 +63,13 @@ export function WorkspaceDock({
       aria-label="Workspace"
       className="overflow-hidden rounded-2xl border border-sidebar-border bg-sidebar-accent/40 text-sidebar-foreground shadow-sm"
     >
+      <div data-slot="workspace-compact" className="flex items-center gap-1 p-1.5 xl:hidden">
+        <button type="button" aria-label="Expand workspace details" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)} className={row}>
+          <FolderOpen className="size-4 shrink-0" /><span className="truncate">{cwd ? folderName(cwd) : "Workspace"}</span><ChevronDown className="ml-auto size-3 shrink-0" />
+        </button>
+        <button type="button" aria-label="Review workspace changes" onClick={onChanges} className="flex shrink-0 items-center gap-1 rounded-md px-2 py-2 text-[11px] hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"><FileDiff className="size-3.5" />{status?.dirty ?? files.length}</button>
+      </div>
+      <div className={expanded ? "block" : "hidden xl:block"}>
       <div className="p-1.5">
         <button
           type="button"
@@ -109,6 +117,7 @@ export function WorkspaceDock({
             </span>
           </span>
         </button>
+      </div>
       </div>
       <div className="empty:hidden [&:has(>details)]:border-t [&:has(>details)]:border-sidebar-border">
         {children}
