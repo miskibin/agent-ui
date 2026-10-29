@@ -29,8 +29,9 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   a card with a Build button that starts the work. Unanswered questions stay above the
   composer while you scroll; submitting or skipping restores their summary in
   the transcript.
-- **One activity disclosure.** Thinking and tool calls share a chronological group,
-  collapsed by default while working and after completion. Pending questions stay visible.
+- **Live activity groups.** Thinking and tools between assistant updates share a
+  collapsed block whose header follows the current action. Commentary stays visible.
+  When the turn finishes, its process folds into one Worked row. Pending questions stay reachable.
 - **Generative charts.** Agents can return line, area, bar and donut charts in
   `ui` fences, with theme colors, tooltips and accessible data tables
   ([preview](.github/screenshots/generative-charts.png)).

@@ -125,7 +125,7 @@ test("a running turn's permission request is answered above the composer", async
   assert.equal(await allow.isDisabled(), false)
 
   // The composer keeps the request reachable while activity stays collapsed.
-  const activity = page.locator('[data-slot="message-process-trigger"]').last()
+  const activity = page.locator('[data-slot="message-activity-trigger"]').last()
   assert.equal(await activity.getAttribute("aria-expanded"), "false")
   await activity.click()
   // Expanding history says what it is waiting for, without a second form.

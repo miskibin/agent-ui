@@ -122,7 +122,7 @@ test("a streamed answer and tool rows fit a narrow phone", async () => {
   const composer = page.locator('[data-slot="chat-input-textarea"]')
   await composer.fill("stream a markdown answer with a tool call")
   await page.locator('[data-slot="chat-input-send"]').click()
-  const activity = page.locator('[data-slot="message-process-trigger"]').last()
+  const activity = page.locator('[data-slot="message-activity-trigger"]').filter({ hasText: /Reading|Read file|Searching|Searched|Running|Ran|Used/ }).last()
   await activity.waitFor({ timeout: UI_TIMEOUT })
   assert.equal(await activity.getAttribute("aria-expanded"), "false")
   await activity.click()

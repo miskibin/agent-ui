@@ -60,16 +60,16 @@ describe("a chat with the mock agent", () => {
       .locator('[data-slot="message"]', { hasText: "stream a markdown answer" })
       .first()
       .waitFor({ timeout: UI_TIMEOUT })
-    const liveActivity = page.locator('[data-slot="message-process-trigger"]').last()
-    await liveActivity.waitFor({ timeout: UI_TIMEOUT })
-    assert.equal(await liveActivity.getAttribute("aria-expanded"), "false")
-    await liveActivity.click()
-    // …the activity text is available after expanding it…
+    // …the assistant commentary stays visible between activity groups…
     await page
       .getByText("Let me look at how a message is assembled", { exact: false })
       .first()
       .waitFor({ timeout: UI_TIMEOUT })
-    // …and the tools it ran are rendered as rows, not as text.
+    // …and the tools it ran are inside their own collapsed group.
+    const liveActivity = page.locator('[data-slot="message-activity-trigger"]').filter({ hasText: /Reading|Read file|Searching|Searched|Running|Ran|Used/ }).last()
+    await liveActivity.waitFor({ timeout: UI_TIMEOUT })
+    assert.equal(await liveActivity.getAttribute("aria-expanded"), "false")
+    await liveActivity.click()
     await page
       .locator('[data-slot="message-tool-call"]')
       .first()
