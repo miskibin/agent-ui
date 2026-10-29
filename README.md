@@ -27,6 +27,11 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   a card with a Build button that starts the work. Unanswered questions stay above the
   composer while you scroll; submitting or skipping restores their summary in
   the transcript.
+- **One activity disclosure.** Thinking and tool calls share a chronological group,
+  collapsible while working and folded when finished. Pending questions stay visible.
+- **Generative charts.** Agents can return line, area, bar and donut charts in
+  `ui` fences, with theme colors, tooltips and accessible data tables
+  ([preview](.github/screenshots/generative-charts.png)).
 - **Workspace-aware files.** Give each chat a folder, inspect changed files and
   diffs beside the transcript, then open them in your editor or terminal. The
   header opens a tree of everything the chat changed, and a lazy browser for the

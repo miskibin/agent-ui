@@ -27,7 +27,7 @@ export function AgentBreadcrumbs({ session, sessions, cards, selected, onNavigat
   const siblings = sessions.filter((item) => item.parentId === (session.parentId || session.id))
   const button = "max-w-48 truncate rounded px-1 py-1 text-left hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
   return (
-    <nav aria-label="Agent navigation" data-slot="agent-breadcrumbs" className="flex min-w-0 flex-1 items-center gap-1 text-[12px] text-muted-foreground">
+    <nav aria-label="Agent navigation" data-slot="agent-breadcrumbs" data-tauri-drag-region className="relative z-10 flex min-w-0 flex-1 self-stretch items-center gap-1 text-[12px] text-muted-foreground">
       <MessageSquare className="size-3.5 shrink-0" />
       {session.cwd ? <><button type="button" className={`${button} hidden shrink-0 sm:block`} onClick={() => onNavigate(chain[0].id)}>{folderName(session.cwd)}</button><span aria-hidden className="hidden sm:block">/</span></> : null}
       {chain.map((item, index) => <span key={item.id} className="flex min-w-0 items-center gap-1">

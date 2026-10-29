@@ -1017,7 +1017,7 @@ export default function ChatPage() {
           The header overlays this pane (frost + fade) so the conversation
           can scroll through it. It still spans the full width right of the
           sidebar — it is the desktop window's drag chrome and must never be
-          covered or squeezed by the file panel. Side panels pad `pt-10` so
+          covered or squeezed by the file panel. Side panels pad `pt-12` so
           their own toolbars sit under the window controls. The `relative`
           here is what the below-md overlay anchors to.
         */}
@@ -1277,7 +1277,7 @@ export default function ChatPage() {
                         onClose={closeChanges}
                         onOpenFile={handleChangesFileOpen}
                         fileActions={fileActions}
-                        className="min-h-0 flex-1 border-l pt-10"
+                        className="min-h-0 flex-1 border-l pt-12"
                       />
                     ) : dockedPanel === "processes" ? (
                       <ProcessesPanel
@@ -1285,7 +1285,7 @@ export default function ChatPage() {
                         onStop={stopProcess}
                         onClose={closeProcesses}
                         providerName={providerName}
-                        className="min-h-0 flex-1 border-l pt-10"
+                        className="min-h-0 flex-1 border-l pt-12"
                       />
                     ) : dockedPanel === "plan" && openPlan ? (
                       <PlanPanel
@@ -1295,7 +1295,7 @@ export default function ChatPage() {
                         busy={isGenerating}
                         fileActions={fileActions}
                         onFileClick={handlePlanFileClick}
-                        className="min-h-0 flex-1 border-l pt-10"
+                        className="min-h-0 flex-1 border-l pt-12"
                       />
                     ) : dockedPreview ? (
                     <FilePanel
@@ -1310,7 +1310,7 @@ export default function ChatPage() {
                       onDiffLayoutChange={setDiffLayout}
                       wrap={previewPrefs.wrap}
                       onWrapChange={setWrap}
-                      className="border-l pt-10"
+                      className="border-l pt-12"
                     />
                     ) : null}
                   </ResizablePanel>

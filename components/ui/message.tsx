@@ -10,7 +10,6 @@ import {
   MessageProcess,
   MessageReasoning,
   MessageToolCall,
-  MessageToolCalls,
   type MessageArtifactData,
   type MessageAttachmentData,
   type MessageCodeBlockData,
@@ -84,7 +83,8 @@ export type MessageProps = {
   /** The host shows the plan in a panel; the row becomes the way back. */
   onPlanOpen?: (toolId: string) => void
   /**
-   * Elapsed seconds — labels the process disclosure once the turn settles.
+   * Elapsed seconds — labels the “Worked for 12s” row the thinking and tool
+   * parts collapse into once the turn settles.
    */
   workedFor?: number
   /** Explicit file-change card. When omitted, Edit / Write tools are summarised. */
@@ -234,41 +234,52 @@ export const Message = React.memo(function Message({
     if (onEdit && editedContent !== content) onEdit(editedContent)
   }, [content, editedContent, onEdit])
 
-  // Text stays visible. Only adjacent ordinary tools share a disclosure;
-  // plans, errors and unanswered questions remain independently reachable.
-  const groups = React.useMemo(() => {
-    const result: (MessagePart | { type: "tools"; id: string; tools: MessageToolCallData[] })[] = []
-    for (const part of parts ?? []) {
-      if (
-        part.type !== "tool" || hasWrittenPlan(part.tool) ||
-        part.tool.status === "error" || isPendingAskTool(part.tool) ||
-        (!!onAskAnswer && isOpenAskTool(part.tool))
-      ) {
-        result.push(part)
-        continue
-      }
-      const previous = result.at(-1)
-      if (previous?.type === "tools") previous.tools.push(part.tool)
-      else result.push({ type: "tools", id: part.id, tools: [part.tool] })
-    }
-    return result
-  }, [parts, onAskAnswer])
-
-  const processEnd = groups.findLastIndex(
-    (part) => part.type === "thinking" || part.type === "tools" ||
-      (part.type === "tool" && !hasWrittenPlan(part.tool))
+  /**
+   * Everything up to and including the last thinking / tool part is the
+   * turn's process; whatever trails it is the answer. One scan, so a turn
+   * that streams a hundred parts still costs one pass per render.
+   *
+   * A written plan is the exception: it is what the turn came back with, so it
+   * reads as the answer rather than folding into the stack. One left mid-turn
+   * — superseded by whatever the agent did next — stays process.
+   */
+  const processEnd = React.useMemo(
+    () =>
+      parts?.findLastIndex(
+        (part) =>
+          part.type === "thinking" ||
+          (part.type === "tool" && !hasWrittenPlan(part.tool))
+      ) ?? -1,
+    [parts]
   )
-  const hasProcess = parts
-    ? groups.slice(0, processEnd + 1).some(
-        (part) => part.type === "tools" || part.type === "tool" ||
-          (part.type === "thinking" && !!part.text)
+
+  const hasProcess = React.useMemo(() => {
+    if (!parts) return tools.length > 0
+    return parts
+      .slice(0, processEnd + 1)
+      .some(
+        (part) =>
+          part.type === "tool" || (part.type === "thinking" && !!part.text)
       )
-    : tools.length > 0
-  // An unanswered form must remain reachable even after a harness settles.
-  const hasOpenAsk = (parts
-    ? parts.flatMap((part) => part.type === "tool" ? [part.tool] : [])
-    : tools
-  ).some((tool) => isPendingAskTool(tool) || (!!onAskAnswer && isOpenAskTool(tool)))
+  }, [parts, processEnd, tools])
+
+  /**
+   * An ask nobody has answered yet must stay reachable, so the group is held
+   * open — collapsing the turn would hide the form the user is meant to fill.
+   */
+  const hasOpenAsk = React.useMemo(() => {
+    const list =
+      parts
+        ?.filter(
+          (part): part is Extract<MessagePart, { type: "tool" }> =>
+            part.type === "tool"
+        )
+        .map((part) => part.tool) ?? tools
+    return list.some(
+      (tool) =>
+        isPendingAskTool(tool) || (!!onAskAnswer && isOpenAskTool(tool))
+    )
+  }, [onAskAnswer, parts, tools])
 
   const derivedChanges = React.useMemo(() => {
     if (changes) return changes
@@ -487,6 +498,7 @@ export const Message = React.memo(function Message({
     reasoning && !parts?.some((part) => part.type === "thinking") ? (
       <MessageReasoning
         key="reasoning"
+        inline
         defaultOpen={reasoningDefaultOpen}
         duration={reasoningDuration}
         streaming={isAnimating}
@@ -495,23 +507,7 @@ export const Message = React.memo(function Message({
       </MessageReasoning>
     ) : null
 
-  const renderTools = (groupTools: MessageToolCallData[], key: string) => (
-    <MessageToolCalls
-      key={key}
-      tools={groupTools}
-      collapseAt={1}
-      defaultOpen={false}
-      onAskAnswer={onAskAnswer}
-      onPlanBuild={onPlanBuild}
-      onPlanOpen={onPlanOpen}
-      onOpenFile={onOpenFile}
-      fileActions={fileActions}
-      resolveFileUrl={resolveFileUrl}
-    />
-  )
-
-  const partNodes = groups.map((part, index) => {
-    if (part.type === "tools") return renderTools(part.tools, part.id)
+  const partNodes = parts?.map((part, index) => {
     if (part.type === "tool") {
       // onAskAnswer is forwarded as-is: MessageToolCall reports its
       // own id, so a stable handler keeps every row memoized.
@@ -532,10 +528,11 @@ export const Message = React.memo(function Message({
       if (!part.text) return null
       // Only a thought nothing has followed yet is still being thought: once a
       // tool call or the answer lands after it, it reads "Thought" and folds.
-      const isLiveThinking = index === groups.length - 1
+      const isLiveThinking = index === parts.length - 1
       return (
         <MessageReasoning
           key={part.id}
+          inline
           defaultOpen={reasoningDefaultOpen}
           streaming={isAnimating && isLiveThinking}
         >
@@ -546,7 +543,7 @@ export const Message = React.memo(function Message({
     return part.text ? (
       <MessageMarkdown
         key={part.id}
-        isAnimating={isAnimating && index === groups.length - 1}
+        isAnimating={isAnimating && index === parts.length - 1}
         patternHandlers={patternHandlers}
         onFileClick={onFileReferenceClick}
         fileActions={fileActions}
@@ -557,6 +554,45 @@ export const Message = React.memo(function Message({
     ) : null
   })
 
+  // A single disclosure owns the entire chronological process. Individual
+  // tool rows still expose their input/output, never another group of tools.
+  const process = partNodes
+    ? partNodes.slice(0, processEnd + 1)
+    : tools.map((tool) => (
+        <MessageToolCall
+          key={tool.id}
+          tool={tool}
+          onAskAnswer={onAskAnswer}
+          onPlanBuild={onPlanBuild}
+          onPlanOpen={onPlanOpen}
+          onOpenFile={onOpenFile}
+          fileActions={fileActions}
+          resolveFileUrl={resolveFileUrl}
+        />
+      ))
+  const processTools = parts
+    ? parts.flatMap((part) => part.type === "tool" ? [part.tool] : [])
+    : tools
+  const count = processTools.length
+  const processLabel = isAnimating
+    ? `Working${count ? ` · ${count} tool ${count === 1 ? "call" : "calls"}` : "…"}`
+    : undefined
+  const answer = partNodes
+    ? partNodes.slice(processEnd + 1)
+    : displayContent
+      ? [
+          <MessageMarkdown
+            key="content"
+            isAnimating={isAnimating}
+            patternHandlers={patternHandlers}
+            onFileClick={onFileReferenceClick}
+            fileActions={fileActions}
+            onViewAction={onViewAction}
+          >
+            {displayContent}
+          </MessageMarkdown>,
+        ]
+      : []
 
   return (
     <div
@@ -579,22 +615,17 @@ export const Message = React.memo(function Message({
         )}
       >
         {hasProcess || legacyReasoning ? (
-          <MessageProcess streaming={isAnimating || hasOpenAsk} seconds={workedFor}>
+          <MessageProcess
+            streaming={isAnimating}
+            forceOpen={hasOpenAsk}
+            label={hasOpenAsk ? "Waiting for your answer" : processLabel}
+            seconds={workedFor}
+          >
             {legacyReasoning}
-            {parts ? partNodes.slice(0, processEnd + 1) : renderTools(tools, "tools")}
+            {process}
           </MessageProcess>
         ) : null}
-        {parts ? partNodes.slice(processEnd + 1) : displayContent ? (
-          <MessageMarkdown
-            isAnimating={isAnimating}
-            patternHandlers={patternHandlers}
-            onFileClick={onFileReferenceClick}
-            fileActions={fileActions}
-            onViewAction={onViewAction}
-          >
-            {displayContent}
-          </MessageMarkdown>
-        ) : null}
+        {answer}
 
         {/* `streaming` keeps a fence that is still growing out of the
             highlight cache — the pass still runs, so nothing renders bare. */}

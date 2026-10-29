@@ -79,7 +79,7 @@ export function AppHeaderActions({
   return (
     <div
       data-slot="app-header-actions"
-      className={cn("ml-auto flex shrink-0 items-center gap-1", className)}
+      className={cn("relative z-10 ml-auto flex shrink-0 items-center gap-1", className)}
       {...props}
     />
   )
@@ -147,7 +147,7 @@ export function AppHeaderButton({
 /* -------------------------------------------------------------------------- */
 
 const WINDOW_BUTTON_CLASS =
-  "inline-grid h-10 w-[42px] shrink-0 place-items-center rounded-none text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:-outline-offset-2 [&_svg]:size-3.5 [&_svg]:shrink-0"
+  "relative z-10 inline-grid h-12 w-[42px] shrink-0 place-items-center rounded-none text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:-outline-offset-2 [&_svg]:size-3.5 [&_svg]:shrink-0"
 
 function WindowControls() {
   const [maximized, setMaximized] = React.useState(false)
@@ -173,7 +173,7 @@ function WindowControls() {
   return (
     <div
       data-slot="window-controls"
-      className="-mr-3 ml-2 flex h-10 shrink-0 items-stretch self-stretch sm:-mr-4"
+      className="-mr-3 ml-2 flex h-12 shrink-0 items-stretch self-stretch sm:-mr-4"
     >
       <button
         type="button"
@@ -225,7 +225,7 @@ function WindowControlsReserve() {
     <div
       aria-hidden
       data-slot="window-controls-reserve"
-      className="-mr-3 ml-2 h-10 w-[126px] shrink-0 self-stretch sm:-mr-4"
+      className="-mr-3 ml-2 h-12 w-[126px] shrink-0 self-stretch sm:-mr-4"
     />
   )
 }
@@ -273,7 +273,7 @@ export function AppHeader({
         // conversation, so a line here only draws a box around content that
         // is already obviously below it — and it is the first thing that
         // makes the window look busy.
-        "flex h-10 w-full shrink-0 items-center gap-2 px-3 sm:gap-3 sm:px-4",
+        "flex h-12 w-full shrink-0 items-center gap-2 px-3 sm:gap-3 sm:px-4",
         overlay
           ? "absolute inset-x-0 top-0 z-30"
           : "relative bg-background",
@@ -292,6 +292,10 @@ export function AppHeader({
         />
       ) : null}
       {children}
+      {desktop ? (
+        <div data-slot="app-header-drag-handle" data-tauri-drag-region
+          aria-hidden className="absolute inset-x-0 top-0 h-3" />
+      ) : null}
       {desktop && !native ? <WindowControls /> : null}
       {hydrated ? null : <WindowControlsReserve />}
     </header>
