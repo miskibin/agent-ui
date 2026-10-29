@@ -36,7 +36,7 @@ upstream component needs a new prop or slot: go through steps 1–4.
 sibling `../chat-components` checkout — override with `--repo <path>` or `CHAT_COMPONENTS_DIR`
 — and fails on any byte that differs, on a file in `components/ui` with no upstream twin, and
 on one upstream has that this app has lost. It skips silently when the checkout is absent, so
-it is a check you run beside a clone, not something CI can do for you. **Run it after any sync,
+it requires a sibling checkout locally. CI supplies one explicitly. **Run it after any sync,
 and before opening a PR that touches `components/ui`.** CI also clones the current
 `chat-components/main` into the runner's temporary directory and checks every shared
 file, so a missing sibling checkout cannot silently skip verification there.
