@@ -19,6 +19,8 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 - **One UI, multiple agents.** Switch providers inside a chat. Each backend
   keeps its own resumable session, and an explicit handoff summarizes what it
   missed.
+- **Live subagent activity.** Running and queued delegations appear in the transcript.
+  Completed cards stay out of the final answer; tool history and agent navigation remain available.
 - **Background runs.** A turn keeps streaming when you open another chat.
   Returning shows the same in-flight run and transcript.
 - **Agent-native output.** Reasoning, tool lifecycles, structured questions,
@@ -28,7 +30,7 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   composer while you scroll; submitting or skipping restores their summary in
   the transcript.
 - **One activity disclosure.** Thinking and tool calls share a chronological group,
-  collapsible while working and folded when finished. Pending questions stay visible.
+  collapsed by default while working and after completion. Pending questions stay visible.
 - **Generative charts.** Agents can return line, area, bar and donut charts in
   `ui` fences, with theme colors, tooltips and accessible data tables
   ([preview](.github/screenshots/generative-charts.png)).

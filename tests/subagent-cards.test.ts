@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { subagentCards, withSubagentCards, CARD_PATTERN } from "@/lib/subagents/cards"
+import { subagentCards, withoutSubagentSnapshots, activeSubagentCards } from "@/lib/subagents/cards"
 import type { StoredMessage } from "@/lib/store/types"
 
-test("subagent cards replace tool JSON only in the view and preserve message identity", () => {
+test("subagent snapshots stay out of the view while real tool history and answer stay intact", () => {
   const tools = [
     { id: "a", name: "Agent", status: "done" as const, input: JSON.stringify({ description: "Review", prompt: "Check auth" }) },
     { id: "native:a", name: "agent_ui_native_subagent", status: "done" as const, output: JSON.stringify({ parentToolId: "a", text: "Looks good", tools: [{ id: "r", name: "Read", status: "done" }] }) },
@@ -12,15 +12,13 @@ test("subagent cards replace tool JSON only in the view and preserve message ide
   const message: StoredMessage = { id: "m", sender: "assistant", content: "Reviewed", tools, parts: tools.map((tool) => ({ type: "tool", id: tool.id, tool })) }
   const data = subagentCards([message], {})
   assert.equal(data.cards.size, 1)
-  const view = withSubagentCards(message, data.cards, data.hidden)
+  const view = withoutSubagentSnapshots(message)
   assert.equal(view.content, message.content)
-  assert.equal(view.tools?.length, 0)
+  assert.equal(view.tools?.length, 2)
   assert.equal(message.tools?.length, 3)
-  const part = view.parts!.at(-1)!
-  assert.equal(part.type, "text")
-  if (part.type === "text") assert.match(part.text, CARD_PATTERN)
-  const again = subagentCards([message], {})
-  assert.equal(withSubagentCards(message, again.cards, again.hidden), view)
+  assert.deepEqual(view.parts?.map((part) => part.type === "tool" && part.tool.id), ["a", "r"])
+  assert.equal(withoutSubagentSnapshots(message), view)
+
 })
 
 test("MCP-wrapped delegation receipts retain the child chat id and actual outcome", () => {
@@ -35,7 +33,7 @@ test("MCP-wrapped delegation receipts retain the child chat id and actual outcom
   assert.equal(card.text, "Stopped")
   assert.equal(card.harness, "pi")
   const ordinary: StoredMessage = { id: "ordinary", sender: "assistant", content: "Hello" }
-  assert.equal(withSubagentCards(ordinary, new Map(), new Map()), ordinary)
+  assert.equal(withoutSubagentSnapshots(ordinary), ordinary)
 })
 
 test("pi shell delegation is visible and tracks the live run, not the launch receipt", () => {
@@ -68,9 +66,13 @@ test("Pi extension receipts link running cards to the right child and follow ter
   assert.equal([...subagentCards([message], { child: { ...run, status: "cancelled" } }).cards.values()][0].status, "cancelled")
   assert.equal(subagentCards([message], { child: run }).hidden.get("m")?.has("delegate"), true)
   const live = subagentCards([message], { child: run })
-  const outsideMarkdown = withSubagentCards(message, live.cards, live.hidden, false)
-  assert.ok(outsideMarkdown.parts?.every((part) => part.type === "text" && part.text === ""))
-  assert.equal(outsideMarkdown.tools?.length, 0)
-  assert.ok(withSubagentCards(message, live.cards, live.hidden).parts?.some((part) => part.type === "text" && part.text.includes("\uE000subagent:")))
+  assert.equal(withoutSubagentSnapshots(message), message)
+  assert.deepEqual(activeSubagentCards(live.cards).map((card) => card.sessionId), ["child"])
+  assert.equal(activeSubagentCards(subagentCards([message], { child: { ...run, status: "queued" } }).cards).length, 1)
+  for (const status of ["done", "error", "cancelled"] as const) {
+    const settled = subagentCards([message], { child: { ...run, status } })
+    assert.equal(activeSubagentCards(settled.cards).length, 0)
+  }
   assert.equal(message.tools?.length, 1)
+
 })

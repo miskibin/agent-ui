@@ -55,6 +55,10 @@ async function configureStubAgent() {
  * scrolled away look identical from a timeout alone.
  */
 async function expectToolRow(page, text) {
+  // Answering releases the force-open question; settled activity is collapsed.
+  await page.locator('button[title="Stop generating"]').waitFor({ state: "hidden", timeout: UI_TIMEOUT })
+  const activity = page.locator('[data-slot="message-process-trigger"]').last()
+  if (await activity.getAttribute("aria-expanded") === "false") await activity.click()
   await page
     .locator('[data-slot="message-tool-call"]', { hasText: text })
     .waitFor({ timeout: UI_TIMEOUT })
@@ -120,7 +124,11 @@ test("a running turn's permission request is answered above the composer", async
   const allow = form.getByRole("radio", { name: "Allow once", exact: true })
   assert.equal(await allow.isDisabled(), false)
 
-  // The transcript row says what it is waiting for, and offers no second form.
+  // The composer keeps the request reachable while activity stays collapsed.
+  const activity = page.locator('[data-slot="message-process-trigger"]').last()
+  assert.equal(await activity.getAttribute("aria-expanded"), "false")
+  await activity.click()
+  // Expanding history says what it is waiting for, without a second form.
   const waiting = page.locator('[data-slot="message-tool-call"]', {
     hasText: "Waiting for your answer",
   })

@@ -88,7 +88,7 @@ test("all charts render with tokens, tooltip, exact data and no overflow in both
   } finally { await page.close() }
 })
 
-test("live activity can be collapsed and expanded through the same header", async () => {
+test("live activity starts collapsed and stays collapsed as tools arrive", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
   try {
     await page.goto(app.baseUrl)
@@ -98,11 +98,16 @@ test("live activity can be collapsed and expanded through the same header", asyn
     await composer.press("Enter")
     const trigger = page.locator('[data-slot="message-process"][data-streaming="true"] [data-slot="message-process-trigger"]').last()
     await trigger.waitFor({ timeout: UI_TIMEOUT })
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+    // More streamed activity must not reopen a group the user did not open.
+    await page.waitForFunction(() => /tool calls?/.test(document.querySelector('[data-slot="message-process"][data-streaming="true"] [data-slot="message-process-trigger"]')?.textContent ?? ""))
+    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+    assert.equal(await page.locator('[data-slot="message-process-content"]:visible').count(), 0)
+    await trigger.click()
     assert.equal(await trigger.getAttribute("aria-expanded"), "true")
+    await page.locator('[data-slot="message-tool-call"]').first().waitFor({ timeout: UI_TIMEOUT })
     await trigger.click()
     assert.equal(await trigger.getAttribute("aria-expanded"), "false")
-    await trigger.click()
-    assert.equal(await trigger.getAttribute("aria-expanded"), "true")
     await page.locator('[title="Stop generating"]').click()
   } finally { await page.close() }
 })
@@ -119,5 +124,26 @@ test("desktop chrome has a 48px drag region without covering window controls", a
     assert.equal((await header.boundingBox()).height, 48)
     await page.getByRole("button", { name: "Minimize", exact: true }).click()
     assert.ok(await page.evaluate(() => window.__minimized))
+  } finally { await page.close() }
+})
+
+test("settled subagents are absent from the final answer and reload; real tool history remains", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
+  try {
+    const tools = ["done", "error", "cancelled"].flatMap((status, i) => [
+      { id: `agent-${i}`, name: "Agent", status, input: JSON.stringify({ description: `Review ${i}`, prompt: "Check the implementation" }), output: "Review complete" },
+      { id: `native:${i}`, name: "agent_ui_native_subagent", status, output: JSON.stringify({ parentToolId: `agent-${i}`, text: "Child review complete", tools: [] }) },
+    ])
+    await openChat(page, [{ id: "final-agents", sender: "assistant", content: "Final answer without agent cards.", tools }])
+    for (let visit = 0; visit < 2; visit++) {
+      await page.getByText("Final answer without agent cards.", { exact: true }).waitFor({ timeout: UI_TIMEOUT })
+      assert.equal(await page.locator('[data-slot="subagent-card"]').count(), 0)
+      const trigger = page.locator('[data-slot="message-process-trigger"]')
+      assert.equal(await trigger.getAttribute("aria-expanded"), "false")
+      await trigger.click()
+      assert.equal(await page.locator('[data-slot="message-tool-call"]').count(), 3)
+      assert.equal(await page.getByText('"parentToolId"', { exact: false }).count(), 0)
+      if (visit === 0) await page.reload()
+    }
   } finally { await page.close() }
 })

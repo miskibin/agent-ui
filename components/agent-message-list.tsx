@@ -14,9 +14,9 @@ import {
 } from "@/components/ui/message-list"
 import type { StoredMessage } from "@/lib/store/types"
 import {
-  CARD_PATTERN,
+  activeSubagentCards,
   subagentCards,
-  withSubagentCards,
+  withoutSubagentSnapshots,
   type SubagentCardData,
 } from "@/lib/subagents/cards"
 import type { SubagentRunSummary } from "@/lib/subagents/types"
@@ -25,16 +25,7 @@ const CardContext = React.createContext<{
   cards: Map<string, SubagentCardData>
   open: (id: string) => void
 }>({ cards: new Map(), open: () => {} })
-const PATTERNS = [
-  {
-    pattern: CARD_PATTERN,
-    render: (match: RegExpExecArray) => (
-      <SubagentCard key={match[1]} id={match[1]} />
-    ),
-  },
-]
-
-/** Host composition over the registry's markdown pattern slot; stored messages stay intact. */
+/** Live delegation cards belong to transcript activity; answer text stays intact. */
 export function AgentMessageList({
   rawMessages,
   agentRuns,
@@ -64,28 +55,24 @@ export function AgentMessageList({
   const last = props.messages.at(-1)
   const liveMessageId = (props.isGenerating || (props.generationStage && props.generationStage !== "idle")) && last?.sender === "assistant" ? last.id : undefined
   const liveCards = React.useMemo(
-    () => [...data.cards.keys()].filter((id) => JSON.parse(decodeURIComponent(id))[0] === liveMessageId),
-    [data.cards, liveMessageId]
+    () => activeSubagentCards(data.cards),
+    [data.cards]
   )
   const messages = React.useMemo(
     () =>
       props.messages.flatMap((message) => {
-        const view = withSubagentCards(message, data.cards, data.hidden, message.id !== liveMessageId)
+        const view = withoutSubagentSnapshots(message)
         // A live delegation is drawn below the streaming markdown renderer:
         // its animated text wrappers cannot reliably render pattern cards.
         // Keep an otherwise empty assistant from adding a second status row.
         return message.id === liveMessageId && liveCards.length && !view.content &&
           !view.parts?.length && !view.tools?.length && !view.reasoning ? [] : [view]
       }),
-    [props.messages, data, liveMessageId, liveCards.length]
+    [props.messages, liveMessageId, liveCards.length]
   )
   const context = React.useMemo(
     () => ({ cards: data.cards, open: onOpenAgent }),
     [data.cards, onOpenAgent]
-  )
-  const patterns = React.useMemo(
-    () => [...PATTERNS, ...(props.patternHandlers ?? [])],
-    [props.patternHandlers]
   )
   if (selectedAgent)
     return (
@@ -127,14 +114,17 @@ export function AgentMessageList({
       <MessageList
         {...props}
         messages={messages}
-        patternHandlers={patterns}
         renderActions={(message) =>
           props.renderActions?.(
             rawMessages.find((raw) => raw.id === message.id) ?? message
           )
         }
       >
-        {liveCards.map((id) => <SubagentCard key={id} id={id} />)}
+        {liveCards.length ? (
+          <div data-slot="subagent-live-activity" aria-label="Running subagents">
+            {liveCards.map((card) => <SubagentCard key={card.id} id={card.id} />)}
+          </div>
+        ) : null}
         {props.children}
       </MessageList>
     </CardContext>

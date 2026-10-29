@@ -224,8 +224,10 @@ one interface:
   the correct live child immediately. Stopping a blocking tool cancels its child; explicitly
   backgrounded work stays independently controllable in the app. The existing chat route,
   run registry and event stream own persistence and terminal status for both MCP and Pi.
-  Live cards render as app-owned children of `MessageList` while the parent streams; settled
-  turns retain their markdown markers. This keeps animation wrappers from hiding a live card.
+  Running and queued cards render as app-owned transcript activity, even after a
+  background task's parent turn settles. Terminal cards are never appended to answer
+  markdown. Real delegation tools remain in the collapsed process history, while
+  internal snapshot envelopes stay hidden.
 
   Two things that config directory now carries beside the catalog. **A generated extension**,
   `extensions/ask-user.ts` from a string constant in `lib/pi-extension.ts`, loaded with an

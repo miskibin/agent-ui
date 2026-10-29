@@ -92,7 +92,7 @@ describe("real Pi delegation", { skip: !process.env.AGENT_UI_PI_TEST_BIN }, () =
     throw new Error(`Pi child never reached its real read tool: ${JSON.stringify(modelCalls.map((call) => ({ model: call.model, tools: call.tools?.map((tool) => tool.function.name) })))}`)
   }
 
-  test("blocking delegation appears immediately, streams a real child, finishes and survives reload", { timeout: 90000 }, async () => {
+  test("blocking delegation appears immediately, streams a real child, finishes without leaving cards in the answer", { timeout: 90000 }, async () => {
     const { session, page } = await parent("Pi extension review")
     await page.locator('[data-slot="chat-input-textarea"]').fill("Delegate a code review")
     await page.locator('[data-slot="chat-input-textarea"]').press("Enter")
@@ -117,7 +117,7 @@ describe("real Pi delegation", { skip: !process.env.AGENT_UI_PI_TEST_BIN }, () =
     const finish = releaseChild; releaseChild = undefined; finish()
     await page.getByText("Child review complete: division by zero needs a guard.", { exact: false }).first().waitFor()
     await page.getByRole("navigation", { name: "Agent navigation" }).getByRole("button", { name: session.title, exact: true }).click()
-    await card.and(page.locator('[data-status="done"]')).waitFor()
+    await card.waitFor({ state: "detached" })
     await page.locator('[data-slot="chat-input-stop"]').waitFor({ state: "detached" })
     const saved = await (await fetch(`${app.baseUrl}/api/sessions/${session.id}`)).json()
     const tool = saved.messages.flatMap((message) => message.tools ?? []).find((tool) => tool.name === "run_subagent")
@@ -127,7 +127,7 @@ describe("real Pi delegation", { skip: !process.env.AGENT_UI_PI_TEST_BIN }, () =
     const childSaved = await (await fetch(`${app.baseUrl}/api/sessions/${child.id}`)).json()
     assert.ok(childSaved.messages.flatMap((message) => message.tools ?? []).some((tool) => tool.name === "read" && tool.output.includes("divide")))
     await page.reload()
-    await card.and(page.locator('[data-status="done"]')).waitFor()
+    await card.waitFor({ state: "detached" })
     // Resuming the same Pi session must retain the installed tools too.
     await page.locator('[data-slot="chat-input-textarea"]').fill("Delegate another code review in background")
     await page.locator('[data-slot="chat-input-textarea"]').press("Enter")
@@ -149,7 +149,7 @@ describe("real Pi delegation", { skip: !process.env.AGENT_UI_PI_TEST_BIN }, () =
     await card.click()
     await page.locator('[data-slot="chat-input-stop"]').click()
     await page.getByRole("navigation", { name: "Agent navigation" }).getByRole("button", { name: session.title, exact: true }).click()
-    await card.and(page.locator('[data-status="cancelled"]')).waitFor()
+    await card.waitFor({ state: "detached" })
     releaseChild?.(); releaseChild = undefined
     await page.close()
   })
@@ -162,7 +162,7 @@ describe("real Pi delegation", { skip: !process.env.AGENT_UI_PI_TEST_BIN }, () =
     const card = page.locator('[data-slot="subagent-card"]').filter({ hasText: "Nemotron code review" }).last()
     await card.and(page.locator('[data-status="running"]')).waitFor()
     await page.locator('[data-slot="chat-input-stop"]').click()
-    await card.and(page.locator('[data-status="cancelled"]')).waitFor()
+    await card.waitFor({ state: "detached" })
     releaseChild?.(); releaseChild = undefined
     await page.close()
   })
