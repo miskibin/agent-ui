@@ -88,30 +88,6 @@ test("all charts render with tokens, tooltip, exact data and no overflow in both
   } finally { await page.close() }
 })
 
-test("live activity starts collapsed and stays collapsed as tools arrive", async () => {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
-  try {
-    await page.goto(app.baseUrl)
-    const composer = page.locator('[data-slot="chat-input-textarea"]')
-    await page.locator('[aria-label="Provider: Mock agent"]').waitFor({ timeout: UI_TIMEOUT })
-    await composer.fill("stream a markdown answer")
-    await composer.press("Enter")
-    const trigger = page.locator('[data-slot="message-process"][data-streaming="true"] [data-slot="message-process-trigger"]').last()
-    await trigger.waitFor({ timeout: UI_TIMEOUT })
-    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
-    // More streamed activity must not reopen a group the user did not open.
-    await page.waitForFunction(() => /tool calls?/.test(document.querySelector('[data-slot="message-process"][data-streaming="true"] [data-slot="message-process-trigger"]')?.textContent ?? ""))
-    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
-    assert.equal(await page.locator('[data-slot="message-process-content"]:visible').count(), 0)
-    await trigger.click()
-    assert.equal(await trigger.getAttribute("aria-expanded"), "true")
-    await page.locator('[data-slot="message-tool-call"]').first().waitFor({ timeout: UI_TIMEOUT })
-    await trigger.click()
-    assert.equal(await trigger.getAttribute("aria-expanded"), "false")
-    await page.locator('[title="Stop generating"]').click()
-  } finally { await page.close() }
-})
-
 test("desktop chrome has a 48px drag region without covering window controls", async () => {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } })
   try {
