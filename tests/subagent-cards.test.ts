@@ -37,3 +37,22 @@ test("MCP-wrapped delegation receipts retain the child chat id and actual outcom
   const ordinary: StoredMessage = { id: "ordinary", sender: "assistant", content: "Hello" }
   assert.equal(withSubagentCards(ordinary, new Map(), new Map()), ordinary)
 })
+
+test("pi shell delegation is visible and tracks the live run, not the launch receipt", () => {
+  const receipt = { run_id: "r1", session_id: "child", status: "running", title: "Subagent test", harness: "ollama", model: "qwen" }
+  const message: StoredMessage = { id: "m", sender: "assistant", content: "Launching", tools: [{
+    id: "shell", name: "bash", status: "done",
+    input: JSON.stringify({ command: 'node bin/agent-ui.mjs run ollama --background "test"' }),
+    output: JSON.stringify(receipt),
+  }] }
+  const live = { runId: "r1", sessionId: "child", parentId: "parent", title: "Subagent test", harness: "ollama", model: "qwen", prompt: "test", status: "running" as const, startedAt: 1, userMessageId: "u", assistantMessageId: "a" }
+  const running = subagentCards([message], { child: live })
+  assert.equal([...running.cards.values()][0].status, "running")
+  assert.equal(running.hidden.get("m")?.has("shell"), true)
+  const done = subagentCards([message], { child: { ...live, status: "done" } })
+  assert.equal([...done.cards.values()][0].status, "done")
+  assert.equal([...done.cards.values()][0].sessionId, "child")
+  assert.equal([...subagentCards([message], {}).cards.values()][0].status, "unknown")
+  const ordinary = { ...message, tools: [{ ...message.tools![0], input: JSON.stringify({ command: "echo hello" }) }] }
+  assert.equal(subagentCards([ordinary], {}).cards.size, 0)
+})

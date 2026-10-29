@@ -53,7 +53,9 @@ export function AgentMessageList({
         rawMessages,
         Object.fromEntries(
           Object.entries(agentRuns).filter(
-            ([, run]) => run.parentId === props.conversationKey
+            // Older CLI launches had no parent, but their receipt still names
+            // the exact child session. Include those for status reconciliation.
+            ([, run]) => !run.parentId || run.parentId === props.conversationKey
           )
         )
       ),

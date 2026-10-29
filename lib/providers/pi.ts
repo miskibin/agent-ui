@@ -291,6 +291,7 @@ export function createPiProvider(
         // A per-chat folder beats the one workspace from settings.
         workspace: options.cwd?.trim() || workspace,
         configDir,
+        bridgeUrl: options.mcpServers?.find((server) => server.name === "agent-ui")?.url,
         sessionDir,
         extensionPath,
         // The media type is gone by the time a payload reaches a provider —
