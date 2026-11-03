@@ -75,7 +75,9 @@ export function notePrompt(input: {
         .map((entry) => `${entry.author === "user" ? "Person" : "You"}: ${entry.text}`)
         .join("\n")}\n`
     : ""
-  return `The person selected words in the note "${input.title}" and asked:
+  const anchor = input.anchor.trim()
+  const about = anchor
+    ? `The person selected words in the note "${input.title}" and asked:
 
 ${input.instruction}
 
@@ -84,8 +86,15 @@ The selected words:
 ${input.anchor.slice(0, MAX_ANCHOR_CHARS)}
 """
 ${earlier}
-How to work:
+`
+    : `The person asked about the note "${input.title}":
+
+${input.instruction}
+${earlier}
+`
+  return `${about}How to work:
 - Use only the note tools: note_read first (it gives block ids), then note_edit. Do not edit files on disk.
+- With no words selected, the request is about the note as a whole; read it and decide where the change belongs.
 - Change only what was asked; every other word stays, and so does the note's language and tone.
 - For anything longer than a sentence, first plant a pending placeholder where it will land (op "pending" with a short intent), then replace it with the content.
 - Shape the content: a flow, an architecture or a sequence is a \`\`\`mermaid diagram; a comparison is a table; a formula is $…$ or $$…$$.

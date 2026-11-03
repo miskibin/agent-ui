@@ -36,8 +36,8 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
   `ui` fences, with theme colors, tooltips and accessible data tables
   ([preview](.github/screenshots/generative-charts.png)).
 - **Notes an agent works in.** Beside chats, the sidebar keeps markdown notes —
-  WYSIWYG, with images, tables, KaTeX and Mermaid drawn in place. Select words,
-  press ⌘E and ask: the agent (Claude Code, pi) plants a placeholder where its
+  WYSIWYG, with images, tables, KaTeX and Mermaid drawn in place. Select words —
+  they follow into the note's composer — and ask: the agent (Claude Code, pi) plants a placeholder where its
   answer will land, edits the note live, and replies in a thread hung on those
   words. Its edits aim at blocks by a hash of their words, so it can never write
   over a paragraph you changed meanwhile; every edit is a revision you can restore

@@ -1,6 +1,7 @@
 "use client"
 
 import {
+  ArrowUp,
   Check,
   History,
   Loader2,
@@ -13,23 +14,21 @@ import {
   X,
 } from "lucide-react"
 import * as React from "react"
+import { createPortal } from "react-dom"
 import { toast } from "sonner"
 
 import { useNoteDoc } from "@/app/hooks/use-note-doc"
+import { AppHeaderButton } from "@/components/app-header"
+import { ComposerModelPicker } from "@/components/composer-model-picker"
+import { ProviderPicker } from "@/components/provider-picker"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
 import { GenerationStatus } from "@/components/ui/generation-status"
 import {
   NoteEditor,
+  type NoteEditorAction,
   type NoteEditorAnchor,
-  type NoteEditorAsk,
   type NoteEditorHandle,
+  type NoteEditorSelection,
 } from "@/components/ui/note-editor"
 import type { ModelOption } from "@/components/ui/model-picker"
 import * as api from "@/lib/api-client"
@@ -110,6 +109,8 @@ function pickModel(models: ModelOption[], providerId: string, choice: AgentChoic
 function useNoteAgent(meta: NoteMeta | null) {
   const [providers, setProviders] = React.useState<ProviderInfo[]>([])
   const [models, setModels] = React.useState<ModelOption[]>([])
+  const [modelsLoading, setModelsLoading] = React.useState(false)
+  const [modelsToken, setModelsToken] = React.useState(0)
   const [choice, setChoice] = React.useState<AgentChoice>({ providerId: "", model: "" })
   const providersRef = React.useRef<Promise<ProviderInfo[]> | null>(null)
 
@@ -133,18 +134,26 @@ function useNoteAgent(meta: NoteMeta | null) {
   React.useEffect(() => {
     if (!providerId) return
     let live = true
+    queueMicrotask(() => {
+      if (live) setModelsLoading(true)
+    })
     api
-      .fetchModels(providerId)
+      .fetchModels(providerId, modelsToken > 0)
       .then((answer) => {
         if (live) setModels(answer.models.filter((model) => !model.disabled))
       })
       .catch(() => {
         if (live) setModels([])
       })
+      .finally(() => {
+        if (live) setModelsLoading(false)
+      })
     return () => {
       live = false
     }
-  }, [providerId])
+  }, [providerId, modelsToken])
+
+  const refreshModels = React.useCallback(() => setModelsToken((token) => token + 1), [])
 
   const model = React.useMemo(() => pickModel(models, providerId, choice, meta), [models, providerId, choice, meta])
 
@@ -169,7 +178,7 @@ function useNoteAgent(meta: NoteMeta | null) {
     return { providerId: id, model: pickModel(answer.models.filter((m) => !m.disabled), id, now.choice, now.meta) }
   }, [])
 
-  return { providers, models, providerId, model, pick, resolve }
+  return { providers, models, modelsLoading, refreshModels, providerId, model, pick, resolve }
 }
 
 function threadAnchorState(thread: NoteThread): NoteEditorAnchor["state"] {
@@ -200,14 +209,9 @@ function HistoryMenu({ noteId, rev }: { noteId: string; rev?: number }) {
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          aria-label="Note history"
-          title="History"
-          className="inline-grid size-8 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-4"
-        >
+        <AppHeaderButton label="Note history">
           <History />
-        </button>
+        </AppHeaderButton>
       </PopoverTrigger>
       <PopoverContent align="end" className="w-72 p-1">
         <p className="px-2 py-1.5 text-[11px] font-medium text-muted-foreground">Revisions</p>
@@ -255,7 +259,15 @@ function HistoryMenu({ noteId, rev }: { noteId: string; rev?: number }) {
   )
 }
 
-function ThreadCard({
+const ICON_BUTTON =
+  "inline-grid size-6 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+
+/**
+ * One thread in the margin: the words it hangs on, the exchange, and the
+ * actions on hover. No card — the margin is a column of text, and the active
+ * thread is the one with a tint behind it.
+ */
+function ThreadItem({
   thread,
   active,
   onSelect,
@@ -286,14 +298,9 @@ function ThreadCard({
       data-state={thread.status}
       data-active={active ? "true" : undefined}
       data-resolved={thread.resolved ? "true" : undefined}
-      className={cn(
-        "group/thread rounded-lg border bg-card p-2.5 text-[12.5px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
-        active ? "border-primary/50 ring-1 ring-primary/20" : "hover:border-foreground/20",
-        thread.resolved && "opacity-70"
-      )}
       tabIndex={0}
       onClick={() => onSelect(thread.id)}
-      // The card is the way back to its words; Enter or Space on it (not on
+      // The thread is the way back to its words; Enter or Space on it (not on
       // a control inside) selects it like a click.
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return
@@ -302,106 +309,222 @@ function ThreadCard({
           onSelect(thread.id)
         }
       }}
+      className={cn(
+        "group/thread rounded-lg px-2.5 py-2 text-[12.5px] leading-snug outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
+        active ? "bg-accent" : "hover:bg-accent/50",
+        thread.resolved && "opacity-60"
+      )}
     >
       {thread.anchor ? (
-        <p className="mb-2 line-clamp-2 border-l-2 border-primary/40 pl-2 text-[11.5px] leading-snug text-muted-foreground">
+        <p className="mb-1.5 line-clamp-2 text-[11.5px] text-muted-foreground">
+          <span className="mr-1.5 inline-block h-2.5 w-0.5 rounded-full bg-primary/50 align-middle" />
           {thread.anchor}
         </p>
       ) : null}
-      <ol className="space-y-1.5">
+      <ol className="space-y-1">
         {thread.messages.map((message) => (
           <li
             key={message.id}
             data-slot="note-thread-message"
             data-author={message.author}
-            className={cn("leading-snug", message.error && "text-destructive")}
+            className={cn(
+              message.author === "user" ? "text-foreground" : "text-muted-foreground",
+              message.error && "text-destructive"
+            )}
           >
             {message.author === "agent" ? (
-              <Sparkles aria-label="Agent" className="mr-1 inline size-3 -translate-y-px text-muted-foreground" />
+              <Sparkles aria-label="Agent" className="mr-1 inline size-3 -translate-y-px" />
             ) : null}
-            <span className={message.author === "user" ? "font-medium" : undefined}>{message.text}</span>
+            {message.text}
           </li>
         ))}
       </ol>
-      {busy ? (
-        <div className="mt-2 flex items-center gap-2">
-          <GenerationStatus
-            active
-            label={thread.status === "queued" ? "Waiting" : "Working"}
-            startedAt={thread.status === "running" ? thread.updatedAt : undefined}
-            className="text-[11.5px]"
-          />
-          <button
-            type="button"
-            onClick={(event) => {
-              event.stopPropagation()
-              onStop(thread)
-            }}
-            className="ml-auto inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          >
-            <Square className="size-2.5 fill-current" /> Stop
-          </button>
-        </div>
-      ) : (
-        <div className="mt-2 flex items-center gap-1">
-          {active && !thread.resolved ? (
-            <form
-              className="flex min-w-0 flex-1 items-center gap-1"
-              onSubmit={(event) => {
-                event.preventDefault()
-                if (!reply.trim()) return
-                onReply(thread, reply.trim())
-                setReply("")
+      <div className="mt-1 flex h-6 items-center gap-0.5">
+        {busy ? (
+          <>
+            <GenerationStatus
+              active
+              label={thread.status === "queued" ? "Waiting" : "Working"}
+              startedAt={thread.status === "running" ? thread.updatedAt : undefined}
+              className="text-[11.5px]"
+            />
+            <button
+              type="button"
+              aria-label="Stop"
+              title="Stop"
+              onClick={(event) => {
+                event.stopPropagation()
+                onStop(thread)
               }}
+              className={cn(ICON_BUTTON, "ml-auto")}
             >
-              <input
-                data-slot="note-thread-reply"
-                value={reply}
-                onChange={(event) => setReply(event.target.value)}
-                onClick={(event) => event.stopPropagation()}
-                placeholder="Follow up…"
-                className="h-7 min-w-0 flex-1 rounded-md border bg-background px-2 text-[12px] outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-              />
-            </form>
-          ) : (
-            <span className="flex-1 text-[11px] text-muted-foreground">{relativeTime(thread.updatedAt)}</span>
-          )}
-          <button
-            type="button"
-            aria-label={thread.resolved ? "Reopen" : "Resolve"}
-            title={thread.resolved ? "Reopen" : "Resolve"}
-            onClick={(event) => {
-              event.stopPropagation()
-              onResolve(thread, !thread.resolved)
-            }}
-            className="inline-grid size-7 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          >
-            {thread.resolved ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
-          </button>
-          <button
-            type="button"
-            aria-label="Delete thread"
-            title="Delete thread"
-            onClick={(event) => {
-              event.stopPropagation()
-              onDelete(thread)
-            }}
-            className="inline-grid size-7 place-items-center rounded-md text-muted-foreground opacity-0 outline-none transition-colors group-hover/thread:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100 focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          >
-            <Trash2 className="size-3.5" />
-          </button>
-        </div>
-      )}
+              <Square className="size-2.5 fill-current" />
+            </button>
+          </>
+        ) : (
+          <>
+            <span className="flex-1 text-[11px] text-muted-foreground/70">{relativeTime(thread.updatedAt)}</span>
+            <span className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover/thread:opacity-100 group-focus-within/thread:opacity-100 group-data-[active=true]/thread:opacity-100">
+              <button
+                type="button"
+                aria-label={thread.resolved ? "Reopen" : "Resolve"}
+                title={thread.resolved ? "Reopen" : "Resolve"}
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onResolve(thread, !thread.resolved)
+                }}
+                className={ICON_BUTTON}
+              >
+                {thread.resolved ? <Undo2 className="size-3.5" /> : <Check className="size-3.5" />}
+              </button>
+              <button
+                type="button"
+                aria-label="Delete thread"
+                title="Delete thread"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onDelete(thread)
+                }}
+                className={ICON_BUTTON}
+              >
+                <Trash2 className="size-3.5" />
+              </button>
+            </span>
+          </>
+        )}
+      </div>
+      {active && !busy && !thread.resolved ? (
+        <form
+          className="mt-1"
+          onSubmit={(event) => {
+            event.preventDefault()
+            if (!reply.trim()) return
+            onReply(thread, reply.trim())
+            setReply("")
+          }}
+        >
+          <input
+            data-slot="note-thread-reply"
+            value={reply}
+            onChange={(event) => setReply(event.target.value)}
+            onClick={(event) => event.stopPropagation()}
+            placeholder="Reply…"
+            className="h-7 w-full rounded-md bg-background/60 px-2 text-[12px] outline-none placeholder:text-muted-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+          />
+        </form>
+      ) : null}
     </div>
   )
 }
 
 /**
- * A note, open in the main pane: the vendored `NoteEditor` on the left, and
- * the threads the person hung on its words on the right — Claude Docs'
- * margin, where the agent answers. Selecting words and pressing ⌘E asks the
- * picked harness to act on them; its edits land in the note live, as
- * revisions, and its reply lands in the thread.
+ * The note's composer: one line, docked at the bottom like the chat's. The
+ * words selected in the note follow into it as a quote — select, type, Enter
+ * — and the harness and model sit at its end, which is the only place they
+ * are picked.
+ */
+function NoteComposer({
+  agent,
+  selection,
+  onClearSelection,
+  onSend,
+  inputRef,
+}: {
+  agent: ReturnType<typeof useNoteAgent>
+  selection: NoteEditorSelection | null
+  onClearSelection: () => void
+  onSend: (instruction: string) => void
+  inputRef: React.RefObject<HTMLInputElement | null>
+}) {
+  const [text, setText] = React.useState("")
+  const providerName = agent.providers.find((provider) => provider.id === agent.providerId)?.name ?? "the agent"
+  const send = () => {
+    const instruction = text.trim()
+    if (!instruction) return
+    onSend(instruction)
+    setText("")
+  }
+
+  return (
+    <form
+      data-slot="note-composer"
+      onSubmit={(event) => {
+        event.preventDefault()
+        send()
+      }}
+      className="pointer-events-auto mx-auto flex w-full max-w-3xl flex-col rounded-2xl border bg-background px-2 py-1.5 shadow-sm"
+    >
+      {selection ? (
+        <div data-slot="note-composer-selection" className="flex min-w-0 items-center gap-1.5 px-1.5 pt-0.5 text-[11.5px] text-muted-foreground">
+          <span className="h-3 w-0.5 shrink-0 rounded-full bg-primary/60" />
+          <span className="min-w-0 truncate">{selection.text.replace(/\s+/g, " ")}</span>
+          <button type="button" aria-label="Leave the selection out" onClick={onClearSelection} className={cn(ICON_BUTTON, "size-5")}>
+            <X className="size-3" />
+          </button>
+        </div>
+      ) : null}
+      <div className="flex min-w-0 items-center gap-1">
+        <input
+          ref={inputRef}
+          data-slot="note-composer-input"
+          value={text}
+          onChange={(event) => setText(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape" && selection) {
+              event.preventDefault()
+              onClearSelection()
+            }
+          }}
+          placeholder={
+            agent.providers.length === 0
+              ? "No agent can work in notes — enable Claude Code or pi in Settings"
+              : selection
+                ? "Ask about the selection…"
+                : `Ask ${providerName} to change this note…`
+          }
+          disabled={agent.providers.length === 0}
+          className="h-8 min-w-0 flex-1 bg-transparent px-1.5 text-[13px] outline-none placeholder:text-muted-foreground disabled:cursor-not-allowed"
+        />
+        {agent.providers.length > 0 ? (
+          <>
+            <ProviderPicker
+              providers={agent.providers}
+              value={agent.providerId}
+              onChange={(providerId) => agent.pick({ providerId })}
+              className="shrink-0 max-sm:[&_[data-composer-label]]:hidden"
+            />
+            <ComposerModelPicker
+              options={agent.models}
+              value={agent.model}
+              onChange={(model) => agent.pick({ providerId: agent.providerId, model })}
+              loading={agent.modelsLoading}
+              onRefresh={agent.refreshModels}
+              className="h-7 max-w-44 shrink sm:h-7"
+            />
+          </>
+        ) : null}
+        <button
+          type="submit"
+          aria-label="Send"
+          disabled={!text.trim() || agent.providers.length === 0}
+          className="inline-grid size-7 shrink-0 place-items-center rounded-full bg-primary text-primary-foreground outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:opacity-40"
+        >
+          <ArrowUp className="size-3.5" />
+        </button>
+      </div>
+    </form>
+  )
+}
+
+/**
+ * A note, open in the main pane: the vendored `NoteEditor`, the threads
+ * hung on its words in a quiet margin — Claude Docs' comments, where the
+ * agent answers — and a one-line composer the selection flows into. Its
+ * edits land in the note live, as revisions; its reply lands in the thread.
+ *
+ * The note's own controls (save state, history, threads, close) are
+ * rendered into the app header through `headerSlot`, so the window keeps
+ * the one header it has everywhere else.
  *
  * App-local: it is the host's furniture around the vendored editor — the
  * vault, the harness picker, the thread margin and the revision list.
@@ -410,20 +533,25 @@ export function NoteWorkspace({
   noteId,
   onClose,
   onMetaChange,
+  headerSlot,
   className,
 }: {
   noteId: string
   onClose?: () => void
   /** The title or time moved — the sidebar row should follow. */
   onMetaChange?: (meta: NoteMeta) => void
+  /** Where the note's header controls go; inline above the note without one. */
+  headerSlot?: HTMLElement | null
   className?: string
 }) {
   const doc = useNoteDoc(noteId, onMetaChange)
   const agent = useNoteAgent(doc.meta)
   const editorRef = React.useRef<NoteEditorHandle>(null)
+  const inputRef = React.useRef<HTMLInputElement>(null)
   const [activeThreadId, setActiveThreadId] = React.useState<string>()
   const [showResolved, setShowResolved] = React.useState(false)
   const [threadsOpen, setThreadsOpen] = React.useState(true)
+  const [selection, setSelection] = React.useState<NoteEditorSelection | null>(null)
 
   const anchors = React.useMemo<NoteEditorAnchor[]>(
     () =>
@@ -454,13 +582,33 @@ export function NoteWorkspace({
     [noteId, refreshThreads, resolveAgent]
   )
 
-  const onAsk = React.useCallback(
-    (request: NoteEditorAsk) => void ask({ anchor: request.text, instruction: request.instruction }),
-    [ask]
+  const clearSelection = React.useCallback(() => {
+    editorRef.current?.clearSelection()
+    setSelection(null)
+  }, [])
+
+  const send = (instruction: string) => {
+    void ask({ anchor: selection?.text, instruction })
+    clearSelection()
+  }
+
+  const actions = React.useMemo<NoteEditorAction[]>(
+    () => [
+      {
+        id: "ask",
+        label: "Ask the agent",
+        icon: <Sparkles />,
+        needsSelection: true,
+        movesFocus: true,
+        onSelect: () => inputRef.current?.focus(),
+      },
+    ],
+    []
   )
 
   const open = doc.threads.filter((thread) => !thread.resolved)
   const resolved = doc.threads.filter((thread) => thread.resolved)
+  const showThreads = threadsOpen && doc.threads.length > 0
 
   const handlers = {
     onSelect: setActiveThreadId,
@@ -480,86 +628,44 @@ export function NoteWorkspace({
     },
   }
 
+  const controls = (
+    <div data-slot="note-header-controls" className="flex items-center gap-1">
+      <span
+        data-slot="note-save-state"
+        data-state={doc.saveState}
+        className={cn(
+          "hidden px-1 text-[11px] text-muted-foreground sm:inline",
+          doc.saveState === "error" && "text-destructive"
+        )}
+      >
+        {doc.saveState === "saving" ? "Saving…" : doc.saveState === "error" ? "Not saved — retrying" : "Saved"}
+      </span>
+      <HistoryMenu noteId={noteId} rev={doc.meta?.rev} />
+      {doc.threads.length ? (
+        <AppHeaderButton
+          label={threadsOpen ? "Hide threads" : "Show threads"}
+          aria-pressed={threadsOpen}
+          onClick={() => setThreadsOpen((value) => !value)}
+        >
+          <MessageSquareText />
+          {open.length ? <span className="tabular-nums">{open.length}</span> : null}
+        </AppHeaderButton>
+      ) : null}
+      {onClose ? (
+        <AppHeaderButton label="Close note" onClick={onClose}>
+          <X />
+        </AppHeaderButton>
+      ) : null}
+    </div>
+  )
+
   return (
     <section
       data-slot="note-workspace"
       aria-label={doc.meta?.title ?? "Note"}
-      className={cn("flex h-full min-h-0 flex-col bg-background", className)}
+      className={cn("relative flex h-full min-h-0 flex-col bg-background", className)}
     >
-      <header
-        data-slot="note-workspace-header"
-        className="flex h-11 shrink-0 items-center gap-1.5 border-b px-3 text-[13px]"
-      >
-        <span className="min-w-0 flex-1 truncate font-medium">{doc.meta?.title ?? "Note"}</span>
-        <span
-          data-slot="note-save-state"
-          data-state={doc.saveState}
-          className={cn(
-            "hidden shrink-0 text-[11px] text-muted-foreground sm:inline",
-            doc.saveState === "error" && "text-destructive"
-          )}
-        >
-          {doc.saveState === "saving" ? "Saving…" : doc.saveState === "error" ? "Not saved — retrying" : "Saved"}
-        </span>
-        {agent.providers.length > 0 ? (
-          <div className="flex shrink-0 items-center gap-1" data-slot="note-agent-picker">
-            <Sparkles className="size-3.5 text-muted-foreground" aria-hidden />
-            <Select value={agent.providerId} onValueChange={(providerId) => agent.pick({ providerId })}>
-              <SelectTrigger size="sm" aria-label="Agent" className="h-7 w-auto max-w-36 gap-1 border-0 bg-transparent px-1.5 text-[12px] shadow-none hover:bg-accent">
-                <SelectValue placeholder="Agent" />
-              </SelectTrigger>
-              <SelectContent>
-                {agent.providers.map((provider) => (
-                  <SelectItem key={provider.id} value={provider.id} className="text-[12.5px]">
-                    {provider.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {agent.models.length > 0 ? (
-              <Select value={agent.model} onValueChange={(model) => agent.pick({ providerId: agent.providerId, model })}>
-                <SelectTrigger size="sm" aria-label="Model" className="h-7 w-auto max-w-44 gap-1 border-0 bg-transparent px-1.5 text-[12px] shadow-none hover:bg-accent">
-                  <SelectValue placeholder="Model" />
-                </SelectTrigger>
-                <SelectContent>
-                  {agent.models.map((model) => (
-                    <SelectItem key={model.id} value={model.id} className="text-[12.5px]">
-                      {model.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            ) : null}
-          </div>
-        ) : null}
-        <HistoryMenu noteId={noteId} rev={doc.meta?.rev} />
-        <button
-          type="button"
-          aria-label={threadsOpen ? "Hide threads" : "Show threads"}
-          aria-pressed={threadsOpen}
-          title="Threads"
-          onClick={() => setThreadsOpen((value) => !value)}
-          className="relative inline-grid size-8 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:text-foreground [&_svg]:size-4"
-        >
-          <MessageSquareText />
-          {open.length ? (
-            <span className="absolute -right-0.5 -top-0.5 grid min-w-3.5 place-items-center rounded-full bg-primary px-1 text-[9px] font-semibold leading-3.5 text-primary-foreground">
-              {open.length}
-            </span>
-          ) : null}
-        </button>
-        {onClose ? (
-          <button
-            type="button"
-            aria-label="Close note"
-            title="Close note"
-            onClick={onClose}
-            className="inline-grid size-8 place-items-center rounded-md text-muted-foreground outline-none transition-colors hover:bg-accent hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 [&_svg]:size-4"
-          >
-            <X />
-          </button>
-        ) : null}
-      </header>
+      {headerSlot ? createPortal(controls, headerSlot) : <div className="flex justify-end px-3 py-1">{controls}</div>}
 
       <div className="flex min-h-0 flex-1">
         <div data-slot="note-workspace-editor" className="min-h-0 min-w-0 flex-1 overflow-y-auto">
@@ -570,7 +676,7 @@ export function NoteWorkspace({
               <Loader2 className="size-3.5 animate-spin" /> Opening note…
             </div>
           ) : (
-            <div className="mx-auto w-full max-w-3xl pt-4">
+            <div className="mx-auto w-full max-w-3xl pb-24">
               <NoteEditor
                 ref={editorRef}
                 value={doc.value}
@@ -581,56 +687,39 @@ export function NoteWorkspace({
                   setActiveThreadId(id)
                   setThreadsOpen(true)
                 }}
-                onAsk={onAsk}
+                onSelectionChange={setSelection}
+                actions={actions}
                 uploadImage={uploadNoteImage}
                 resolveImageUrl={noteImageUrl}
-                placeholder="Start writing. Select text and press ⌘E to ask the agent."
+                placeholder="Start writing — or select text and ask the agent below."
               />
             </div>
           )}
         </div>
 
-        {threadsOpen ? (
+        {showThreads ? (
           <aside
             data-slot="note-threads"
             aria-label="Threads"
-            className="flex w-72 shrink-0 flex-col border-l max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-10 max-md:bg-background max-md:shadow-lg"
+            className="flex w-72 shrink-0 flex-col pb-24 max-md:absolute max-md:inset-y-0 max-md:right-0 max-md:z-10 max-md:bg-background max-md:shadow-lg"
           >
-            <div className="flex h-9 shrink-0 items-center px-3 text-[11.5px] font-medium text-muted-foreground">
-              Threads
-              {open.length ? <span className="ml-1.5 tabular-nums">{open.length}</span> : null}
-            </div>
-            <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 pb-4">
-              {open.length === 0 ? (
-                <div className="rounded-lg border border-dashed p-3 text-[12px] leading-relaxed text-muted-foreground">
-                  Select words in the note and press{" "}
-                  <kbd className="rounded border bg-muted px-1 font-mono text-[10.5px]">⌘E</kbd> (or the{" "}
-                  <Sparkles className="inline size-3" aria-label="sparkles" /> button) to ask{" "}
-                  {agent.providers.find((p) => p.id === agent.providerId)?.name ?? "the agent"} to rewrite them, add
-                  a diagram, a table, an explanation… Its answers appear here.
-                  {agent.providers.length === 0 ? (
-                    <span className="mt-2 block text-destructive">
-                      No agent can work in notes yet — enable Claude Code or pi in Settings.
-                    </span>
-                  ) : null}
-                </div>
-              ) : null}
+            <div className="min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pt-3">
               {open.map((thread) => (
-                <ThreadCard key={thread.id} thread={thread} active={thread.id === activeThreadId} {...handlers} />
+                <ThreadItem key={thread.id} thread={thread} active={thread.id === activeThreadId} {...handlers} />
               ))}
               {resolved.length ? (
                 <div className="pt-2">
                   <button
                     type="button"
                     onClick={() => setShowResolved((value) => !value)}
-                    className="w-full rounded-md px-1 py-1 text-left text-[11.5px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                    className="w-full rounded-md px-2.5 py-1 text-left text-[11.5px] text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
                   >
                     {showResolved ? "Hide" : "Show"} resolved ({resolved.length})
                   </button>
                   {showResolved ? (
-                    <div className="mt-1 space-y-2">
+                    <div className="mt-1 space-y-1">
                       {resolved.map((thread) => (
-                        <ThreadCard key={thread.id} thread={thread} active={thread.id === activeThreadId} {...handlers} />
+                        <ThreadItem key={thread.id} thread={thread} active={thread.id === activeThreadId} {...handlers} />
                       ))}
                     </div>
                   ) : null}
@@ -639,6 +728,16 @@ export function NoteWorkspace({
             </div>
           </aside>
         ) : null}
+      </div>
+
+      <div className="pointer-events-none absolute inset-x-0 bottom-0 z-20 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pt-6 pb-3">
+        <NoteComposer
+          agent={agent}
+          selection={selection}
+          onClearSelection={clearSelection}
+          onSend={send}
+          inputRef={inputRef}
+        />
       </div>
     </section>
   )
