@@ -43,7 +43,7 @@ export type NoteBlock = {
   text: string
 }
 
-const FENCE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]*)?.*$/
+const FENCE = /^(\s*)(`{3,}|~{3,})\s*([^\s`]+)?.*$/
 const HEADING = /^ {0,3}(#{1,6})(\s|$)/
 const LIST = /^\s*([-*+]|\d{1,9}[.)])(\s|$)/
 const RULE = /^ {0,3}([-*_])(\s*\1){2,}\s*$/

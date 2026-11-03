@@ -287,11 +287,21 @@ function ThreadCard({
       data-active={active ? "true" : undefined}
       data-resolved={thread.resolved ? "true" : undefined}
       className={cn(
-        "group/thread rounded-lg border bg-card p-2.5 text-[12.5px] transition-colors",
+        "group/thread rounded-lg border bg-card p-2.5 text-[12.5px] outline-none transition-colors focus-visible:ring-[3px] focus-visible:ring-ring/50",
         active ? "border-primary/50 ring-1 ring-primary/20" : "hover:border-foreground/20",
         thread.resolved && "opacity-70"
       )}
+      tabIndex={0}
       onClick={() => onSelect(thread.id)}
+      // The card is the way back to its words; Enter or Space on it (not on
+      // a control inside) selects it like a click.
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault()
+          onSelect(thread.id)
+        }
+      }}
     >
       {thread.anchor ? (
         <p className="mb-2 line-clamp-2 border-l-2 border-primary/40 pl-2 text-[11.5px] leading-snug text-muted-foreground">
