@@ -35,6 +35,13 @@ conversation interface built with Next.js, React, TypeScript, and Tauri.
 - **Generative charts.** Agents can return line, area, bar and donut charts in
   `ui` fences, with theme colors, tooltips and accessible data tables
   ([preview](.github/screenshots/generative-charts.png)).
+- **Notes an agent works in.** Beside chats, the sidebar keeps markdown notes —
+  WYSIWYG, with images, tables, KaTeX and Mermaid drawn in place. Select words,
+  press ⌘E and ask: the agent (Claude Code, pi) plants a placeholder where its
+  answer will land, edits the note live, and replies in a thread hung on those
+  words. Its edits aim at blocks by a hash of their words, so it can never write
+  over a paragraph you changed meanwhile; every edit is a revision you can restore
+  ([preview](.github/screenshots/notes.png)).
 - **Workspace-aware files.** Give each chat a folder, inspect changed files and
   diffs beside the transcript, then open them in your editor or terminal. The
   header opens a tree of everything the chat changed, and a lazy browser for the
@@ -345,6 +352,10 @@ Together they take the staged payload from 108 MB to 59 MB. `du -sh
 | --- | --- |
 | ![Sidebar with folder groups and the snoozed and settled shelves](.github/screenshots/sidebar-shelves.png) | ![Changed files as a tree, with commit and push below it](.github/screenshots/changes-tree.png) |
 | ![Active sidebar chat in light mode](.github/screenshots/sidebar-selection-light.png) | ![Active sidebar chat in dark mode](.github/screenshots/sidebar-selection-dark.png) |
+
+| Notes an agent works in | Notes, dark |
+| --- | --- |
+| ![A note with a Mermaid diagram the agent added, and its thread beside it](.github/screenshots/notes.png) | ![The same note in dark mode](.github/screenshots/notes-dark.png) |
 
 | File review | Agent handoff |
 | --- | --- |

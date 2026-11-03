@@ -89,6 +89,7 @@ import {
 } from "./hooks/use-file-panel"
 import { useIsDesktop } from "./hooks/use-is-desktop"
 import { useMessageQueue } from "./hooks/use-message-queue"
+import { useNotes } from "./hooks/use-notes"
 import { usePromptStash } from "./hooks/use-prompt-stash"
 import { useSessionIndex } from "./hooks/use-session-index"
 import { useSidebarItems } from "./hooks/use-sidebar-items"
@@ -118,6 +119,15 @@ const SettingsView = dynamic(
  */
 const ImportDialog = dynamic(
   () => import("@/components/import-dialog").then((m) => m.ImportDialog),
+  { ssr: false }
+)
+
+/**
+ * A note's editor (Milkdown, Mermaid, KaTeX) is the heaviest thing the app
+ * can show and most sessions never open one, so it loads on the first open.
+ */
+const NoteWorkspace = dynamic(
+  () => import("@/components/note-workspace").then((m) => m.NoteWorkspace),
   { ssr: false }
 )
 
@@ -437,10 +447,13 @@ export default function ChatPage() {
   /** The sidebar, ⌘K and `/settings`, none of which name a section. */
   const pushSettings = React.useCallback(() => openSettings(), [openSettings])
   const [newChatOpen, setNewChatOpen] = React.useState(false)
+  const notes = useNotes()
+  const { closeNote, openNote, newNote, activeNoteId } = notes
   const handleNewChat = React.useCallback(async () => {
     closeNav()
+    closeNote()
     setNewChatOpen(true)
-  }, [closeNav, setNewChatOpen])
+  }, [closeNav, closeNote, setNewChatOpen])
   /** The void wrapper the sidebar, the palette and ⌘N all share. */
   const startNewChat = React.useCallback(
     () => void handleNewChat(),
@@ -635,6 +648,26 @@ export default function ChatPage() {
     agentRuns,
     selectSession,
   })
+  const navigateAgent = agentNav.navigate
+  /** Opening a chat from the sidebar puts away the note that covered it. */
+  const selectChat = React.useCallback(
+    (id: string) => {
+      closeNote()
+      navigateAgent(id)
+    },
+    [closeNote, navigateAgent]
+  )
+  const selectNote = React.useCallback(
+    (id: string) => {
+      openNote(id)
+      closeNav()
+    },
+    [openNote, closeNav]
+  )
+  const startNewNote = React.useCallback(() => {
+    newNote()
+    closeNav()
+  }, [newNote, closeNav])
   const workspacePanel = useWorkspacePanel()
 
   useChatBootstrap({
@@ -950,7 +983,12 @@ export default function ChatPage() {
           onSettle={settleChat}
           onWake={wakeChat}
           onAdopt={adoptChat}
-          activeId={activeId}
+          activeId={activeNoteId ? "" : activeId}
+          noteItems={notes.noteItems}
+          activeNoteId={activeNoteId ?? ""}
+          onNewNote={startNewNote}
+          onSelectNote={selectNote}
+          onDeleteNote={notes.removeNote}
           sessionsLoaded={sessionsLoaded}
           sessionsRef={sessionsRef}
           sessions={sessions}
@@ -965,7 +1003,7 @@ export default function ChatPage() {
           onNewChat={startNewChat}
           onOpenPalette={openPalette}
           onOpenSettings={pushSettings}
-          onSelect={agentNav.navigate}
+          onSelect={selectChat}
           onRename={renameSession}
           onTogglePin={togglePin}
           onDelete={removeSession}
@@ -994,8 +1032,14 @@ export default function ChatPage() {
           >
             <PanelLeft />
           </button>
-          <AgentBreadcrumbs session={activeSession} sessions={sessions} cards={agentNav.cards} selected={agentNav.selected} onNavigate={agentNav.navigate} onOpenAgent={agentNav.openAgent} onReturn={agentNav.returnToParent} />
-          <AppHeaderActions className="min-w-0">
+          {activeNoteId ? (
+            <span data-slot="app-header-note" className="min-w-0 truncate text-[13px] text-muted-foreground">
+              Notes
+            </span>
+          ) : (
+            <AgentBreadcrumbs session={activeSession} sessions={sessions} cards={agentNav.cards} selected={agentNav.selected} onNavigate={agentNav.navigate} onOpenAgent={agentNav.openAgent} onReturn={agentNav.returnToParent} />
+          )}
+          <AppHeaderActions className={cn("min-w-0", activeNoteId && "hidden")}>
             <AppHeaderButton label="Toggle workspace panel" aria-controls="workspace-panel" aria-expanded={workspaceVisible} disabled={!!sidePanel} onClick={workspacePanel.toggle}><PanelRight /></AppHeaderButton>
             <ChatProcesses
               count={processes.length}
@@ -1014,6 +1058,21 @@ export default function ChatPage() {
         </AppHeader>
 
         {/*
+          An open note covers the chat instead of replacing it: this page owns
+          every in-flight turn, and nothing under the note is unmounted.
+        */}
+        {activeNoteId ? (
+          <div className="absolute inset-0 z-20 bg-background pt-12">
+            <NoteWorkspace
+              key={activeNoteId}
+              noteId={activeNoteId}
+              onClose={closeNote}
+              onMetaChange={notes.updateNote}
+            />
+          </div>
+        ) : null}
+
+        {/*
           The header overlays this pane (frost + fade) so the conversation
           can scroll through it. It still spans the full width right of the
           sidebar — it is the desktop window's drag chrome and must never be
@@ -1030,7 +1089,7 @@ export default function ChatPage() {
             workers only the first time. The wrapper is what keeps it off the
             prerender; see `components/diff-workers`.
           */}
-          {workspaceVisible ? (
+          {workspaceVisible && !activeNoteId ? (
             <aside
               id="workspace-panel"
               aria-label="Workspace tools"

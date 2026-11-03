@@ -1,5 +1,6 @@
 import type { ModelOption } from "@/components/ui/model-picker"
 import { MOCK_MODELS, runMockAgent } from "@/lib/mock-agent"
+import { noteBridge, runMockNoteAgent } from "@/lib/notes/mock-note-agent"
 import type {
   AgentProvider,
   AgentRunOptions,
@@ -28,12 +29,17 @@ export function createMockProvider(enabled: boolean): AgentProvider {
   return {
     info: async () => info,
     listModels: async () => MOCK_MODELS as ModelOption[],
-    run: (options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> =>
-      runMockAgent({
+    run: (options: AgentRunOptions): AsyncGenerator<AgentStreamEvent> => {
+      // A note's own turn: work in the note through its tools, as a real
+      // harness would (`lib/notes/mock-note-agent`).
+      const bridge = noteBridge(options.mcpServers)
+      if (bridge) return runMockNoteAgent({ prompt: options.prompt, bridge, signal: options.signal })
+      return runMockAgent({
         prompt: options.prompt,
         model: options.model,
         sessionId: options.sessionId,
         signal: options.signal,
-      }),
+      })
+    },
   }
 }

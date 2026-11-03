@@ -9,6 +9,7 @@ import { runInNewContext } from "node:vm"
 
 import { writePiSubagentExtension } from "@/lib/pi-extension"
 import { PI_SUBAGENT_SOURCE } from "@/lib/pi-subagents"
+import { NOTE_TOOL_DEFINITIONS } from "@/lib/notes/tools"
 import { TOOL_DEFINITIONS } from "@/lib/subagents/mcp"
 
 type Result = { content: { type: string; text: string }[]; details: Record<string, unknown> }
@@ -52,6 +53,12 @@ test("Pi exposes all bridge tools and reminds resumed sessions; child chats get 
   assert.deepEqual([...tools.keys()], TOOL_DEFINITIONS.map((tool) => tool.name))
   assert.match(hooks.get("before_agent_start")!({ systemPrompt: "Existing instructions" }).systemPrompt, /^Existing instructions\n\n.*run_subagent/)
   assert.equal(load().tools.size, 0)
+})
+
+test("Pi working in a note gets the note tools instead of the subagent ones", () => {
+  const { tools, hooks } = load("http://127.0.0.1/api/mcp?parent=p&note=n0123456789abcdef")
+  assert.deepEqual([...tools.keys()], NOTE_TOOL_DEFINITIONS.map((tool) => tool.name))
+  assert.match(hooks.get("before_agent_start")!({ systemPrompt: "Base" }).systemPrompt, /note_edit/)
 })
 
 test("Pi delegates through the scoped bridge, publishes the child receipt, waits and propagates errors", async () => {

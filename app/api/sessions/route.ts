@@ -13,9 +13,13 @@ import type { CreateSessionInput } from "@/lib/store/types"
 export const runtime = "nodejs"
 export const dynamic = "force-dynamic"
 
-/** The sidebar index — metadata only, never message bodies. */
+/**
+ * The sidebar index — metadata only, never message bodies. A note's own chat
+ * (`noteId`) is the note's business and is left out.
+ */
 export async function GET() {
-  return NextResponse.json({ sessions: await listSessions() })
+  const sessions = await listSessions()
+  return NextResponse.json({ sessions: sessions.filter((session) => !session.noteId) })
 }
 
 export async function POST(req: Request) {
