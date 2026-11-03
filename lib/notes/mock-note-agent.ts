@@ -38,7 +38,7 @@ function selectedWords(prompt: string) {
 }
 
 function instruction(prompt: string) {
-  const match = /and asked:\n\n([\s\S]*?)\n\nThe selected words:/.exec(prompt)
+  const match = /asked(?: about the note "[^"]*")?:\n\n([\s\S]*?)\n\n(?:The selected words:|Earlier in this thread:|How to work:)/.exec(prompt)
   return (match?.[1] ?? prompt).trim()
 }
 

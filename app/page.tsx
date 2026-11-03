@@ -1,6 +1,6 @@
 "use client"
 
-import { PanelLeft, PanelRight, Search } from "lucide-react"
+import { FileText, PanelLeft, PanelRight, Search } from "lucide-react"
 import dynamic from "next/dynamic"
 import * as React from "react"
 
@@ -449,6 +449,8 @@ export default function ChatPage() {
   const [newChatOpen, setNewChatOpen] = React.useState(false)
   const notes = useNotes()
   const { closeNote, openNote, newNote, activeNoteId } = notes
+  /** Where the open note puts its header controls — a node in the app header. */
+  const [noteHeaderSlot, setNoteHeaderSlot] = React.useState<HTMLDivElement | null>(null)
   const handleNewChat = React.useCallback(async () => {
     closeNav()
     closeNote()
@@ -1033,12 +1035,31 @@ export default function ChatPage() {
             <PanelLeft />
           </button>
           {activeNoteId ? (
-            <span data-slot="app-header-note" className="min-w-0 truncate text-[13px] text-muted-foreground">
-              Notes
-            </span>
+            <nav
+              aria-label="Note"
+              data-slot="app-header-note"
+              data-tauri-drag-region
+              className="relative z-10 flex min-w-0 flex-1 self-stretch items-center gap-1.5 text-[12px] text-muted-foreground"
+            >
+              <FileText className="size-3.5 shrink-0" />
+              <span className="hidden shrink-0 sm:inline">Notes</span>
+              <span aria-hidden className="hidden sm:inline">/</span>
+              <span aria-current="page" className="truncate font-semibold text-foreground">
+                {notes.notes.find((note) => note.id === activeNoteId)?.title ?? "Note"}
+              </span>
+            </nav>
           ) : (
             <AgentBreadcrumbs session={activeSession} sessions={sessions} cards={agentNav.cards} selected={agentNav.selected} onNavigate={agentNav.navigate} onOpenAgent={agentNav.openAgent} onReturn={agentNav.returnToParent} />
           )}
+          {activeNoteId ? (
+            <AppHeaderActions className="min-w-0">
+              {/* The open note renders its own controls here (NoteWorkspace). */}
+              <div ref={setNoteHeaderSlot} className="contents" />
+              <AppHeaderButton label="Search chats and commands" hint="⌘K" onClick={openPalette}>
+                <Search />
+              </AppHeaderButton>
+            </AppHeaderActions>
+          ) : null}
           <AppHeaderActions className={cn("min-w-0", activeNoteId && "hidden")}>
             <AppHeaderButton label="Toggle workspace panel" aria-controls="workspace-panel" aria-expanded={workspaceVisible} disabled={!!sidePanel} onClick={workspacePanel.toggle}><PanelRight /></AppHeaderButton>
             <ChatProcesses
@@ -1062,12 +1083,14 @@ export default function ChatPage() {
           every in-flight turn, and nothing under the note is unmounted.
         */}
         {activeNoteId ? (
-          <div className="absolute inset-0 z-20 bg-background pt-12">
+          // Above the chat composer (z-20), below the header (z-30).
+          <div className="absolute inset-0 z-[25] bg-background pt-12">
             <NoteWorkspace
               key={activeNoteId}
               noteId={activeNoteId}
               onClose={closeNote}
               onMetaChange={notes.updateNote}
+              headerSlot={noteHeaderSlot}
             />
           </div>
         ) : null}

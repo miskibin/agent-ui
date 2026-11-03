@@ -557,10 +557,15 @@ one interface:
   (60 revisions, the person's own saves coalesced per 2 minutes) and `assets/` for pasted
   images, written as relative `assets/<hash>-<slug>.png` and served by `/api/notes/assets/<name>`
   sandboxed and `nosniff`. A note opens *over* the chat (`app/page.tsx`), never instead of it:
-  this page owns every in-flight turn.
+  this page owns every in-flight turn. It keeps the one app header — its title where a chat's
+  breadcrumbs go, its controls portalled into the header's actions (`headerSlot`) — and the
+  harness and model are picked in its composer, nowhere else. The editor has no floating
+  toolbar: formatting is markdown and the `/` menu, as in the Notes app.
 
-  **Asking** is Claude Docs' comment-to-Claude: select words, ⌘E, an instruction. That makes
-  a thread on those words (`NoteThread`, highlighted in the editor as an anchor) and one turn
+  **Asking** is Claude Docs' comment-to-Claude: words selected in the note flow into the
+  note's one-line composer (`onSelectionChange`, and they stay marked while it has focus), and
+  an instruction sent from there — or from the right-click menu's "Ask the agent" — makes
+  a thread on those words (or on the whole note, with nothing selected) (`NoteThread`, highlighted in the editor as an anchor) and one turn
   (`lib/notes/runs.ts`) driven through this server's own `POST /api/chat`, like a subagent run,
   in the note's own hidden chat — `SessionMeta.noteId`, left out of `GET /api/sessions` and
   search, `read-only`, cwd the vault. The chat route hands that chat's bridge `?note=<id>`, and

@@ -97,7 +97,7 @@ test("a note opens from the sidebar in the WYSIWYG editor with Mermaid drawn", a
     await page.locator("[data-slot=note-editor][data-ready=true]").waitFor({ timeout: 20_000 })
     await page.locator("[data-slot=note-editor] h1", { hasText: "Login service" }).waitFor()
     await page.locator("[data-slot=note-editor-mermaid] svg").first().waitFor({ timeout: 20_000 })
-    assert.equal(await page.locator("[data-slot=note-workspace-header]").getByText("Login service").count(), 1)
+    assert.equal(await page.locator("[data-slot=app-header-note]").getByText("Login service").count(), 1)
     assert.ok(meta.id)
   } finally {
     await page.close()
@@ -113,11 +113,14 @@ test("asking about a selection plants a pending block, fills it live and replies
     const before = await page.locator("[data-slot=note-editor-mermaid] svg").count()
 
     await selectText(page, "posts credentials to the gateway")
-    await page.keyboard.press("Control+e")
-    const input = page.locator("[data-slot=note-editor-ask-input]")
-    await input.waitFor()
+    // The selection follows into the composer on its own.
+    await page.locator("[data-slot=note-composer-selection]", { hasText: "posts credentials to the gateway" }).waitFor()
+    const input = page.locator("[data-slot=note-composer-input]")
     await input.fill("Add a diagram of this flow")
+    // Focus left the editor; the selected words stay marked.
+    await page.locator("[data-slot=note-editor-held-selection]").waitFor()
     await input.press("Enter")
+    await page.locator("[data-slot=note-composer-selection]").waitFor({ state: "detached" })
 
     // The thread appears with the selected words, and the words are marked.
     await page.locator("[data-slot=note-thread]", { hasText: "Add a diagram of this flow" }).waitFor()
@@ -155,8 +158,8 @@ test("typing while the agent edits keeps both", async () => {
     await page.locator("[data-slot=note-editor][data-ready=true]").waitFor({ timeout: 20_000 })
 
     await selectText(page, "posts credentials to the gateway")
-    await page.keyboard.press("Control+e")
-    const input = page.locator("[data-slot=note-editor-ask-input]")
+    await page.locator("[data-slot=note-composer-selection]").waitFor()
+    const input = page.locator("[data-slot=note-composer-input]")
     await input.fill("Add a table")
     await input.press("Enter")
     await page.locator("[data-slot=note-editor-pending]").waitFor({ timeout: 15_000 })
@@ -182,6 +185,41 @@ test("typing while the agent edits keeps both", async () => {
     const editorText = await page.locator("[data-slot=note-editor] .ProseMirror").innerText()
     assert.match(editorText, /Refresh happens silently\./)
     assert.match(editorText, /Drafted by the mock agent/)
+  } finally {
+    await page.close()
+  }
+})
+
+test("the note keeps the app header and asks about the whole note without a selection", async () => {
+  const meta = await createNote(NOTE)
+  const page = await openPage()
+  try {
+    await page.getByRole("button", { name: /Login service/ }).first().click()
+    await page.locator("[data-slot=note-editor][data-ready=true]").waitFor({ timeout: 20_000 })
+    // The title sits where a chat's breadcrumbs do, and the note's controls
+    // live in the header's own actions — one header, no second bar.
+    await page.locator("[data-slot=app-header] [data-slot=app-header-note]", { hasText: "Login service" }).waitFor()
+    await page.locator("[data-slot=app-header] [data-slot=note-header-controls]").waitFor()
+    assert.equal(await page.locator("[data-slot=note-workspace-header]").count(), 0)
+    // No floating formatting toolbar over a selection.
+    await selectText(page, "Tokens expire")
+    assert.equal(await page.locator(".milkdown-toolbar[data-show=true]").count(), 0)
+    // Right-click offers the host's action above the clipboard.
+    await page.locator("[data-slot=note-editor] p", { hasText: "Tokens expire" }).click({ button: "right" })
+    await page.locator("[data-slot=note-editor-action]", { hasText: "Ask the agent" }).waitFor()
+    await page.keyboard.press("Escape")
+    // Nothing selected: the ask is about the note as a whole.
+    await page.locator("[data-slot=note-editor] h1").click()
+    await page.locator("[data-slot=note-composer-selection]").waitFor({ state: "detached" })
+    const input = page.locator("[data-slot=note-composer-input]")
+    await input.fill("Add a summary table")
+    await input.press("Enter")
+    await page
+      .locator("[data-slot=note-thread-message][data-author=agent]", { hasText: "Added it" })
+      .waitFor({ timeout: 20_000 })
+    const saved = await readNote(meta.id)
+    assert.match(saved.content, /Drafted by the mock agent/)
+    assert.equal(saved.threads[0].anchor, "")
   } finally {
     await page.close()
   }
