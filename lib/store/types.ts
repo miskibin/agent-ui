@@ -231,6 +231,12 @@ export type SessionMeta = {
    * which clears the flag for good.
    */
   external?: boolean
+  /**
+   * The note this chat answers asks for (`lib/notes`). Such a chat is the
+   * note's own: it never appears in the sidebar, and its turns are handed the
+   * `note_*` tools on the bridge instead of the subagent ones.
+   */
+  noteId?: string
   createdAt: number
   updatedAt: number
   messageCount: number
@@ -283,4 +289,5 @@ export type CreateSessionInput = {
   permissionMode?: string
   parentId?: string
   external?: boolean
+  noteId?: string
 } & SessionLifecyclePatch

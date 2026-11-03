@@ -6,7 +6,9 @@ import {
   Archive,
   ArchiveRestore,
   FolderInput,
+  NotebookPen,
   Pencil,
+  Plus,
   Pin,
   PinOff,
   Search,
@@ -27,6 +29,7 @@ import {
   SideActionRow,
   SideIconBtn,
   SideRow,
+  SidebarCollapsibleSection,
   SidebarEmptyState,
   SidebarResizeRail,
   type ChatSidebarItemData,
@@ -75,6 +78,11 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   onWake,
   onAdopt,
   activeId,
+  noteItems,
+  activeNoteId,
+  onNewNote,
+  onSelectNote,
+  onDeleteNote,
   sessionsLoaded,
   sessionsRef,
   sessions,
@@ -115,6 +123,12 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   /** What a drag off the Agents shelf into the chat's folder means. */
   onAdopt?: (id: string) => void
   activeId: string
+  /** The notes vault (`lib/notes`), listed above the chats. */
+  noteItems: ChatSidebarItemData[]
+  activeNoteId: string
+  onNewNote: () => void
+  onSelectNote: (id: string) => void
+  onDeleteNote: (id: string) => void
   sessionsLoaded: boolean
   /** Read on drop only: the drag indices are per-list, the ids are not. */
   sessionsRef: React.RefObject<SessionMeta[]>
@@ -143,6 +157,8 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
   sidebarWidth: number
   onSidebarWidthChange: (width: number) => void
 }) {
+  const [notesOpen, setNotesOpen] = React.useState(true)
+  const toggleNotes = React.useCallback(() => setNotesOpen((open) => !open), [])
   const sessionsById = React.useMemo(
     () => new Map(sessions.map((session) => [session.id, session])),
     [sessions]
@@ -370,6 +386,9 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
             <SideIconBtn label="New chat" onClick={onNewChat}>
               <Pencil className="size-4" />
             </SideIconBtn>
+            <SideIconBtn label="New note" onClick={onNewNote}>
+              <NotebookPen className="size-4" />
+            </SideIconBtn>
             <SideIconBtn label="Search chats" onClick={onOpenPalette}>
               <Search className="size-4" />
             </SideIconBtn>
@@ -379,6 +398,9 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           <>
             <SideIconBtn label="New chat" onClick={onNewChat}>
               <Pencil className="size-4" />
+            </SideIconBtn>
+            <SideIconBtn label="New note" onClick={onNewNote}>
+              <NotebookPen className="size-4" />
             </SideIconBtn>
             <SideIconBtn label="Search chats" onClick={onOpenPalette}>
               <Search className="size-4" />
@@ -408,6 +430,34 @@ export const ChatSidebarPanel = React.memo(function ChatSidebarPanel({
           )
         }
       >
+        {noteItems.length > 0 ? (
+          <SidebarCollapsibleSection
+            title="Notes"
+            open={notesOpen}
+            onToggle={toggleNotes}
+            count={noteItems.length}
+            action={
+              <button
+                type="button"
+                aria-label="New note"
+                title="New note"
+                onClick={onNewNote}
+                className="inline-grid size-5 place-items-center rounded text-muted-foreground outline-none transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50"
+              >
+                <Plus className="size-3.5" />
+              </button>
+            }
+          >
+            <ChatSidebarItemList
+              listId="notes"
+              items={noteItems}
+              activeId={activeNoteId}
+              onSelect={onSelectNote}
+              onDelete={onDeleteNote}
+            />
+          </SidebarCollapsibleSection>
+        ) : null}
+
         {sessionItems.length === 0 ? (
           !sessionsLoaded ? <SidebarLoading /> : <SidebarEmptyState>New chats appear here.</SidebarEmptyState>
         ) : null}

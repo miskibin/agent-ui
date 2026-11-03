@@ -4,6 +4,7 @@ import { mkdir, readFile, rm } from "node:fs/promises"
 import { join } from "node:path"
 
 import { writeFileAtomic } from "@/lib/atomic-write"
+import { isValidNoteId } from "@/lib/notes/types"
 import { dataDir } from "@/lib/settings/server"
 import { migrateAgentSessions } from "@/lib/handoff/cursor"
 import { appendEvents, normalizeJournal } from "@/lib/handoff/journal"
@@ -248,6 +249,9 @@ function normalizeMeta(raw: unknown, fallbackOrder: number): SessionMeta | null 
       ? { parentId: value.parentId }
       : null),
     ...(value.external === true ? { external: true } : null),
+    ...(typeof value.noteId === "string" && isValidNoteId(value.noteId)
+      ? { noteId: value.noteId }
+      : null),
     ...(agentSessions ? { agentSessions } : null),
     createdAt: typeof value.createdAt === "number" ? value.createdAt : now,
     updatedAt: typeof value.updatedAt === "number" ? value.updatedAt : now,
@@ -368,6 +372,7 @@ export function createSession(input: CreateSessionInput): Promise<SessionMeta> {
         ? { parentId: input.parentId }
         : null),
       ...(input.external ? { external: true } : null),
+      ...(input.noteId && isValidNoteId(input.noteId) ? { noteId: input.noteId } : null),
       ...(timestamp(input.settledAt) ? { settledAt: input.settledAt } : null),
       ...(settledOverride(input.settledOverride)
         ? { settledOverride: settledOverride(input.settledOverride) }

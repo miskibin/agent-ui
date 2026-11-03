@@ -238,8 +238,10 @@ export async function POST(req: Request) {
         // How this agent can keep memory: through the bridge's `memory_*`
         // tools when it takes MCP servers (a subagent chat is never given the
         // bridge), else by editing the files when it has file tools at all.
+        // A note's chat is handed the note tools alone, so memory is shown
+        // to it but not writable there.
         access:
-          info.capabilities.mcp && !session.parentId
+          info.capabilities.mcp && !session.parentId && !session.noteId
             ? "tools"
             : info.capabilities.tools
               ? "files"
@@ -248,7 +250,8 @@ export async function POST(req: Request) {
   // A prompt another agent wrote (`subagentOf`, set by the MCP/CLI runner) is
   // answered to that agent, not to a person: a ```ui fence is noise in its
   // context, so the vocabulary is withheld there.
-  const showViews = settings.chat.generativeViews && !body.subagentOf
+  // A note's agent writes into the note, where a ```ui fence is noise too.
+  const showViews = settings.chat.generativeViews && !body.subagentOf && !session.noteId
   const standingContext = resumed
     ? undefined
     : [showViews ? VIEW_SPEC_PROMPT : "", memoryContext ?? ""]
@@ -271,6 +274,7 @@ export async function POST(req: Request) {
           harness: providerId,
           model,
           effort: info.capabilities.effort ? body.effort : undefined,
+          noteId: session.noteId,
         }),
       ]
 

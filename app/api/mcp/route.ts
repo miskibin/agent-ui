@@ -31,6 +31,9 @@ import {
   writeMemoryFile,
 } from "@/lib/memory/server"
 import type { MemoryTools } from "@/lib/memory/tools"
+import { editNote, getNoteMeta, readNote, readNoteAt } from "@/lib/notes/server"
+import type { NoteTools } from "@/lib/notes/tools"
+import { isValidNoteId } from "@/lib/notes/types"
 import { readSettings } from "@/lib/settings/server"
 import packageJson from "@/package.json"
 
@@ -156,7 +159,23 @@ export async function POST(req: Request) {
     ? { list: readMemoryFiles, write: writeMemoryFile, remove: deleteMemoryFile }
     : undefined
 
-  const answer = await handleRpc(message, tools, packageJson.version, memory)
+  // A note's own turn (`?note=<id>`, set by the chat route from the chat's
+  // `noteId`) works in that note and nothing else.
+  const noteParam = url.searchParams.get("note") ?? ""
+  const noteMeta = isValidNoteId(noteParam) ? await getNoteMeta(noteParam) : null
+  const note: NoteTools | undefined = noteMeta
+    ? {
+        async read() {
+          const doc = await readNote(noteMeta.id)
+          if (!doc) throw new Error("The note was deleted.")
+          return { rev: doc.meta.rev, title: doc.meta.title, content: doc.content }
+        },
+        readAt: (rev) => readNoteAt(noteMeta.id, rev),
+        edit: (ops) => editNote(noteMeta.id, ops),
+      }
+    : undefined
+
+  const answer = await handleRpc(message, tools, packageJson.version, memory, note)
   if (!answer) return new Response(null, { status: 202 })
   return NextResponse.json(answer)
 }

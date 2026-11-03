@@ -85,7 +85,8 @@ everything in `app/`, `lib/providers/`, `lib/model-providers/`, `lib/store/`, `l
 `lib/message-search.ts`, `lib/search-ranking.ts`, `lib/skills.ts`, `lib/skills-scan.ts`,
 `lib/import/`, `lib/worktree.ts`, `lib/git-naming.ts`, `lib/git-commit.ts`, `lib/git-exec.ts`,
 `lib/checkpoints.ts`, `lib/dev-servers.ts`, `lib/shell-env.ts`, `instrumentation.ts`,
-`lib/subagents/`, `bin/agent-ui.mjs`,
+`lib/subagents/`, `bin/agent-ui.mjs`, `lib/notes/`, `components/note-workspace.tsx`,
+`app/hooks/use-notes.tsx`, `app/hooks/use-note-doc.ts`,
 `app/settings/usage-section.tsx`, `src-tauri/`.
 
 `components/ui/todo-list.tsx` and `components/ui/context-meter.tsx` are vendored too, same rule
@@ -549,6 +550,44 @@ one interface:
   registry can set the flag; `POST /api/sessions` cannot. `bin/agent-ui.mjs` is the CLI over the same tools, and
   `agent-ui mcp` is a stdio proxy for a Claude Code run outside the app: the desktop port changes
   every launch, and the proxy re-reads `bridge.json` per message.
+- Notes (`lib/notes/`, `/api/notes/*`, `components/note-workspace.tsx`, vendored
+  `components/ui/note-editor.tsx`): a markdown file the person writes and an agent works in,
+  modelled on Claude Docs. The vault is `$AGENT_UI_DIR/notes` — `<id>.md` (plain markdown, any
+  editor reads it), `index.json` for the sidebar, `<id>.threads.json`, `history/<id>.json`
+  (60 revisions, the person's own saves coalesced per 2 minutes) and `assets/` for pasted
+  images, written as relative `assets/<hash>-<slug>.png` and served by `/api/notes/assets/<name>`
+  sandboxed and `nosniff`. A note opens *over* the chat (`app/page.tsx`), never instead of it:
+  this page owns every in-flight turn.
+
+  **Asking** is Claude Docs' comment-to-Claude: select words, ⌘E, an instruction. That makes
+  a thread on those words (`NoteThread`, highlighted in the editor as an anchor) and one turn
+  (`lib/notes/runs.ts`) driven through this server's own `POST /api/chat`, like a subagent run,
+  in the note's own hidden chat — `SessionMeta.noteId`, left out of `GET /api/sessions` and
+  search, `read-only`, cwd the vault. The chat route hands that chat's bridge `?note=<id>`, and
+  `/api/mcp` then serves `note_read` / `note_edit` (`lib/notes/tools.ts`) and nothing else; pi's
+  generated extension switches to the same two on that URL, and the mock harness drives them
+  itself (`lib/notes/mock-note-agent.ts`) so the whole flow runs and is e2e-tested
+  (`tests/e2e/notes.test.mjs`) with nothing installed. Only harnesses that reach the bridge are
+  offered (`canWorkInNotes`). The turn's last text after its last tool call is the thread's
+  reply; one ask runs per note at a time, the rest queue; a placeholder left behind is
+  stripped when the turn ends.
+
+  **Blocks are the unit and the id is the guard** (`lib/notes/blocks.ts`, pure, unit-tested):
+  a top-level block's id is a hash of its *words* — markers, emphasis and escapes left out,
+  because the editor respells markdown on save — so a block the person changed no longer has
+  the id the agent read and an edit to it is refused with "read again", while every untouched
+  block keeps its id through any number of edits elsewhere. Ops: replace, insert, delete,
+  replace_text (a unique quote), and `pending` — a ` ```agent-pending ` fence the editor draws
+  as a shimmering intent, planted where the answer will land and then replaced.
+
+  **Two writers, no lost words.** Every save carries its base; the server writes it when the
+  base is what is on disk and otherwise merges block by block (`mergeNotes`, a three-way merge
+  where an insertion next to a block the other side retyped is kept in place, and a real
+  conflict keeps both versions rather than one). `app/hooks/use-note-doc.ts` sends one save at
+  a time, collapses the ones waiting into one with the oldest base, and hands a value back to
+  the editor only when it descends from the editor's latest change; the editor merges an
+  outside value into typing it has not emitted yet the same way. `/api/notes/<id>/events` is
+  an SSE of revisions and thread changes, content-free — the page fetches what it does not have.
 - Generative views (vendored `components/ui/generative-view.tsx`, `lib/generative-view.ts`):
   an agent can answer with a ` ```ui ` fence holding JSON from a closed vocabulary of display
   blocks — card, fields, table, list, timeline, stats, progress, tabs — and `MessageMarkdown`

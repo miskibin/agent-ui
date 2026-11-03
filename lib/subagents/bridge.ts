@@ -109,9 +109,12 @@ export async function bridgeServerFor(input: {
   harness?: string
   model?: string
   effort?: string
+  /** A note's own chat: the bridge then serves that note's tools instead. */
+  noteId?: string
 }): Promise<McpServerConfig> {
   const url = new URL("/api/mcp", input.origin)
   url.searchParams.set("parent", input.parentId)
+  if (input.noteId) url.searchParams.set("note", input.noteId)
   if (input.permissionMode) url.searchParams.set("mode", input.permissionMode)
   if (input.harness) url.searchParams.set("harness", input.harness)
   if (input.model) url.searchParams.set("model", input.model)

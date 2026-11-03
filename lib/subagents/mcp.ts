@@ -22,6 +22,13 @@ import {
   MEMORY_TOOL_NAMES,
   type MemoryTools,
 } from "@/lib/memory/tools"
+import {
+  callNoteTool,
+  NOTE_INSTRUCTIONS,
+  NOTE_TOOL_DEFINITIONS,
+  NOTE_TOOL_NAMES,
+  type NoteTools,
+} from "@/lib/notes/tools"
 
 export const MCP_PROTOCOL_VERSIONS = [
   "2025-06-18",
@@ -478,7 +485,12 @@ export async function handleRpc(
   tools: SubagentTools,
   version = "0.0.0",
   /** The user's memory, offered only while memory is on (`lib/memory/tools`). */
-  memory?: MemoryTools
+  memory?: MemoryTools,
+  /**
+   * The note a note-ask turn works in (`lib/notes/tools`). When set, the note
+   * tools are the whole vocabulary: that turn edits one note and nothing else.
+   */
+  note?: NoteTools
 ): Promise<JsonRpcResponse | null> {
   const id = message.id ?? null
   const method = typeof message.method === "string" ? message.method : ""
@@ -502,20 +514,36 @@ export async function handleRpc(
         protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: { name: MCP_SERVER_NAME, version },
-        instructions: memory
-          ? `${SUBAGENT_INSTRUCTIONS} Keep the user's persistent memory with the memory_* tools.`
-          : SUBAGENT_INSTRUCTIONS,
+        instructions: note
+          ? NOTE_INSTRUCTIONS
+          : memory
+            ? `${SUBAGENT_INSTRUCTIONS} Keep the user's persistent memory with the memory_* tools.`
+            : SUBAGENT_INSTRUCTIONS,
       })
     }
     case "ping":
       return ok(id, {})
     case "tools/list":
       return ok(id, {
-        tools: memory ? [...TOOL_DEFINITIONS, ...MEMORY_TOOL_DEFINITIONS] : TOOL_DEFINITIONS,
+        tools: note
+          ? NOTE_TOOL_DEFINITIONS
+          : memory
+            ? [...TOOL_DEFINITIONS, ...MEMORY_TOOL_DEFINITIONS]
+            : TOOL_DEFINITIONS,
       })
     case "tools/call": {
       const name = text(params.name, 100)
       if (!name) return fail(id, -32602, "Missing tool name")
+      if (note) {
+        if (!NOTE_TOOL_NAMES.has(name)) {
+          return ok(id, toolResult(`Only the note_* tools are available while working in a note.`, true))
+        }
+        const answer = await callNoteTool(note, name, record(params.arguments))
+        return ok(id, toolResult(answer.data, answer.isError))
+      }
+      if (NOTE_TOOL_NAMES.has(name)) {
+        return ok(id, toolResult("The note tools are only available in a note's own turn.", true))
+      }
       if (MEMORY_TOOL_NAMES.has(name)) {
         if (!memory) return ok(id, toolResult("Memory is turned off in this app's settings.", true))
         const answer = await callMemoryTool(memory, name, record(params.arguments))

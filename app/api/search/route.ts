@@ -73,7 +73,8 @@ export async function GET(req: Request) {
   const sessions = await listSessions()
   // `listSessions` is already newest-first inside its groups; sort explicitly
   // so the cap keeps the newest chats whatever order the index arrives in.
-  const newest = [...sessions]
+  const newest = sessions
+    .filter((session) => !session.noteId)
     .sort((left, right) => right.updatedAt - left.updatedAt)
     .slice(0, MAX_SESSIONS)
 
